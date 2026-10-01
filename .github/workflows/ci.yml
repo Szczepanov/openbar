@@ -16,6 +16,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  # Embedded at compile time by analyze.rs so CI evidence identifies the exact source revision.
+  OPENBAR_GIT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   rust:
