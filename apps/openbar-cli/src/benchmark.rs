@@ -764,23 +764,26 @@ fn condition_labels(fixture: &FixtureEntry) -> Vec<String> {
 }
 
 fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
-    let mut groups: BTreeMap<(String, String), (ImplementationIdentity, Vec<TrackerMetrics>)> =
+    let mut groups: BTreeMap<(&str, &str), (ImplementationIdentity, Vec<TrackerMetrics>)> =
         BTreeMap::new();
-
+    let mut implementation_keys = Vec::with_capacity(cases.len());
     for case in cases {
-        let implementation_key = serde_json::to_string(&case.implementation)?;
+        implementation_keys.push(serde_json::to_string(&case.implementation)?);
+    }
+
+    for (case, implementation_key) in cases.iter().zip(&implementation_keys) {
         push_aggregate_group(
             &mut groups,
-            implementation_key.clone(),
-            "overall".to_owned(),
+            implementation_key,
+            "overall",
             &case.implementation,
             &case.metrics,
         );
         for condition in &case.conditions {
             push_aggregate_group(
                 &mut groups,
-                implementation_key.clone(),
-                condition.clone(),
+                implementation_key,
+                condition,
                 &case.implementation,
                 &case.metrics,
             );
@@ -792,7 +795,7 @@ fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
         .map(
             |((_implementation_key, group), (implementation, metrics))| AggregateResult {
                 implementation,
-                group,
+                group: group.to_owned(),
                 case_count: metrics.len(),
                 metrics: aggregate_metrics(&metrics),
             },
@@ -800,10 +803,10 @@ fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
         .collect())
 }
 
-fn push_aggregate_group(
-    groups: &mut BTreeMap<(String, String), (ImplementationIdentity, Vec<TrackerMetrics>)>,
-    implementation_key: String,
-    group: String,
+fn push_aggregate_group<'a>(
+    groups: &mut BTreeMap<(&'a str, &'a str), (ImplementationIdentity, Vec<TrackerMetrics>)>,
+    implementation_key: &'a str,
+    group: &'a str,
     implementation: &ImplementationIdentity,
     metrics: &TrackerMetrics,
 ) {
@@ -964,5 +967,26 @@ mod tests {
         assert_eq!(perfect.metrics.tracking_availability, Some(1.0));
         assert_eq!(perfect.metrics.plate_center_mae_px, Some(0.0));
         assert_eq!(perfect.metrics.plate_center_rmse_px, Some(0.0));
+    }
+
+    #[test]
+    fn benchmark_build_aggregates_performance() {
+        let suite = run_suite(&synthetic_suite_path()).unwrap();
+        let mut cases = Vec::new();
+        // Repeat cases to create a non-trivial dataset for aggregation
+        for _ in 0..5000 {
+            cases.extend(suite.cases.clone());
+        }
+
+        let start = std::time::Instant::now();
+        let aggregates = build_aggregates(&cases).unwrap();
+        let duration = start.elapsed();
+
+        assert!(!aggregates.is_empty());
+        println!(
+            "build_aggregates for {} cases took {:?}",
+            cases.len(),
+            duration
+        );
     }
 }
