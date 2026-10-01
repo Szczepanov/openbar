@@ -124,6 +124,17 @@ jobs:
           python3 validation/tools/schema_check.py
           --schema validation/schema/analysis-v1.schema.json
           target/analyze-smoke.json
+      - name: Diagnostic render success smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- render
+          --analysis target/analyze-smoke.json
+          --video validation/fixtures/public/synthetic-clean-side-12.mp4
+          --output target/render-success.svg
+      - name: Diagnostic render failure smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- render
+          --analysis crates/openbar-core/tests/fixtures/analysis-v1.golden.json
+          --output target/render-failure.svg
       - name: Upload M0 smoke evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -133,6 +144,8 @@ jobs:
             target/filter-experiment.json
             target/benchmark-smoke.json
             target/analyze-smoke.json
+            target/render-success.svg
+            target/render-failure.svg
             target/tracker-run-smoke/
           if-no-files-found: error
           retention-days: 14
@@ -203,6 +216,17 @@ jobs:
           python validation/tools/schema_check.py
           --schema validation/schema/analysis-v1.schema.json
           target/analyze-smoke.json
+      - name: Diagnostic render success smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- render
+          --analysis target/analyze-smoke.json
+          --video validation/fixtures/public/synthetic-clean-side-12.mp4
+          --output target/render-success.svg
+      - name: Diagnostic render failure smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- render
+          --analysis crates/openbar-core/tests/fixtures/analysis-v1.golden.json
+          --output target/render-failure.svg
 
   dependencies:
     runs-on: ubuntu-26.04
