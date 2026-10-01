@@ -43,7 +43,6 @@ struct CandidateSummary {
     filter: ImplementationProvenance,
     mean_position_rmse_m: f64,
     mean_velocity_rmse_mps: f64,
-    mean_absolute_peak_attenuation_fraction: f64,
     scenarios: Vec<ScenarioResult>,
 }
 
@@ -52,11 +51,14 @@ struct ScenarioResult {
     split: &'static str,
     scenario: &'static str,
     condition: &'static str,
+    noise_seed: u64,
+    peak_metrics_applicable: bool,
     filter: ImplementationProvenance,
     behavior: BehaviorRecord,
     metrics: FilterMetrics,
     input_samples: usize,
     output_samples: usize,
+    filter_segment_count: usize,
     max_input_gap_s: Option<f64>,
     edge_position_mae_m: Option<f64>,
     runtime_ms: f64,
@@ -65,6 +67,7 @@ struct ScenarioResult {
 #[derive(Debug, Serialize)]
 struct BehaviorRecord {
     causal: bool,
+    confidence_behavior: &'static str,
     irregular_timestamp_behavior: &'static str,
     gap_behavior: &'static str,
     edge_behavior: &'static str,
@@ -75,6 +78,7 @@ impl From<FilterBehavior> for BehaviorRecord {
     fn from(value: FilterBehavior) -> Self {
         Self {
             causal: value.causal,
+            confidence_behavior: value.confidence_behavior,
             irregular_timestamp_behavior: value.irregular_timestamp_behavior,
             gap_behavior: value.gap_behavior,
             edge_behavior: value.edge_behavior,
@@ -95,6 +99,8 @@ struct Scenario {
     split: &'static str,
     name: &'static str,
     condition: &'static str,
+    noise_seed: u64,
+    peak_metrics_applicable: bool,
     truth: Vec<MetricPositionSample>,
     observed: Vec<MetricPositionSample>,
 }
@@ -187,13 +193,13 @@ fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
     }
 
     Ok(FilterExperimentArtifact {
-        schema_version: 1,
-        experiment_version: "m0-filter-comparison-v1",
+        schema_version: 2,
+        experiment_version: "m0-filter-comparison-v2",
         purpose: "Quantitative M0 comparison of raw, moving-average, timestamp-aware Savitzky-Golay, and constant-velocity Kalman filtering under one deterministic contract.",
         development_policy: DevelopmentPolicy {
             split: "Synthetic parameter-development signals are disjoint from held-out synthetic validation signals.",
             selection_rule: "Within each filter family, minimize mean development velocity RMSE; break ties with mean position RMSE. The rule chooses a family configuration, not a production winner.",
-            note: "Held-out validation metrics are not fed back into parameter selection.",
+            note: "Development metrics are averaged across three independent deterministic Gaussian-noise seeds per signal; held-out validation metrics use separate seeds and are not fed back into parameter selection.",
         },
         development,
         held_out_validation,
@@ -211,10 +217,11 @@ fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
             ],
         },
         limitations: vec![
-            "Synthetic noise is deterministic and intentionally simple; it is regression/tuning material, not a model of every camera error source.",
+            "Synthetic measurement noise is seeded pseudo-random Gaussian noise used for repeatable regression/tuning; it is not a model of blur, compression, occlusion, camera motion, or tracker-correlated error.",
             "Velocity is the existing timestamp-based backward difference and is used consistently for reference and filtered trajectories.",
             "Runtime is environment-sensitive and excluded from deterministic filter-output correctness.",
             "No missing timestamp is synthesized; long-gap scenarios contain only observed samples on each side of the loss span.",
+            "Peak attenuation/timing fields are emitted only for scenarios with an intentionally defined velocity peak.",
         ],
     })
 }
@@ -263,21 +270,45 @@ fn candidate_families() -> Vec<(&'static str, Vec<FilterConfig>)> {
             "kalman",
             vec![
                 FilterConfig::Kalman {
-                    process_noise: 0.5,
-                    measurement_noise: 0.000_009,
-                    initial_velocity_variance: 1.0,
+                    acceleration_variance_m2_s4: 0.5,
+                    measurement_variance_m2: 0.000_004,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
                     max_gap_s: 0.05,
                 },
                 FilterConfig::Kalman {
-                    process_noise: 2.0,
-                    measurement_noise: 0.000_009,
-                    initial_velocity_variance: 1.0,
+                    acceleration_variance_m2_s4: 0.5,
+                    measurement_variance_m2: 0.000_016,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
                     max_gap_s: 0.05,
                 },
                 FilterConfig::Kalman {
-                    process_noise: 8.0,
-                    measurement_noise: 0.000_009,
-                    initial_velocity_variance: 1.0,
+                    acceleration_variance_m2_s4: 2.0,
+                    measurement_variance_m2: 0.000_004,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
+                    max_gap_s: 0.05,
+                },
+                FilterConfig::Kalman {
+                    acceleration_variance_m2_s4: 2.0,
+                    measurement_variance_m2: 0.000_016,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
+                    max_gap_s: 0.05,
+                },
+                FilterConfig::Kalman {
+                    acceleration_variance_m2_s4: 8.0,
+                    measurement_variance_m2: 0.000_004,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
+                    max_gap_s: 0.05,
+                },
+                FilterConfig::Kalman {
+                    acceleration_variance_m2_s4: 8.0,
+                    measurement_variance_m2: 0.000_016,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
                     max_gap_s: 0.05,
                 },
             ],
@@ -293,16 +324,11 @@ fn summarize_candidate(
         .ok_or_else(|| data_error("development position RMSE unexpectedly unavailable"))?;
     let mean_velocity_rmse_mps = mean_metric(&scenarios, |metrics| metrics.velocity_rmse_mps)
         .ok_or_else(|| data_error("development velocity RMSE unexpectedly unavailable"))?;
-    let mean_absolute_peak_attenuation_fraction = mean_metric(&scenarios, |metrics| {
-        metrics.peak_attenuation_fraction.map(f64::abs)
-    })
-    .unwrap_or(0.0);
 
     Ok(CandidateSummary {
         filter: config.provenance(),
         mean_position_rmse_m,
         mean_velocity_rmse_mps,
-        mean_absolute_peak_attenuation_fraction,
         scenarios,
     })
 }
@@ -348,6 +374,7 @@ fn evaluate_scenario(scenario: &Scenario, config: FilterConfig) -> AnyResult<Sce
         &run.trajectory.samples,
         FilterBenchmarkParameters {
             max_velocity_gap_s: 0.05,
+            evaluate_peak_metrics: scenario.peak_metrics_applicable,
         },
     )?;
     let edge_position_mae_m = edge_position_mae(&scenario.truth, &run.trajectory.samples, 2);
@@ -356,11 +383,14 @@ fn evaluate_scenario(scenario: &Scenario, config: FilterConfig) -> AnyResult<Sce
         split: scenario.split,
         scenario: scenario.name,
         condition: scenario.condition,
+        noise_seed: scenario.noise_seed,
+        peak_metrics_applicable: scenario.peak_metrics_applicable,
         filter: run.trajectory.filter,
         behavior: run.behavior.into(),
         metrics,
         input_samples: scenario.observed.len(),
         output_samples: run.trajectory.samples.len(),
+        filter_segment_count: run.segment_count,
         max_input_gap_s: max_gap(&scenario.observed),
         edge_position_mae_m,
         runtime_ms,
@@ -405,29 +435,41 @@ fn max_gap(samples: &[MetricPositionSample]) -> Option<f64> {
 }
 
 fn scenarios() -> Vec<Scenario> {
-    vec![
-        build_regular_scenario(
+    const DEVELOPMENT_NOISE_SEEDS: [u64; 3] = [
+        0x4f50_454e_4241_5201,
+        0x4f50_454e_4241_5202,
+        0x4f50_454e_4241_5203,
+    ];
+    const HELD_OUT_NOISE_SEED: u64 = 0x4845_4c44_4f55_5401;
+
+    let mut scenarios = Vec::new();
+    for seed in DEVELOPMENT_NOISE_SEEDS {
+        scenarios.push(build_regular_scenario(
             "development",
             "constant-position-noise",
-            "constant position + deterministic measurement noise",
+            "constant position + seeded Gaussian measurement noise",
             61,
             1.0 / 60.0,
             |_, _| (0.15, 0.55),
             0.003,
-        ),
-        build_regular_scenario(
+            seed,
+            false,
+        ));
+        scenarios.push(build_regular_scenario(
             "development",
             "constant-velocity-noise",
-            "constant velocity + deterministic measurement noise",
+            "constant velocity + seeded Gaussian measurement noise",
             61,
             1.0 / 60.0,
             |time, _| (0.10 + 0.08 * time, 0.20 + 0.55 * time),
             0.003,
-        ),
-        build_regular_scenario(
+            seed,
+            false,
+        ));
+        scenarios.push(build_regular_scenario(
             "development",
             "smooth-trajectory",
-            "smooth curved trajectory + deterministic measurement noise",
+            "smooth curved trajectory + seeded Gaussian measurement noise",
             61,
             1.0 / 60.0,
             |time, _| {
@@ -437,43 +479,54 @@ fn scenarios() -> Vec<Scenario> {
                 )
             },
             0.003,
-        ),
-        build_irregular_scenario(),
-        build_regular_scenario(
-            "held_out_validation",
-            "sharp-peak",
-            "sharp velocity feature to expose peak attenuation and phase shift",
-            61,
-            1.0 / 60.0,
-            |time, _| {
-                let centered = (time - 0.52) / 0.065;
-                (
-                    0.02 * (4.0 * time).sin(),
-                    0.20 + 0.35 * time + 0.055 * (-centered * centered).exp(),
-                )
-            },
-            0.003,
-        ),
-        build_regular_scenario(
-            "held_out_validation",
-            "clip-boundaries",
-            "short sequence and boundary behavior",
-            7,
-            1.0 / 60.0,
-            |time, _| (0.01 + 0.02 * time, 0.30 + 0.45 * time),
-            0.003,
-        ),
-        build_gap_scenario(
-            "short-missing-span",
-            "short missing span below the configured continuity threshold; no sample is synthesized",
-            0.04,
-        ),
-        build_gap_scenario(
-            "long-loss-span",
-            "long tracking-loss span above max_gap_s; centered windows and state-space history must reset",
-            0.40,
-        ),
-    ]
+            seed,
+            false,
+        ));
+        scenarios.push(build_irregular_scenario(seed));
+    }
+
+    scenarios.push(build_regular_scenario(
+        "held_out_validation",
+        "sharp-peak",
+        "sharp velocity feature to expose peak attenuation and phase shift",
+        61,
+        1.0 / 60.0,
+        |time, _| {
+            let centered = (time - 0.52) / 0.065;
+            (
+                0.02 * (4.0 * time).sin(),
+                0.20 + 0.35 * time + 0.055 * (-centered * centered).exp(),
+            )
+        },
+        0.003,
+        HELD_OUT_NOISE_SEED,
+        true,
+    ));
+    scenarios.push(build_regular_scenario(
+        "held_out_validation",
+        "clip-boundaries",
+        "short sequence and boundary behavior",
+        7,
+        1.0 / 60.0,
+        |time, _| (0.01 + 0.02 * time, 0.30 + 0.45 * time),
+        0.003,
+        HELD_OUT_NOISE_SEED ^ 0x11,
+        false,
+    ));
+    scenarios.push(build_gap_scenario(
+        "short-missing-span",
+        "short missing span below the configured continuity threshold; no sample is synthesized",
+        0.04,
+        HELD_OUT_NOISE_SEED ^ 0x22,
+    ));
+    scenarios.push(build_gap_scenario(
+        "long-loss-span",
+        "long tracking-loss span above max_gap_s; centered windows and state-space history must reset",
+        0.40,
+        HELD_OUT_NOISE_SEED ^ 0x33,
+    ));
+
+    scenarios
 }
 
 fn build_regular_scenario(
@@ -483,7 +536,9 @@ fn build_regular_scenario(
     count: usize,
     dt: f64,
     truth_fn: impl Fn(f64, usize) -> (f64, f64),
-    noise_amplitude: f64,
+    noise_sigma_m: f64,
+    noise_seed: u64,
+    peak_metrics_applicable: bool,
 ) -> Scenario {
     let timestamps = (0..count)
         .map(|index| index as f64 * dt)
@@ -494,11 +549,13 @@ fn build_regular_scenario(
         condition,
         timestamps,
         truth_fn,
-        noise_amplitude,
+        noise_sigma_m,
+        noise_seed,
+        peak_metrics_applicable,
     )
 }
 
-fn build_irregular_scenario() -> Scenario {
+fn build_irregular_scenario(noise_seed: u64) -> Scenario {
     let mut timestamps = Vec::new();
     let mut time = 0.0;
     for index in 0..55 {
@@ -518,10 +575,17 @@ fn build_irregular_scenario() -> Scenario {
         timestamps,
         |time, _| (0.04 * time, 0.25 + 0.42 * time - 0.08 * time * time),
         0.003,
+        noise_seed,
+        false,
     )
 }
 
-fn build_gap_scenario(name: &'static str, condition: &'static str, gap_s: f64) -> Scenario {
+fn build_gap_scenario(
+    name: &'static str,
+    condition: &'static str,
+    gap_s: f64,
+    noise_seed: u64,
+) -> Scenario {
     let dt = 1.0 / 60.0;
     let mut timestamps = (0..13).map(|index| index as f64 * dt).collect::<Vec<_>>();
     let resume_at = timestamps.last().copied().unwrap_or_default() + gap_s;
@@ -533,6 +597,8 @@ fn build_gap_scenario(name: &'static str, condition: &'static str, gap_s: f64) -
         timestamps,
         |time, _| (0.025 * time, 0.18 + 0.48 * time),
         0.003,
+        noise_seed,
+        false,
     )
 }
 
@@ -542,7 +608,9 @@ fn build_scenario(
     condition: &'static str,
     timestamps: Vec<f64>,
     truth_fn: impl Fn(f64, usize) -> (f64, f64),
-    noise_amplitude: f64,
+    noise_sigma_m: f64,
+    noise_seed: u64,
+    peak_metrics_applicable: bool,
 ) -> Scenario {
     let truth = timestamps
         .iter()
@@ -562,8 +630,8 @@ fn build_scenario(
         .enumerate()
         .map(|(index, sample)| MetricPositionSample {
             timestamp_s: sample.timestamp_s,
-            x_m: sample.x_m + deterministic_noise(index, 0) * noise_amplitude,
-            y_m: sample.y_m + deterministic_noise(index, 1) * noise_amplitude,
+            x_m: sample.x_m + deterministic_gaussian(noise_seed, index, 0) * noise_sigma_m,
+            y_m: sample.y_m + deterministic_gaussian(noise_seed, index, 1) * noise_sigma_m,
             confidence: 1.0,
         })
         .collect();
@@ -572,18 +640,33 @@ fn build_scenario(
         split,
         name,
         condition,
+        noise_seed,
+        peak_metrics_applicable,
         truth,
         observed,
     }
 }
 
-fn deterministic_noise(index: usize, axis: usize) -> f64 {
-    let seed = index
-        .wrapping_mul(37)
-        .wrapping_add(axis.wrapping_mul(53))
-        .wrapping_add(11);
-    let bucket = seed % 17;
-    (bucket as f64 - 8.0) / 8.0
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut mixed = value;
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    mixed ^ (mixed >> 31)
+}
+
+fn unit_interval_open(key: u64) -> f64 {
+    let mantissa = splitmix64(key) >> 11;
+    (mantissa as f64 + 0.5) / ((1_u64 << 53) as f64)
+}
+
+fn deterministic_gaussian(seed: u64, index: usize, axis: usize) -> f64 {
+    let key = seed
+        ^ (index as u64).wrapping_mul(0xd6e8_feb8_6659_fd93)
+        ^ (axis as u64).wrapping_mul(0xa5a3_564e_27f8_862d);
+    let u1 = unit_interval_open(key);
+    let u2 = unit_interval_open(key ^ 0x632b_e59b_d9b4_e019);
+    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
 }
 
 fn render_summary(artifact: &FilterExperimentArtifact) -> String {
@@ -603,7 +686,7 @@ fn render_summary(artifact: &FilterExperimentArtifact) -> String {
     lines.push("held-out validation:".to_owned());
     for result in &artifact.held_out_validation {
         lines.push(format!(
-            "  {:>18} | {:>29} | pos_rmse={} m | vel_rmse={} m/s | peak_att={} | shift={} s | edge_mae={} m | samples={}/{}",
+            "  {:>18} | {:>29} | pos_rmse={} m | vel_rmse={} m/s | peak_att={} | shift={} s | edge_mae={} m | samples={}/{} | segments={}",
             result.scenario,
             result.filter.implementation,
             display_option(result.metrics.position_rmse_m),
@@ -613,6 +696,7 @@ fn render_summary(artifact: &FilterExperimentArtifact) -> String {
             display_option(result.edge_position_mae_m),
             result.output_samples,
             result.input_samples,
+            result.filter_segment_count,
         ));
     }
     lines.push(format!(
@@ -655,6 +739,44 @@ mod tests {
         assert!(development.iter().all(|name| !validation
             .iter()
             .any(|validation_name| validation_name == name)));
+    }
+
+    #[test]
+    fn deterministic_gaussian_noise_is_repeatable_and_axis_seed_specific() {
+        let a = deterministic_gaussian(7, 11, 0);
+        assert_eq!(a, deterministic_gaussian(7, 11, 0));
+        assert_ne!(a, deterministic_gaussian(7, 11, 1));
+        assert_ne!(a, deterministic_gaussian(8, 11, 0));
+    }
+
+    #[test]
+    fn development_scenarios_average_multiple_noise_seeds() {
+        let scenarios = scenarios();
+        for name in [
+            "constant-position-noise",
+            "constant-velocity-noise",
+            "smooth-trajectory",
+            "irregular-timestamps",
+        ] {
+            let seeds = scenarios
+                .iter()
+                .filter(|scenario| scenario.split == "development" && scenario.name == name)
+                .map(|scenario| scenario.noise_seed)
+                .collect::<Vec<_>>();
+            assert_eq!(seeds.len(), 3);
+            assert_ne!(seeds[0], seeds[1]);
+            assert_ne!(seeds[1], seeds[2]);
+        }
+    }
+
+    #[test]
+    fn only_intentional_peak_scenario_enables_peak_metrics() {
+        for scenario in scenarios() {
+            assert_eq!(
+                scenario.peak_metrics_applicable,
+                scenario.name == "sharp-peak"
+            );
+        }
     }
 
     #[test]
