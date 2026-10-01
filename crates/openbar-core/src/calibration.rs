@@ -1,4 +1,6 @@
-use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint};
+use crate::manual_seed::{
+    ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint, SpatialFrameReference,
+};
 use crate::math::approximately_equal;
 use crate::trajectory::PixelObservation;
 use serde::{Deserialize, Serialize};
@@ -231,6 +233,20 @@ impl CalibrationReference {
 
     pub const fn provenance(&self) -> &CalibrationProvenance {
         &self.provenance
+    }
+}
+
+impl SpatialFrameReference for CalibrationReference {
+    fn timestamp_s(&self) -> f64 {
+        self.timestamp_s
+    }
+
+    fn frame_index(&self) -> Option<u64> {
+        self.frame_index
+    }
+
+    fn coordinate_space(&self) -> PixelCoordinateSpace {
+        self.coordinate_space
     }
 }
 
@@ -819,6 +835,28 @@ mod tests {
         assert!(geometry_error
             .to_string()
             .contains("bounds must be centred on the recorded reference centre"));
+    }
+
+    #[test]
+    fn spatial_frame_reference_trait_is_implemented_identically() {
+        let seed = seed();
+        let reference = CalibrationReference::from_manual_seed(&seed);
+
+        fn check_spatial_ref<T: SpatialFrameReference>(
+            item: &T,
+            expected_ts: f64,
+            expected_frame: Option<u64>,
+        ) {
+            assert_eq!(item.timestamp_s(), expected_ts);
+            assert_eq!(item.frame_index(), expected_frame);
+            assert_eq!(
+                item.coordinate_space(),
+                PixelCoordinateSpace::DisplayTopLeft
+            );
+        }
+
+        check_spatial_ref(&seed, 1.25, Some(75));
+        check_spatial_ref(&reference, 1.25, Some(75));
     }
 
     #[test]

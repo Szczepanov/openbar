@@ -12,3 +12,5 @@ pub mod math;
 #[cfg(test)]
 pub mod test_utils;
 pub mod trajectory;
+
+pub use manual_seed::SpatialFrameReference;
