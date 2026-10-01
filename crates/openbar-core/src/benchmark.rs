@@ -1156,6 +1156,12 @@ mod filter_benchmark_tests {
         assert_eq!(metrics.comparable_velocity_samples, 2);
         assert!((metrics.position_mae_m.unwrap() - (1.0 / 3.0)).abs() < 1.0e-12);
         assert!((metrics.velocity_mae_mps.unwrap() - 0.25).abs() < 1.0e-12);
+        assert_eq!(metrics.horizontal_rom_absolute_error_m, Some(0.5));
+        assert_eq!(metrics.vertical_rom_absolute_error_m, Some(0.0));
+        assert_eq!(metrics.mean_vx_absolute_error_mps, Some(0.25));
+        assert_eq!(metrics.mean_vy_absolute_error_mps, Some(0.0));
+        assert_eq!(metrics.peak_vx_absolute_error_mps, Some(0.0));
+        assert_eq!(metrics.peak_vy_absolute_error_mps, Some(0.0));
         assert_eq!(metrics.ground_truth_peak_speed_mps, Some(1.0));
         assert_eq!(metrics.filtered_peak_speed_mps, Some(1.0));
         assert_eq!(metrics.peak_attenuation_mps, Some(0.0));
@@ -1185,6 +1191,9 @@ mod filter_benchmark_tests {
         assert_eq!(metrics.comparable_position_samples, 4);
         assert_eq!(metrics.comparable_velocity_samples, 2);
         assert_eq!(metrics.velocity_mae_mps, Some(0.0));
+        assert_eq!(metrics.horizontal_rom_absolute_error_m, None);
+        assert_eq!(metrics.mean_vx_absolute_error_mps, None);
+        assert_eq!(metrics.peak_vx_absolute_error_mps, None);
         assert_eq!(metrics.ground_truth_peak_speed_mps, Some(1.0));
     }
 
@@ -1209,6 +1218,8 @@ mod filter_benchmark_tests {
         assert_eq!(metrics.peak_attenuation_mps, None);
         assert_eq!(metrics.peak_attenuation_fraction, None);
         assert_eq!(metrics.peak_timing_shift_s, None);
+        assert_eq!(metrics.peak_vx_absolute_error_mps, None);
+        assert_eq!(metrics.peak_vy_absolute_error_mps, None);
     }
 
     #[test]
