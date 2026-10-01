@@ -1,9 +1,9 @@
 use crate::calibration::{CalibrationProvenance, PlateDiameterCalibration};
-use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
-use crate::math::approximately_equal;
 use crate::kinematics::{
     derive_velocity, KinematicsConfig, VELOCITY_METHOD_IMPLEMENTATION, VELOCITY_METHOD_VERSION,
 };
+use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
+use crate::math::approximately_equal;
 use crate::trajectory::{
     KinematicSample, MetricPositionSample, PixelObservation, TrajectoryValidationError,
 };
@@ -924,8 +924,11 @@ fn validate_canonical_kinematics(
     let min_confidence =
         required_kinematics_numeric_parameter(&kinematics.method, "min_confidence")? as f32;
 
-    let config = KinematicsConfig::try_new(max_gap_s, min_confidence)
-        .map_err(|error| invalid(format!("invalid persisted kinematics configuration: {error}")))?;
+    let config = KinematicsConfig::try_new(max_gap_s, min_confidence).map_err(|error| {
+        invalid(format!(
+            "invalid persisted kinematics configuration: {error}"
+        ))
+    })?;
     let expected = derive_velocity(input, config)
         .map_err(|error| invalid(format!("cannot reproduce persisted kinematics: {error}")))?;
 
@@ -936,7 +939,9 @@ fn validate_canonical_kinematics(
     }
 
     for (index, (expected, actual)) in expected.iter().zip(&kinematics.samples).enumerate() {
-        if actual.vx_mps != expected.vx_mps || actual.vy_mps != expected.vy_mps {
+        if !optional_f64_approximately_equal(actual.vx_mps, expected.vx_mps)
+            || !optional_f64_approximately_equal(actual.vy_mps, expected.vy_mps)
+        {
             return Err(invalid(format!(
                 "kinematic sample {index} velocity does not match backward-difference@1 with its persisted configuration"
             )));
@@ -949,6 +954,14 @@ fn validate_canonical_kinematics(
     }
 
     Ok(())
+}
+
+fn optional_f64_approximately_equal(left: Option<f64>, right: Option<f64>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => approximately_equal(left, right),
+        _ => false,
+    }
 }
 
 fn required_kinematics_numeric_parameter(
