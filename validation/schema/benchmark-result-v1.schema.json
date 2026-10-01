@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/benchmark-result-v1.schema.json",
+  "title": "OpenBar M0 tracker benchmark result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "benchmark_metric_version",
+    "pipeline_version",
+    "environment",
+    "cases",
+    "aggregates"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "benchmark_metric_version": {"type": "string", "minLength": 1},
+    "pipeline_version": {"type": "string", "minLength": 1},
+    "git_commit": {"type": "string", "minLength": 1},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["openbar_cli_version", "os", "arch"],
+      "properties": {
+        "openbar_cli_version": {"type": "string"},
+        "os": {"type": "string"},
+        "arch": {"type": "string"}
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/case_result"}
+    },
+    "aggregates": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/aggregate_result"}
+    }
+  },
+  "$defs": {
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "config"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "config": {"type": "object"}
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_s", "end_s"],
+      "properties": {
+        "start_s": {"type": "number"},
+        "end_s": {"type": "number"}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparable_samples",
+        "tracked_samples",
+        "lost_samples",
+        "tracker_declared_loss_samples",
+        "low_confidence_samples",
+        "timestamp_unmatched_samples",
+        "plate_center_mae_px",
+        "plate_center_rmse_px",
+        "x_bias_px",
+        "y_bias_px",
+        "tracking_availability",
+        "lost_frame_percentage",
+        "max_consecutive_tracking_loss_samples",
+        "max_consecutive_tracking_loss_duration_s"
+      ],
+      "properties": {
+        "comparable_samples": {"type": "integer", "minimum": 0},
+        "tracked_samples": {"type": "integer", "minimum": 0},
+        "lost_samples": {"type": "integer", "minimum": 0},
+        "tracker_declared_loss_samples": {"type": "integer", "minimum": 0},
+        "low_confidence_samples": {"type": "integer", "minimum": 0},
+        "timestamp_unmatched_samples": {"type": "integer", "minimum": 0},
+        "plate_center_mae_px": {"type": ["number", "null"]},
+        "plate_center_rmse_px": {"type": ["number", "null"]},
+        "x_bias_px": {"type": ["number", "null"]},
+        "y_bias_px": {"type": ["number", "null"]},
+        "tracking_availability": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "lost_frame_percentage": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_consecutive_tracking_loss_samples": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "max_consecutive_tracking_loss_duration_s": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "case_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "fixture_id",
+        "exercise",
+        "camera_view",
+        "conditions",
+        "implementation",
+        "selected_range_s",
+        "alignment",
+        "metrics",
+        "warnings"
+      ],
+      "properties": {
+        "case_id": {"type": "string"},
+        "fixture_id": {"type": "string"},
+        "exercise": {"type": "string"},
+        "camera_view": {"type": "string"},
+        "conditions": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "implementation": {"$ref": "#/$defs/implementation"},
+        "selected_range_s": {"$ref": "#/$defs/range"},
+        "alignment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timestamp_tolerance_s", "min_confidence"],
+          "properties": {
+            "timestamp_tolerance_s": {"type": "number", "minimum": 0},
+            "min_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "metrics": {"$ref": "#/$defs/metrics"},
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "processing_wall_s",
+            "selected_media_duration_s",
+            "media_seconds_per_wall_second"
+          ],
+          "properties": {
+            "processing_wall_s": {"type": "number", "exclusiveMinimum": 0},
+            "selected_media_duration_s": {"type": "number", "minimum": 0},
+            "media_seconds_per_wall_second": {"type": "number", "minimum": 0}
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "aggregate_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "group", "case_count", "metrics"],
+      "properties": {
+        "implementation": {"$ref": "#/$defs/implementation"},
+        "group": {"type": "string"},
+        "case_count": {"type": "integer", "minimum": 1},
+        "metrics": {"$ref": "#/$defs/metrics"}
+      }
+    }
+  }
+}
