@@ -1138,6 +1138,7 @@ mod filter_benchmark_tests {
                 &too_many,
                 FilterBenchmarkParameters {
                     max_velocity_gap_s: 1.5,
+                    evaluate_peak_metrics: true,
                 },
             ),
             Err(FilterBenchmarkError::LengthMismatch { .. })
@@ -1150,6 +1151,7 @@ mod filter_benchmark_tests {
                 &shifted,
                 FilterBenchmarkParameters {
                     max_velocity_gap_s: 1.5,
+                    evaluate_peak_metrics: true,
                 },
             ),
             Err(FilterBenchmarkError::TimestampMismatch { .. })
