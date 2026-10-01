@@ -1,5 +1,6 @@
 use crate::calibration::{CalibrationProvenance, PlateDiameterCalibration};
 use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
+use crate::math::approximately_equal;
 use crate::trajectory::{
     KinematicSample, MetricPositionSample, PixelObservation, TrajectoryValidationError,
 };
@@ -900,17 +901,6 @@ fn validate_kinematic_series(samples: &[KinematicSample]) -> Result<(), Analysis
 
 fn trajectory_error(prefix: String, error: TrajectoryValidationError) -> AnalysisValidationError {
     invalid(format!("{prefix}: {error}"))
-}
-
-fn approximately_equal(left: f64, right: f64) -> bool {
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-    let scale = left.abs().max(right.abs()).max(1.0);
-    (left - right).abs() <= f64::EPSILON * 16.0 * scale
 }
 
 #[cfg(test)]
