@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/annotation-v1.schema.json",
+  "title": "OpenBar M0 plate-centre annotations",
+  "description": "Timestamp-authoritative ground-truth annotations for one validation fixture.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "coordinate_system",
+    "timebase",
+    "provenance",
+    "samples"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "minLength": 1
+    },
+    "source_video_sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "coordinate_system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "space",
+        "origin",
+        "x_direction",
+        "y_direction",
+        "rotation_applied",
+        "width_px",
+        "height_px"
+      ],
+      "properties": {
+        "space": { "const": "decoded_display_pixels" },
+        "origin": { "const": "top_left" },
+        "x_direction": { "const": "right" },
+        "y_direction": { "const": "down" },
+        "rotation_applied": { "const": true },
+        "width_px": { "type": "integer", "minimum": 1 },
+        "height_px": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "timebase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "origin", "decoder_match_tolerance_s"],
+      "properties": {
+        "unit": { "const": "seconds" },
+        "origin": { "const": "media_start" },
+        "decoder_match_tolerance_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum absolute difference between a requested timestamp and the actual decoded frame timestamp used for annotation."
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["annotator_id", "annotated_at", "method", "tool"],
+      "properties": {
+        "annotator_id": { "type": "string", "minLength": 1 },
+        "annotated_at": { "type": "string", "format": "date-time" },
+        "method": { "const": "manual_plate_centre" },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sample" }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x_px", "y_px"],
+      "properties": {
+        "x_px": { "type": "number", "minimum": 0 },
+        "y_px": { "type": "number", "minimum": 0 }
+      }
+    },
+    "target_size": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["radius_px"],
+          "properties": {
+            "radius_px": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["diameter_px"],
+          "properties": {
+            "diameter_px": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left_px", "top_px", "right_px", "bottom_px"],
+          "properties": {
+            "left_px": { "type": "number", "minimum": 0 },
+            "top_px": { "type": "number", "minimum": 0 },
+            "right_px": { "type": "number", "minimum": 0 },
+            "bottom_px": { "type": "number", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestamp_s",
+        "annotation_state",
+        "visibility",
+        "quality"
+      ],
+      "properties": {
+        "timestamp_s": { "type": "number", "minimum": 0 },
+        "requested_timestamp_s": { "type": "number", "minimum": 0 },
+        "frame_index": { "type": "integer", "minimum": 0 },
+        "annotation_state": {
+          "enum": ["labelled", "unlabelable", "not_annotated"]
+        },
+        "visibility": {
+          "enum": ["visible", "partially_occluded", "fully_occluded", "unknown"]
+        },
+        "center_px": { "$ref": "#/$defs/point" },
+        "target_size_px": { "$ref": "#/$defs/target_size" },
+        "quality": {
+          "enum": ["high", "medium", "low", "unusable", "not_assessed"]
+        },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "annotation_state": { "const": "labelled" } },
+            "required": ["annotation_state"]
+          },
+          "then": { "required": ["center_px"] },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "required": ["center_px"] },
+                { "required": ["target_size_px"] }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

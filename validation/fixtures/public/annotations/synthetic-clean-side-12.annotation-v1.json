@@ -1,0 +1,150 @@
+{
+  "coordinate_system": {
+    "height_px": 240,
+    "origin": "top_left",
+    "rotation_applied": true,
+    "space": "decoded_display_pixels",
+    "width_px": 320,
+    "x_direction": "right",
+    "y_direction": "down"
+  },
+  "fixture_id": "synthetic-clean-side-12",
+  "provenance": {
+    "annotated_at": "2026-10-01T10:15:00Z",
+    "annotator_id": "example-pass-a",
+    "method": "manual_plate_centre",
+    "notes": "Synthetic workflow pass used to exercise the canonical annotation contract.",
+    "tool": {
+      "name": "openbar-csv-import",
+      "version": "1"
+    }
+  },
+  "samples": [
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 100.0, "y_px": 190.0},
+      "frame_index": 0,
+      "quality": "high",
+      "requested_timestamp_s": 0.0,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.0,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 101.0, "y_px": 182.0},
+      "frame_index": 1,
+      "quality": "high",
+      "requested_timestamp_s": 0.083333,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.083333,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 102.0, "y_px": 170.0},
+      "frame_index": 2,
+      "quality": "high",
+      "requested_timestamp_s": 0.166667,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.166667,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 103.0, "y_px": 154.0},
+      "frame_index": 3,
+      "quality": "high",
+      "requested_timestamp_s": 0.25,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.25,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 104.0, "y_px": 135.0},
+      "frame_index": 4,
+      "notes": "occluder crosses right side of plate",
+      "quality": "medium",
+      "requested_timestamp_s": 0.333333,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.333333,
+      "visibility": "partially_occluded"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 105.0, "y_px": 115.0},
+      "frame_index": 5,
+      "quality": "high",
+      "requested_timestamp_s": 0.416667,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.416667,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 106.0, "y_px": 96.0},
+      "frame_index": 6,
+      "quality": "high",
+      "requested_timestamp_s": 0.5,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.5,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "unlabelable",
+      "frame_index": 7,
+      "notes": "centre intentionally absent",
+      "quality": "unusable",
+      "requested_timestamp_s": 0.583333,
+      "timestamp_s": 0.583333,
+      "visibility": "fully_occluded"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 108.0, "y_px": 76.0},
+      "frame_index": 8,
+      "quality": "high",
+      "requested_timestamp_s": 0.666667,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.666667,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 109.0, "y_px": 84.0},
+      "frame_index": 9,
+      "quality": "high",
+      "requested_timestamp_s": 0.75,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.75,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "not_annotated",
+      "frame_index": 10,
+      "notes": "demonstrates deliberate annotation gap",
+      "quality": "not_assessed",
+      "requested_timestamp_s": 0.833333,
+      "timestamp_s": 0.833333,
+      "visibility": "visible"
+    },
+    {
+      "annotation_state": "labelled",
+      "center_px": {"x_px": 111.0, "y_px": 114.0},
+      "frame_index": 11,
+      "quality": "high",
+      "requested_timestamp_s": 0.916667,
+      "target_size_px": {"radius_px": 24.0},
+      "timestamp_s": 0.916667,
+      "visibility": "visible"
+    }
+  ],
+  "schema_version": 1,
+  "source_video_sha256": "a175d350c96db3df1771c1eb141a017eaed012ae6bbd6cda739510b244113096",
+  "timebase": {
+    "decoder_match_tolerance_s": 0.0005,
+    "origin": "media_start",
+    "unit": "seconds"
+  }
+}

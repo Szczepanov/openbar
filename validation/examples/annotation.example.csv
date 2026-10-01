@@ -1,0 +1,13 @@
+timestamp_s,requested_timestamp_s,frame_index,annotation_state,visibility,quality,x_px,y_px,radius_px,diameter_px,left_px,top_px,right_px,bottom_px,notes
+0.000000,0.000000,0,labelled,visible,high,100,190,24,,,,,,
+0.083333,0.083333,1,labelled,visible,high,101,182,24,,,,,,
+0.166667,0.166667,2,labelled,visible,high,102,170,24,,,,,,
+0.250000,0.250000,3,labelled,visible,high,103,154,24,,,,,,
+0.333333,0.333333,4,labelled,partially_occluded,medium,104,135,24,,,,,,occluder crosses right side of plate
+0.416667,0.416667,5,labelled,visible,high,105,115,24,,,,,,
+0.500000,0.500000,6,labelled,visible,high,106,96,24,,,,,,
+0.583333,0.583333,7,unlabelable,fully_occluded,unusable,,,,,,,,,centre intentionally absent
+0.666667,0.666667,8,labelled,visible,high,108,76,24,,,,,,
+0.750000,0.750000,9,labelled,visible,high,109,84,24,,,,,,
+0.833333,0.833333,10,not_annotated,visible,not_assessed,,,,,,,,,demonstrates deliberate annotation gap
+0.916667,0.916667,11,labelled,visible,high,111,114,24,,,,,,

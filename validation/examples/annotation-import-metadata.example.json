@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-clean-side-12",
+  "source_video_sha256": "a175d350c96db3df1771c1eb141a017eaed012ae6bbd6cda739510b244113096",
+  "coordinate_system": {
+    "space": "decoded_display_pixels",
+    "origin": "top_left",
+    "x_direction": "right",
+    "y_direction": "down",
+    "rotation_applied": true,
+    "width_px": 320,
+    "height_px": 240
+  },
+  "timebase": {
+    "unit": "seconds",
+    "origin": "media_start",
+    "decoder_match_tolerance_s": 0.0005
+  },
+  "provenance": {
+    "annotator_id": "example-pass-a",
+    "annotated_at": "2026-10-01T10:15:00Z",
+    "method": "manual_plate_centre",
+    "tool": {
+      "name": "openbar-csv-import",
+      "version": "1"
+    },
+    "notes": "Synthetic workflow pass used to exercise the canonical annotation contract."
+  }
+}

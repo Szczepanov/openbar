@@ -22,3 +22,20 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python syntax
+        run: python3 -m py_compile validation/tools/annotations.py validation/tests/test_annotations.py
+      - name: Annotation contract tests
+        run: python3 -m unittest discover -s validation/tests -p 'test_*.py'
+      - name: Validate committed annotation fixture
+        run: >-
+          python3 validation/tools/annotations.py validate
+          --manifest validation/fixtures/public/manifest.json
+          validation/fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json
