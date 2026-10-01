@@ -35,6 +35,7 @@ The four M0 candidates are:
 3. `timestamp-aware-savitzky-golay@1`
    - local polynomial least-squares fit evaluated at each authoritative timestamp;
    - uses actual timestamp offsets and does not require uniform resampling;
+   - normalizes each local timestamp basis to roughly `[-1, 1]` before solving, avoiding false singularity at 120/240+ fps while leaving the fitted value at the target timestamp unchanged;
    - non-causal;
    - asymmetric shifted windows at clip/segment boundaries;
    - a segment shorter than `polynomial_order + 1` passes through unchanged rather than
@@ -42,8 +43,11 @@ The four M0 candidates are:
 4. `constant-velocity-kalman@1`
    - causal two-state position/velocity model per axis;
    - each transition uses the measured timestamp delta;
-   - process noise, measurement noise, and initial velocity variance are explicit;
-   - state resets after a gap larger than `max_gap_s`;
+   - process noise is recorded as acceleration variance in `m²/s⁴`;
+   - measurement noise is recorded as position variance in `m²`;
+   - initial velocity variance is recorded in `m²/s²`;
+   - `confidence_window_samples` explicitly controls recent-confidence memory; output confidence is the minimum over that finite window and can recover once a low-confidence observation leaves it;
+   - state and confidence history reset after a gap larger than `max_gap_s`;
    - no prediction is emitted for missing timestamps.
 
 ## Benchmark metrics
@@ -54,14 +58,15 @@ reference sample count and timestamps. It reports:
 - position MAE/RMSE and maximum radial position error;
 - X/Y position bias;
 - downstream velocity MAE/RMSE over contiguous intervals only;
-- reference and filtered peak speed over contiguous intervals only;
-- peak attenuation and attenuation fraction;
-- peak timing shift.
+- reference and filtered peak speed over contiguous intervals only when the scenario defines a meaningful peak;
+- peak attenuation and attenuation fraction only for those peak-bearing scenarios;
+- peak timing shift only for those peak-bearing scenarios.
 
 The CLI additionally records:
 
 - edge position MAE over the first/last samples;
 - input/output sample counts;
+- filter segment count, making an over-small `max_gap_s` that degenerates into one-sample segments visible;
 - maximum observed timestamp gap;
 - wall-clock runtime as environment-sensitive diagnostic data.
 
@@ -80,7 +85,7 @@ cargo run -p openbar-cli -- filter-experiment \
   --output target/filter-experiment.json
 ```
 
-The command uses deterministic synthetic signals in two disjoint groups.
+The command uses deterministic synthetic signals in two disjoint groups. Measurement noise is generated with a small dependency-free seeded SplitMix64 + Box–Muller Gaussian generator. Development metrics are averaged across three independent seeds per signal and X/Y use independent streams. Held-out scenarios use separate seeds.
 
 Development signals cover:
 
@@ -91,14 +96,16 @@ Development signals cover:
 
 Within each filter family, candidate parameters are selected by mean development velocity RMSE,
 with mean position RMSE as a deterministic tie-break. The rule selects one configuration per family;
-it does not select a production winner.
+it does not select a production winner. The Kalman grid varies both acceleration variance and
+measurement variance; it does not receive the synthetic generator's exact variance as a fixed
+privileged parameter.
 
 Held-out synthetic signals then cover:
 
-- a sharp velocity feature for peak attenuation/phase shift;
-- a short clip for boundary behaviour;
-- a short missing span;
-- a long tracking-loss span that exceeds the configured continuity threshold.
+- a sharp velocity feature for peak attenuation/phase shift, where peak metrics are applicable;
+- a short clip for boundary behaviour, where peak fields remain null;
+- a short missing span, where peak fields remain null;
+- a long tracking-loss span that exceeds the configured continuity threshold, where peak fields remain null.
 
 Held-out results are not fed back into tuning.
 
