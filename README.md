@@ -39,10 +39,12 @@ apps/
   openbar-cli/
 crates/
   openbar-core/
+  openbar-tracking/
 docs/
   adr/
   architecture/
   clean-room/
+  data/
   legal/
   product/
   roadmap/
