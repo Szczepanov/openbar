@@ -12,7 +12,6 @@ pub enum CliErrorKind {
     Tracking,
     Output,
     Benchmark,
-    RenderUnavailable,
 }
 
 impl CliErrorKind {
@@ -26,7 +25,6 @@ impl CliErrorKind {
             Self::Tracking => 6,
             Self::Output => 7,
             Self::Benchmark => 8,
-            Self::RenderUnavailable => 9,
         }
     }
 
@@ -40,7 +38,6 @@ impl CliErrorKind {
             Self::Tracking => "tracking",
             Self::Output => "output",
             Self::Benchmark => "benchmark",
-            Self::RenderUnavailable => "render-unavailable",
         }
     }
 }
@@ -87,10 +84,6 @@ impl CliError {
         Self::new(CliErrorKind::Benchmark, message)
     }
 
-    pub fn render_unavailable(message: impl Into<String>) -> Self {
-        Self::new(CliErrorKind::RenderUnavailable, message)
-    }
-
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(CliErrorKind::Internal, message)
     }
@@ -127,7 +120,6 @@ mod tests {
             CliErrorKind::Tracking,
             CliErrorKind::Output,
             CliErrorKind::Benchmark,
-            CliErrorKind::RenderUnavailable,
         ];
         let mut codes = kinds
             .iter()
