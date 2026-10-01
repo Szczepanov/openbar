@@ -154,6 +154,13 @@ pub enum TrackerError {
     InvalidFrameDimensions { width_px: u32, height_px: u32 },
     FrameBufferSizeOverflow,
     InvalidFrameBufferLength { expected: usize, actual: usize },
+    FrameDimensionsChanged {
+        index: usize,
+        expected_width_px: u32,
+        expected_height_px: u32,
+        actual_width_px: u32,
+        actual_height_px: u32,
+    },
     InvalidConfiguration { field: &'static str },
     EmptySequence,
     InvalidTimestamp { index: usize, value: f64 },
@@ -172,6 +179,16 @@ impl fmt::Display for TrackerError {
             Self::FrameBufferSizeOverflow => write!(f, "frame buffer size overflow"),
             Self::InvalidFrameBufferLength { expected, actual } =>
                 write!(f, "frame buffer length must be {expected}, got {actual}"),
+            Self::FrameDimensionsChanged {
+                index,
+                expected_width_px,
+                expected_height_px,
+                actual_width_px,
+                actual_height_px,
+            } => write!(
+                f,
+                "frame dimensions changed at index {index}: expected {expected_width_px}x{expected_height_px}, got {actual_width_px}x{actual_height_px}"
+            ),
             Self::InvalidConfiguration { field } => write!(f, "invalid tracker configuration field '{field}'"),
             Self::EmptySequence => write!(f, "tracker requires at least one frame"),
             Self::InvalidTimestamp { index, value } =>
