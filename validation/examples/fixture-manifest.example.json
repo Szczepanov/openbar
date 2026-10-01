@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "id": "example-clean-side-60",
+      "exercise": "clean",
+      "purpose": "development",
+      "video": {
+        "nominal_fps": 60,
+        "width_px": 1920,
+        "height_px": 1080,
+        "rotation_deg": 0
+      },
+      "camera": {
+        "view": "side",
+        "approx_yaw_deg": 2,
+        "distance_m": 4.5,
+        "movement": "fixed"
+      },
+      "load": {
+        "total_kg": 100,
+        "plate_diameter_m": 0.45
+      },
+      "conditions": {
+        "lighting": "good",
+        "plate_visibility": "clear",
+        "occlusion": "none",
+        "motion_blur": "low",
+        "challenge_tags": ["example-only", "clean-side-view"]
+      },
+      "source": {
+        "kind": "synthetic",
+        "reference": "Metadata-only example; no media is distributed.",
+        "redistribution_status": "allowed",
+        "redistribution_evidence": "No external media or dataset is included."
+      },
+      "notes": "Illustrates the primary M0 recording geometry."
+    },
+    {
+      "id": "example-snatch-side-120",
+      "exercise": "snatch",
+      "purpose": "validation",
+      "video": {
+        "nominal_fps": 120,
+        "width_px": 1920,
+        "height_px": 1080,
+        "rotation_deg": 0
+      },
+      "camera": {
+        "view": "side",
+        "approx_yaw_deg": -4,
+        "distance_m": 5.0,
+        "movement": "fixed"
+      },
+      "load": {
+        "total_kg": 80,
+        "plate_diameter_m": 0.45
+      },
+      "conditions": {
+        "lighting": "mixed",
+        "plate_visibility": "partial",
+        "occlusion": "minor",
+        "motion_blur": "moderate",
+        "challenge_tags": ["example-only", "high-frame-rate", "minor-occlusion"]
+      },
+      "source": {
+        "kind": "synthetic",
+        "reference": "Metadata-only example; no media is distributed.",
+        "redistribution_status": "allowed",
+        "redistribution_evidence": "No external media or dataset is included."
+      }
+    },
+    {
+      "id": "example-back-squat-side-30",
+      "exercise": "back_squat",
+      "purpose": "control",
+      "video": {
+        "nominal_fps": 30,
+        "width_px": 1280,
+        "height_px": 720,
+        "rotation_deg": 0
+      },
+      "camera": {
+        "view": "side",
+        "movement": "fixed"
+      },
+      "load": {
+        "total_kg": 140,
+        "plate_diameter_m": 0.45
+      },
+      "conditions": {
+        "lighting": "good",
+        "plate_visibility": "clear",
+        "occlusion": "none",
+        "motion_blur": "none",
+        "challenge_tags": ["example-only", "control-condition"]
+      },
+      "source": {
+        "kind": "synthetic",
+        "reference": "Metadata-only example; no media is distributed.",
+        "redistribution_status": "allowed",
+        "redistribution_evidence": "No external media or dataset is included."
+      }
+    },
+    {
+      "id": "example-clean-oblique-60",
+      "exercise": "clean",
+      "purpose": "boundary",
+      "video": {
+        "nominal_fps": 60,
+        "width_px": 1920,
+        "height_px": 1080,
+        "rotation_deg": 0
+      },
+      "camera": {
+        "view": "oblique_45",
+        "approx_yaw_deg": 45,
+        "movement": "fixed"
+      },
+      "load": {
+        "total_kg": 100,
+        "plate_diameter_m": 0.45
+      },
+      "conditions": {
+        "lighting": "good",
+        "plate_visibility": "clear",
+        "occlusion": "none",
+        "motion_blur": "low",
+        "challenge_tags": ["example-only", "m0-boundary", "oblique-view"]
+      },
+      "source": {
+        "kind": "synthetic",
+        "reference": "Metadata-only example; no media is distributed.",
+        "redistribution_status": "allowed",
+        "redistribution_evidence": "No external media or dataset is included."
+      },
+      "notes": "Retained for boundary/OOD research; not equivalent to validated side-view sagittal measurements."
+    }
+  ]
+}
