@@ -35,12 +35,15 @@ fn dispatch() -> CliResult<()> {
         Some("analyze") => analyze::run_cli(),
         Some("benchmark") => benchmark::run_cli(),
         Some("render") => render::run_cli(),
-        Some("tracker-experiment") => tracker_experiment::run_cli()
-            .map_err(|error| CliError::tracking(error.to_string())),
-        Some("tracker-run") => tracker_run::run_cli()
-            .map_err(|error| CliError::tracking(error.to_string())),
-        Some("filter-experiment") => filter_experiment::run_cli()
-            .map_err(|error| CliError::internal(error.to_string())),
+        Some("tracker-experiment") => {
+            tracker_experiment::run_cli().map_err(|error| CliError::tracking(error.to_string()))
+        }
+        Some("tracker-run") => {
+            tracker_run::run_cli().map_err(|error| CliError::tracking(error.to_string()))
+        }
+        Some("filter-experiment") => {
+            filter_experiment::run_cli().map_err(|error| CliError::internal(error.to_string()))
+        }
         None | Some("--help") | Some("-h") => {
             println!("{USAGE}");
             Ok(())
