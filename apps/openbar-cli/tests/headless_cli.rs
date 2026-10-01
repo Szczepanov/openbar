@@ -182,8 +182,7 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         "status=failure error[seed-calibration]",
     );
     assert!(
-        String::from_utf8_lossy(&fixture_plate_mismatch.stderr)
-            .contains("load.plate_diameter_m")
+        String::from_utf8_lossy(&fixture_plate_mismatch.stderr).contains("load.plate_diameter_m")
     );
 
     let invalid_plate = Command::new(binary())
