@@ -81,7 +81,9 @@ fn samples<'a>(frames: &'a [GrayFrame], timestamps: &[f64]) -> Vec<FrameSample<'
 fn tracked_center(observation: &TrackerObservation) -> PixelPoint {
     match observation.state {
         TrackerObservationState::Tracked { center, .. } => center,
-        TrackerObservationState::Lost { reason } => panic!("expected tracked observation, got {reason:?}"),
+        TrackerObservationState::Lost { reason } => {
+            panic!("expected tracked observation, got {reason:?}")
+        }
     }
 }
 
@@ -94,7 +96,10 @@ fn assert_near(point: PixelPoint, expected: (f64, f64)) {
 fn stationary_and_translated_targets_work_for_both_families_and_common_benchmark() {
     let centers = [(24, 40), (26, 39), (28, 38), (30, 37), (32, 36)];
     let timestamps = [0.0, 0.1, 0.2, 0.3, 0.4];
-    let frames = centers.iter().map(|center| disk_frame(Some(*center))).collect::<Vec<_>>();
+    let frames = centers
+        .iter()
+        .map(|center| disk_frame(Some(*center)))
+        .collect::<Vec<_>>();
     let frame_samples = samples(&frames, &timestamps);
     let manual_seed = seed(centers[0]);
     let truth = centers
@@ -204,7 +209,10 @@ fn invalid_seed_sequence_empty_sequence_irregular_timestamps_and_determinism_are
     ));
 
     let centers = [(24, 40), (25, 39), (26, 38), (27, 37)];
-    let frames = centers.iter().map(|center| disk_frame(Some(*center))).collect::<Vec<_>>();
+    let frames = centers
+        .iter()
+        .map(|center| disk_frame(Some(*center)))
+        .collect::<Vec<_>>();
     let timestamps = [0.0, 0.013, 0.091, 0.44];
     let frame_samples = samples(&frames, &timestamps);
     let contrast = LocalContrastTracker::default();
@@ -217,14 +225,15 @@ fn invalid_seed_sequence_empty_sequence_irregular_timestamps_and_determinism_are
             .iter()
             .map(|observation| observation.timestamp_s)
             .collect::<Vec<_>>(),
-        timestamps
+        timestamps.to_vec()
     );
 }
 
 #[test]
 fn one_frame_sequence_is_supported_and_low_contrast_seed_fails_explicitly() {
     let frame = disk_frame(Some((24, 40)));
-    let frame_samples = samples(&[frame], &[0.0]);
+    let frames = [frame];
+    let frame_samples = samples(&frames, &[0.0]);
     assert_eq!(
         TemplateMatchTracker::default()
             .track(&frame_samples, &seed((24, 40)))
@@ -275,9 +284,7 @@ fn canonical_fixture_seed_and_annotations_feed_both_trackers_through_same_evalua
         "../../../validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json"
     ))
     .unwrap();
-    seed_document
-        .validate(context(320, 240, 0.916667))
-        .unwrap();
+    seed_document.validate(context(320, 240, 0.916667)).unwrap();
 
     let centers = annotations
         .samples
@@ -294,7 +301,11 @@ fn canonical_fixture_seed_and_annotations_feed_both_trackers_through_same_evalua
         .iter()
         .map(|center| disk_frame_with_geometry(320, 240, *center, 24, 40))
         .collect::<Vec<_>>();
-    let timestamps = annotations.samples.iter().map(|sample| sample.timestamp_s).collect::<Vec<_>>();
+    let timestamps = annotations
+        .samples
+        .iter()
+        .map(|sample| sample.timestamp_s)
+        .collect::<Vec<_>>();
     let frame_samples = samples(&frames, &timestamps);
     let truth = annotations
         .samples
@@ -320,8 +331,12 @@ fn canonical_fixture_seed_and_annotations_feed_both_trackers_through_same_evalua
     .unwrap();
 
     for run in [
-        template.track(&frame_samples, seed_document.seed()).unwrap(),
-        contrast.track(&frame_samples, seed_document.seed()).unwrap(),
+        template
+            .track(&frame_samples, seed_document.seed())
+            .unwrap(),
+        contrast
+            .track(&frame_samples, seed_document.seed())
+            .unwrap(),
     ] {
         let metrics = evaluate_tracker_case(
             &truth,
