@@ -219,8 +219,8 @@ fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
     }
 
     Ok(FilterExperimentArtifact {
-        schema_version: 2,
-        experiment_version: "m0-filter-comparison-v2",
+        schema_version: 3,
+        experiment_version: "m0-filter-comparison-v3",
         purpose: "Quantitative M0 comparison of raw, moving-average, timestamp-aware Savitzky-Golay, and constant-velocity Kalman filtering under one deterministic contract.",
         development_policy: DevelopmentPolicy {
             split: "Synthetic parameter-development signals are disjoint from held-out synthetic validation signals.",
@@ -244,7 +244,7 @@ fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
         },
         limitations: vec![
             "Synthetic measurement noise is seeded pseudo-random Gaussian noise used for repeatable regression/tuning; it is not a model of blur, compression, occlusion, camera motion, or tracker-correlated error.",
-            "Velocity is the existing timestamp-based backward difference and is used consistently for reference and filtered trajectories.",
+            "Velocity uses backward-difference@1 with authoritative timestamps; the configured continuity gap is enforced by the kinematics layer for both reference and filtered trajectories.",
             "Runtime is environment-sensitive, printed only as a console diagnostic, and excluded from the retained deterministic JSON evidence artifact.",
             "No missing timestamp is synthesized; long-gap scenarios contain only observed samples on each side of the loss span.",
             "Peak attenuation/timing fields are emitted only for scenarios with an intentionally defined velocity peak.",
