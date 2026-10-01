@@ -104,6 +104,23 @@ jobs:
           --schema validation/schema/tracker-prediction-v1.schema.json
           target/tracker-run-smoke/synthetic-clean-side-12.template-sad-v1.prediction-v1.json
           target/tracker-run-smoke/synthetic-clean-side-12.local-contrast-centroid-v1.prediction-v1.json
+      - name: Canonical analyze smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- analyze
+          --manifest validation/fixtures/public/manifest.json
+          --fixture synthetic-clean-side-12
+          --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json
+          --plate-diameter-m 0.45
+          --tracker template
+          --filter raw
+          --kinematics-max-gap-s 0.2
+          --kinematics-min-confidence 0
+          --output target/analyze-smoke.json
+      - name: Canonical analysis schema
+        run: >-
+          python3 validation/tools/schema_check.py
+          --schema validation/schema/analysis-v1.schema.json
+          target/analyze-smoke.json
       - name: Upload M0 smoke evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -112,6 +129,7 @@ jobs:
             target/tracker-experiment.json
             target/filter-experiment.json
             target/benchmark-smoke.json
+            target/analyze-smoke.json
             target/tracker-run-smoke/
           if-no-files-found: error
           retention-days: 14
@@ -165,6 +183,23 @@ jobs:
           --schema validation/schema/tracker-prediction-v1.schema.json
           target/tracker-run-smoke/synthetic-clean-side-12.template-sad-v1.prediction-v1.json
           target/tracker-run-smoke/synthetic-clean-side-12.local-contrast-centroid-v1.prediction-v1.json
+      - name: Canonical analyze smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- analyze
+          --manifest validation/fixtures/public/manifest.json
+          --fixture synthetic-clean-side-12
+          --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json
+          --plate-diameter-m 0.45
+          --tracker template
+          --filter raw
+          --kinematics-max-gap-s 0.2
+          --kinematics-min-confidence 0
+          --output target/analyze-smoke.json
+      - name: Canonical analysis schema
+        run: >-
+          python validation/tools/schema_check.py
+          --schema validation/schema/analysis-v1.schema.json
+          target/analyze-smoke.json
 
   dependencies:
     runs-on: ubuntu-26.04
