@@ -851,4 +851,44 @@ mod tests {
             assert_eq!(error, CalibrationError::MissingQualityWarning);
         }
     }
+
+    #[test]
+    fn rejects_invalid_selection_confidence_in_reference() {
+        let mut calibration = PlateDiameterCalibration::try_from_manual_seed(
+            0.45,
+            &seed(),
+            CalibrationQuality::unassessed(),
+        )
+        .unwrap();
+
+        // Non-finite selection confidence
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(f32::NAN),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::NonFiniteSelectionConfidence)
+        );
+
+        // Selection confidence below range
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(-0.1),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::SelectionConfidenceOutOfRange)
+        );
+
+        // Selection confidence above range
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(1.1),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::SelectionConfidenceOutOfRange)
+        );
+    }
 }
