@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/fixture-manifest-v1.schema.json",
+  "title": "OpenBar M0 fixture manifest",
+  "description": "Metadata contract for validation, development, boundary and out-of-distribution lifting-video fixtures.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fixtures"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Manifest schema version. Increment only for incompatible changes."
+    },
+    "fixtures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/fixture" }
+    }
+  },
+  "$defs": {
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "exercise",
+        "purpose",
+        "video",
+        "camera",
+        "load",
+        "conditions",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "minLength": 1,
+          "description": "Stable repository-independent fixture identifier."
+        },
+        "exercise": {
+          "enum": ["snatch", "clean", "back_squat", "other"]
+        },
+        "purpose": {
+          "enum": ["development", "validation", "control", "boundary", "ood"],
+          "description": "Intended role. Non-side views should normally be boundary/OOD during M0."
+        },
+        "media": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repository_path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Optional repository-relative media path. Public media is committed only after redistribution review."
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[A-Fa-f0-9]{64}$",
+              "description": "Optional stable media identity for local/private or committed media."
+            }
+          }
+        },
+        "video": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nominal_fps", "width_px", "height_px"],
+          "properties": {
+            "nominal_fps": { "type": "number", "exclusiveMinimum": 0 },
+            "measured_fps": { "type": "number", "exclusiveMinimum": 0 },
+            "width_px": { "type": "integer", "minimum": 1 },
+            "height_px": { "type": "integer", "minimum": 1 },
+            "duration_s": { "type": "number", "exclusiveMinimum": 0 },
+            "rotation_deg": { "enum": [0, 90, 180, 270] }
+          }
+        },
+        "camera": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["view", "movement"],
+          "properties": {
+            "view": {
+              "enum": ["side", "oblique_45", "front", "rear", "unknown"]
+            },
+            "approx_yaw_deg": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "description": "Approximate yaw relative to the intended side-view reference when known."
+            },
+            "approx_pitch_deg": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "distance_m": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "movement": {
+              "enum": ["fixed", "handheld", "panning", "moving_other", "unknown"]
+            }
+          }
+        },
+        "load": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["plate_diameter_m"],
+          "properties": {
+            "total_kg": { "type": "number", "minimum": 0 },
+            "plate_diameter_m": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "conditions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lighting", "plate_visibility", "occlusion", "motion_blur"],
+          "properties": {
+            "lighting": {
+              "enum": ["good", "mixed", "low", "backlit", "unknown"]
+            },
+            "plate_visibility": {
+              "enum": ["clear", "partial", "intermittent", "poor", "unknown"]
+            },
+            "occlusion": {
+              "enum": ["none", "minor", "moderate", "severe", "unknown"]
+            },
+            "motion_blur": {
+              "enum": ["none", "low", "moderate", "severe", "unknown"]
+            },
+            "challenge_tags": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "redistribution_status"],
+          "properties": {
+            "kind": {
+              "enum": ["self_recorded", "synthetic", "public_dataset", "third_party", "unknown"]
+            },
+            "reference": {
+              "type": "string",
+              "description": "Source URL, dataset identifier or local provenance note when applicable."
+            },
+            "rights_holder": { "type": "string" },
+            "license": {
+              "type": "string",
+              "description": "Licence/SPDX identifier or exact licence name when applicable."
+            },
+            "redistribution_status": {
+              "enum": ["allowed", "private_only", "prohibited", "unknown"]
+            },
+            "redistribution_evidence": {
+              "type": "string",
+              "description": "Where the permission/licence evidence can be checked."
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}
