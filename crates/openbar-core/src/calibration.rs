@@ -572,7 +572,11 @@ fn approximately_equal(left: f64, right: f64) -> bool {
         return false;
     }
 
-    let scale = left.abs().max(right.abs()).max(1.0);
+    let scale = left.abs().max(right.abs());
+    if scale == 0.0 {
+        return false;
+    }
+
     (left - right).abs() <= f64::EPSILON * 8.0 * scale
 }
 
