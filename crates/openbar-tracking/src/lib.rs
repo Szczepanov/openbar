@@ -18,16 +18,30 @@ pub struct GrayFrame {
 
 impl GrayFrame {
     pub fn try_new(width_px: u32, height_px: u32, pixels: Vec<u8>) -> Result<Self, TrackerError> {
-        if width_px == 0 || height_px == 0 || width_px > i32::MAX as u32 || height_px > i32::MAX as u32 {
-            return Err(TrackerError::InvalidFrameDimensions { width_px, height_px });
+        if width_px == 0
+            || height_px == 0
+            || width_px > i32::MAX as u32
+            || height_px > i32::MAX as u32
+        {
+            return Err(TrackerError::InvalidFrameDimensions {
+                width_px,
+                height_px,
+            });
         }
         let expected = (width_px as usize)
             .checked_mul(height_px as usize)
             .ok_or(TrackerError::FrameBufferSizeOverflow)?;
         if pixels.len() != expected {
-            return Err(TrackerError::InvalidFrameBufferLength { expected, actual: pixels.len() });
+            return Err(TrackerError::InvalidFrameBufferLength {
+                expected,
+                actual: pixels.len(),
+            });
         }
-        Ok(Self { width_px, height_px, pixels })
+        Ok(Self {
+            width_px,
+            height_px,
+            pixels,
+        })
     }
 }
 
@@ -38,8 +52,12 @@ pub trait GrayscaleImage {
 }
 
 impl GrayscaleImage for GrayFrame {
-    fn width_px(&self) -> u32 { self.width_px }
-    fn height_px(&self) -> u32 { self.height_px }
+    fn width_px(&self) -> u32 {
+        self.width_px
+    }
+    fn height_px(&self) -> u32 {
+        self.height_px
+    }
 
     fn intensity(&self, x_px: u32, y_px: u32) -> u8 {
         self.pixels[y_px as usize * self.width_px as usize + x_px as usize]
@@ -124,7 +142,11 @@ impl TrackerRun {
 
 pub trait ManualSeedTracker {
     fn identity(&self) -> TrackerIdentity;
-    fn track(&self, frames: &[FrameSample<'_>], seed: &ManualTargetSeed) -> Result<TrackerRun, TrackerError>;
+    fn track(
+        &self,
+        frames: &[FrameSample<'_>],
+        seed: &ManualTargetSeed,
+    ) -> Result<TrackerRun, TrackerError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -169,7 +191,9 @@ impl std::error::Error for TrackerError {}
 
 pub(crate) fn validate_search_radius(value: u32) -> Result<(), TrackerError> {
     if value == 0 || value > i32::MAX as u32 {
-        Err(TrackerError::InvalidConfiguration { field: "search_radius_px" })
+        Err(TrackerError::InvalidConfiguration {
+            field: "search_radius_px",
+        })
     } else {
         Ok(())
     }
@@ -177,7 +201,9 @@ pub(crate) fn validate_search_radius(value: u32) -> Result<(), TrackerError> {
 
 pub(crate) fn validate_seed_tolerance(value: f64) -> Result<(), TrackerError> {
     if !value.is_finite() || value < 0.0 {
-        Err(TrackerError::InvalidConfiguration { field: "seed_timestamp_tolerance_s" })
+        Err(TrackerError::InvalidConfiguration {
+            field: "seed_timestamp_tolerance_s",
+        })
     } else {
         Ok(())
     }
@@ -194,17 +220,24 @@ pub(crate) fn validate_sequence_and_seed(
     let mut best: Option<(usize, f64)> = None;
     for (index, frame) in frames.iter().enumerate() {
         if !frame.timestamp_s.is_finite() || frame.timestamp_s < 0.0 {
-            return Err(TrackerError::InvalidTimestamp { index, value: frame.timestamp_s });
+            return Err(TrackerError::InvalidTimestamp {
+                index,
+                value: frame.timestamp_s,
+            });
         }
         if index > 0 && frames[index - 1].timestamp_s >= frame.timestamp_s {
-            return Err(TrackerError::NonIncreasingTimestamps { previous_index: index - 1, index });
+            return Err(TrackerError::NonIncreasingTimestamps {
+                previous_index: index - 1,
+                index,
+            });
         }
         let distance = (frame.timestamp_s - seed.timestamp_s()).abs();
         if distance <= tolerance_s && best.is_none_or(|(_, current)| distance < current) {
             best = Some((index, distance));
         }
     }
-    best.map(|(index, _)| index).ok_or(TrackerError::SeedFrameNotFound)
+    best.map(|(index, _)| index)
+        .ok_or(TrackerError::SeedFrameNotFound)
 }
 
 pub(crate) fn rounded_radius(seed: &ManualTargetSeed) -> Result<i32, TrackerError> {
@@ -244,8 +277,16 @@ pub(crate) fn normalized_mean_absolute_difference(
     let mut count = 0u64;
     for dy in -radius..=radius {
         for dx in -radius..=radius {
-            let left = i32::from(pixel(template, template_center.0 + dx, template_center.1 + dy));
-            let right = i32::from(pixel(candidate, candidate_center.0 + dx, candidate_center.1 + dy));
+            let left = i32::from(pixel(
+                template,
+                template_center.0 + dx,
+                template_center.1 + dy,
+            ));
+            let right = i32::from(pixel(
+                candidate,
+                candidate_center.0 + dx,
+                candidate_center.1 + dy,
+            ));
             total += left.abs_diff(right) as u64;
             count += 1;
         }
@@ -283,7 +324,10 @@ pub(crate) fn target_and_ring_means(
     if target_count == 0 || ring_count == 0 {
         None
     } else {
-        Some((target_sum as f64 / target_count as f64, ring_sum as f64 / ring_count as f64))
+        Some((
+            target_sum as f64 / target_count as f64,
+            ring_sum as f64 / ring_count as f64,
+        ))
     }
 }
 
@@ -304,7 +348,11 @@ pub(crate) fn contrast_mass_in_target(
                 continue;
             }
             let value = f64::from(pixel(frame, center.0 + dx, center.1 + dy));
-            let weight = if dark_target { (threshold - value).max(0.0) } else { (value - threshold).max(0.0) };
+            let weight = if dark_target {
+                (threshold - value).max(0.0)
+            } else {
+                (value - threshold).max(0.0)
+            };
             if weight > 0.0 {
                 mass += weight;
                 weighted_x += weight * f64::from(center.0 + dx);
