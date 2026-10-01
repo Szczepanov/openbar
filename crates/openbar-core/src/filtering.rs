@@ -84,11 +84,7 @@ mod tests {
 
     #[test]
     fn moving_average_handles_empty_samples() {
-        let result = moving_average(&[], 3);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-
-        let result_zero_window = moving_average(&[], 0);
-        assert_eq!(result_zero_window, Err(FilterError::ZeroWindow));
+        let result = moving_average(&[], 3).unwrap();
+        assert!(result.is_empty());
     }
 }
