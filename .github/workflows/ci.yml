@@ -4,56 +4,92 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          components: rustfmt, clippy
+          persist-credentials: false
+      - name: Install Rust 1.98.1
+        run: >-
+          rustup toolchain install 1.98.1
+          --profile minimal
+          --component rustfmt
+          --component clippy
+          --no-self-update
+      - name: Toolchain versions
+        run: |
+          rustup --version
+          rustc --version --verbose
+          cargo --version
+      - name: Verify dependency lock
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --locked --workspace --all-targets --all-features
       - name: First tracker comparison
         run: >-
-          cargo run -p openbar-cli -- tracker-experiment
+          cargo run --locked -p openbar-cli -- tracker-experiment
           --output target/tracker-experiment.json
       - name: Filter comparison
         run: >-
-          cargo run -p openbar-cli -- filter-experiment
+          cargo run --locked -p openbar-cli -- filter-experiment
           --output target/filter-experiment.json
-      - name: Upload filter comparison artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: m0-filter-experiment
-          path: target/filter-experiment.json
       - name: Benchmark regression smoke
         run: >-
-          cargo run -p openbar-cli -- benchmark
+          cargo run --locked -p openbar-cli -- benchmark
           --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json
           --output target/benchmark-smoke.json
+      - name: Upload M0 smoke evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m0-smoke-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            target/tracker-experiment.json
+            target/filter-experiment.json
+            target/benchmark-smoke.json
+          if-no-files-found: error
+          retention-days: 14
 
   validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: "3.12"
+          persist-credentials: false
+      - name: Set up Python 3.14.8
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.8"
+      - name: Python version
+        run: python --version
       - name: Python syntax
-        run: python3 -m py_compile validation/tools/annotations.py validation/tests/test_annotations.py
+        run: python -m compileall -q validation/tools validation/tests
       - name: Annotation contract tests
-        run: python3 -m unittest discover -s validation/tests -p 'test_*.py'
+        run: python -m unittest discover -v -s validation/tests -p 'test_*.py'
       - name: Validate committed annotation fixture
         run: >-
-          python3 validation/tools/annotations.py validate
+          python validation/tools/annotations.py validate
           --manifest validation/fixtures/public/manifest.json
           validation/fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json
