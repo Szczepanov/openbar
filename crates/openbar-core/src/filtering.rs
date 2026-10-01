@@ -368,7 +368,7 @@ fn validate_centered_window(window: usize) -> Result<(), FilterError> {
     if window == 0 {
         return Err(FilterError::InvalidWindow { window });
     }
-    if window % 2 == 0 {
+    if window.is_multiple_of(2) {
         return Err(FilterError::EvenWindow { window });
     }
     Ok(())
@@ -564,21 +564,22 @@ fn solve_linear_system(
         }
 
         let pivot_value = matrix[pivot][pivot];
-        for column in pivot..dimension {
-            matrix[pivot][column] /= pivot_value;
+        for value in matrix[pivot].iter_mut().skip(pivot) {
+            *value /= pivot_value;
         }
         rhs[pivot] /= pivot_value;
 
-        for row in 0..dimension {
+        let pivot_row = matrix[pivot].clone();
+        for (row, values) in matrix.iter_mut().enumerate() {
             if row == pivot {
                 continue;
             }
-            let factor = matrix[row][pivot];
+            let factor = values[pivot];
             if factor == 0.0 {
                 continue;
             }
-            for column in pivot..dimension {
-                matrix[row][column] -= factor * matrix[pivot][column];
+            for (column, value) in values.iter_mut().enumerate().skip(pivot) {
+                *value -= factor * pivot_row[column];
             }
             rhs[row] -= factor * rhs[pivot];
         }
