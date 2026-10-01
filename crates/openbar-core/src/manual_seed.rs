@@ -254,12 +254,15 @@ impl ManualTargetSeedDocument {
                 expected: MANUAL_TARGET_SEED_SCHEMA_VERSION,
             });
         }
-        if self
-            .fixture_id
-            .as_deref()
-            .is_some_and(|fixture_id| fixture_id.trim().is_empty())
-        {
-            return Err(SeedValidationError::EmptyFixtureId);
+        if let Some(fixture_id) = self.fixture_id.as_deref() {
+            if fixture_id.trim().is_empty() {
+                return Err(SeedValidationError::EmptyFixtureId);
+            }
+            if !is_valid_fixture_id(fixture_id) {
+                return Err(SeedValidationError::InvalidFixtureId {
+                    value: fixture_id.to_owned(),
+                });
+            }
         }
         self.seed.validate(context)
     }
@@ -336,6 +339,9 @@ pub enum SeedValidationError {
         expected: u32,
     },
     EmptyFixtureId,
+    InvalidFixtureId {
+        value: String,
+    },
 }
 
 impl fmt::Display for SeedValidationError {
@@ -415,11 +421,29 @@ impl fmt::Display for SeedValidationError {
                 "manual target seed schema version {found} is unsupported; expected {expected}"
             ),
             Self::EmptyFixtureId => write!(formatter, "fixture_id must not be blank when present"),
+            Self::InvalidFixtureId { value } => write!(
+                formatter,
+                "fixture_id '{value}' must match ^[a-z0-9][a-z0-9._-]*$"
+            ),
         }
     }
 }
 
 impl std::error::Error for SeedValidationError {}
+
+fn is_valid_fixture_id(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && chars.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '.' | '_' | '-')
+        })
+}
 
 fn validate_context(context: SeedValidationContext) -> Result<(), SeedValidationError> {
     if context.frame_width_px == 0 || context.frame_height_px == 0 {
@@ -778,6 +802,13 @@ mod tests {
         assert_eq!(decoded, document);
         decoded.validate(context()).unwrap();
         assert_eq!(decoded.fixture_id(), Some("example-clean-side-60"));
+
+        let invalid_fixture_id =
+            ManualTargetSeedDocument::new(Some("Bad fixture".to_owned()), valid_seed());
+        assert!(matches!(
+            invalid_fixture_id.validate(context()),
+            Err(SeedValidationError::InvalidFixtureId { .. })
+        ));
     }
 
     #[test]
