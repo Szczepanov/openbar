@@ -269,6 +269,16 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .expect("run malformed benchmark");
     assert_exit(&benchmark, 8, "status=failure error[benchmark]");
 
+    let legacy = Command::new(binary())
+        .arg("tracker-experiment")
+        .arg("--definitely-invalid")
+        .output()
+        .expect("run legacy harness argument failure");
+    assert_eq!(legacy.status.code(), Some(2));
+    let legacy_stderr = String::from_utf8_lossy(&legacy.stderr);
+    assert!(legacy_stderr.contains("error:"));
+    assert!(!legacy_stderr.contains("status=failure"));
+
     if ffmpeg_available() {
         assert_runtime_media_failures(&output_path);
     }
