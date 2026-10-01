@@ -59,7 +59,7 @@ The free product should remain useful; the architecture should not depend on int
 
 ## Clean-room rule
 
-OpenBar is not intended to copy WL Analysis or any other application's implementation. Publicly documented product behaviour may inform requirements, but contributors must not reverse engineer proprietary code/models, copy proprietary assets/text/UI, or submit code derived from non-public implementations.
+OpenBar is not intended to copy any application's implementation. Publicly documented product behaviour may inform requirements, but contributors must not reverse engineer proprietary code/models, copy proprietary assets/text/UI, or submit code derived from non-public implementations.
 
 See [docs/clean-room/COMPETITOR_BOUNDARIES.md](docs/clean-room/COMPETITOR_BOUNDARIES.md).
 
