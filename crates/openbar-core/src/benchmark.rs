@@ -967,11 +967,7 @@ pub fn evaluate_filter_case(
     let mut reference_peak: Option<(f64, f64)> = None;
     let mut filtered_peak: Option<(f64, f64)> = None;
 
-    for (index, (truth, actual)) in reference_velocity
-        .iter()
-        .zip(&filtered_velocity)
-        .enumerate()
-    {
+    for (truth, actual) in reference_velocity.iter().zip(&filtered_velocity) {
         let (Some(truth_vx), Some(truth_vy), Some(actual_vx), Some(actual_vy)) =
             (truth.vx_mps, truth.vy_mps, actual.vx_mps, actual.vy_mps)
         else {
