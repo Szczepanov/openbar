@@ -95,7 +95,9 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
     let _ = fs::remove_file(&output_b);
     let _ = fs::remove_file(&render_output);
 
-    let first = analyze_fixture(&output_a).output().expect("run first analyze");
+    let first = analyze_fixture(&output_a)
+        .output()
+        .expect("run first analyze");
     assert!(
         first.status.success(),
         "stdout={}\nstderr={}",
@@ -107,7 +109,9 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
         "unassessed calibration should remain visible"
     );
 
-    let second = analyze_fixture(&output_b).output().expect("run second analyze");
+    let second = analyze_fixture(&output_b)
+        .output()
+        .expect("run second analyze");
     assert!(second.status.success());
 
     let bytes_a = fs::read(&output_a).expect("read first analysis");
@@ -137,11 +141,7 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
         .arg(&render_output)
         .output()
         .expect("run render boundary");
-    assert_exit(
-        &render,
-        9,
-        "status=failure error[render-unavailable]",
-    );
+    assert_exit(&render, 9, "status=failure error[render-unavailable]");
     assert!(
         !render_output.exists(),
         "render boundary must not fabricate a placeholder artifact"
@@ -186,11 +186,7 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg(&output_path)
         .output()
         .expect("run invalid plate");
-    assert_exit(
-        &invalid_plate,
-        5,
-        "status=failure error[seed-calibration]",
-    );
+    assert_exit(&invalid_plate, 5, "status=failure error[seed-calibration]");
 
     let invalid_seed = Command::new(binary())
         .arg("analyze")
@@ -212,11 +208,7 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg(&output_path)
         .output()
         .expect("run invalid seed");
-    assert_exit(
-        &invalid_seed,
-        5,
-        "status=failure error[seed-calibration]",
-    );
+    assert_exit(&invalid_seed, 5, "status=failure error[seed-calibration]");
 
     let invalid_filter = Command::new(binary())
         .arg("analyze")
