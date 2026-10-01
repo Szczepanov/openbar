@@ -1,12 +1,16 @@
 use crate::analysis::{
     ImplementationProvenance, KinematicTrajectory, KinematicsInput, ParameterValue,
 };
+use crate::math::approximately_equal;
 use crate::trajectory::{KinematicSample, MetricPositionSample, TrajectoryValidationError};
 use std::collections::BTreeMap;
 use std::fmt;
 
 pub const VELOCITY_METHOD_IMPLEMENTATION: &str = "backward-difference";
 pub const VELOCITY_METHOD_VERSION: &str = "1";
+
+const MAX_GAP_PARAMETER: &str = "max_gap_s";
+const MIN_CONFIDENCE_PARAMETER: &str = "min_confidence";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KinematicsConfig {
@@ -36,15 +40,66 @@ impl KinematicsConfig {
             version: VELOCITY_METHOD_VERSION.to_owned(),
             parameters: BTreeMap::from([
                 (
-                    "max_gap_s".to_owned(),
+                    MAX_GAP_PARAMETER.to_owned(),
                     ParameterValue::Float(self.max_gap_s),
                 ),
                 (
-                    "min_confidence".to_owned(),
-                    ParameterValue::Float(f64::from(self.min_confidence)),
+                    MIN_CONFIDENCE_PARAMETER.to_owned(),
+                    ParameterValue::Float(persisted_confidence(self.min_confidence)),
                 ),
             ]),
         }
+    }
+
+    /// Reconstructs the configuration recorded by [`Self::velocity_provenance`]. Fails closed on
+    /// any other implementation/version, a missing parameter, or an unknown parameter.
+    pub fn from_velocity_provenance(
+        method: &ImplementationProvenance,
+    ) -> Result<Self, KinematicsError> {
+        if method.implementation != VELOCITY_METHOD_IMPLEMENTATION
+            || method.version != VELOCITY_METHOD_VERSION
+        {
+            return Err(KinematicsError::UnsupportedMethod {
+                implementation: method.implementation.clone(),
+                version: method.version.clone(),
+            });
+        }
+        if let Some(name) = method
+            .parameters
+            .keys()
+            .find(|name| ![MAX_GAP_PARAMETER, MIN_CONFIDENCE_PARAMETER].contains(&name.as_str()))
+        {
+            return Err(KinematicsError::InvalidMethodParameter { name: name.clone() });
+        }
+        let max_gap_s = numeric_parameter(method, MAX_GAP_PARAMETER)?;
+        let min_confidence =
+            narrow_confidence(numeric_parameter(method, MIN_CONFIDENCE_PARAMETER)?);
+        Self::try_new(max_gap_s, min_confidence)
+    }
+}
+
+/// Shortest decimal that round-trips the `f32` threshold, so `0.4` is persisted as `0.4` rather
+/// than its widened binary value `0.4000000059604645`.
+fn persisted_confidence(value: f32) -> f64 {
+    value.to_string().parse().unwrap_or(f64::from(value))
+}
+
+/// Restores the `f32` threshold that was applied. Narrowing through the shortest decimal is a
+/// single correctly rounded step, so it is exact for every value `persisted_confidence` writes.
+fn narrow_confidence(value: f64) -> f32 {
+    value.to_string().parse().unwrap_or(value as f32)
+}
+
+fn numeric_parameter(
+    method: &ImplementationProvenance,
+    name: &'static str,
+) -> Result<f64, KinematicsError> {
+    match method.parameters.get(name) {
+        Some(ParameterValue::Float(value)) => Ok(*value),
+        Some(ParameterValue::Integer(value)) => Ok(*value as f64),
+        _ => Err(KinematicsError::InvalidMethodParameter {
+            name: name.to_owned(),
+        }),
     }
 }
 
@@ -108,6 +163,16 @@ pub enum KinematicsError {
     NonFiniteDerivedValue {
         index: usize,
     },
+    UnsupportedMethod {
+        implementation: String,
+        version: String,
+    },
+    InvalidMethodParameter {
+        name: String,
+    },
+    TrajectoryMismatch {
+        index: usize,
+    },
 }
 
 impl fmt::Display for KinematicsError {
@@ -143,6 +208,21 @@ impl fmt::Display for KinematicsError {
                 formatter,
                 "kinematic calculation produced a non-finite value at sample {index}"
             ),
+            Self::UnsupportedMethod {
+                implementation,
+                version,
+            } => write!(
+                formatter,
+                "kinematics method {implementation}@{version} is not {VELOCITY_METHOD_IMPLEMENTATION}@{VELOCITY_METHOD_VERSION}"
+            ),
+            Self::InvalidMethodParameter { name } => write!(
+                formatter,
+                "kinematics method parameter {name:?} is missing, unknown, or not numeric"
+            ),
+            Self::TrajectoryMismatch { index } => write!(
+                formatter,
+                "kinematic sample {index} does not match a re-derivation with its recorded method"
+            ),
         }
     }
 }
@@ -159,6 +239,47 @@ pub fn derive_kinematic_trajectory(
         method: config.velocity_provenance(),
         samples: derive_velocity(samples, config)?,
     })
+}
+
+/// Checks that a persisted trajectory is exactly what its recorded `backward-difference@1`
+/// method and parameters produce from `input`: no velocity at the first sample, across an
+/// over-long gap, or from a below-threshold endpoint, and confidence equal to the pair minimum.
+pub fn verify_kinematic_trajectory(
+    input: &[MetricPositionSample],
+    trajectory: &KinematicTrajectory,
+) -> Result<(), KinematicsError> {
+    let config = KinematicsConfig::from_velocity_provenance(&trajectory.method)?;
+    let expected = derive_velocity(input, config)?;
+    if expected.len() != trajectory.samples.len() {
+        return Err(KinematicsError::TrajectoryMismatch {
+            index: expected.len().min(trajectory.samples.len()),
+        });
+    }
+    let mismatch = expected
+        .iter()
+        .zip(&trajectory.samples)
+        .position(|(expected, actual)| !same_kinematic_sample(*expected, *actual));
+    match mismatch {
+        Some(index) => Err(KinematicsError::TrajectoryMismatch { index }),
+        None => Ok(()),
+    }
+}
+
+fn same_kinematic_sample(expected: KinematicSample, actual: KinematicSample) -> bool {
+    expected.timestamp_s == actual.timestamp_s
+        && approximately_equal(expected.x_m, actual.x_m)
+        && approximately_equal(expected.y_m, actual.y_m)
+        && same_velocity(expected.vx_mps, actual.vx_mps)
+        && same_velocity(expected.vy_mps, actual.vy_mps)
+        && expected.confidence == actual.confidence
+}
+
+fn same_velocity(expected: Option<f64>, actual: Option<f64>) -> bool {
+    match (expected, actual) {
+        (None, None) => true,
+        (Some(expected), Some(actual)) => approximately_equal(expected, actual),
+        _ => false,
+    }
 }
 
 pub fn derive_velocity(
@@ -802,7 +923,7 @@ mod tests {
         );
         assert_eq!(
             provenance.parameters.get("min_confidence"),
-            Some(&ParameterValue::Float(f64::from(0.4_f32)))
+            Some(&ParameterValue::Float(0.4))
         );
     }
 
@@ -888,5 +1009,148 @@ mod tests {
                 error: TrajectoryValidationError::NonFiniteValue { field: "x_m", .. },
             })
         ));
+    }
+
+    #[test]
+    fn velocity_provenance_round_trips_to_the_exact_config() {
+        for min_confidence in [0.0, 0.1, 0.4, 1.0 / 3.0, 0.95, 7.038_531e-26, 1.0] {
+            let cfg = config(0.0333, min_confidence);
+
+            assert_eq!(
+                KinematicsConfig::from_velocity_provenance(&cfg.velocity_provenance()),
+                Ok(cfg)
+            );
+        }
+    }
+
+    #[test]
+    fn velocity_provenance_accepts_legacy_widened_confidence() {
+        let cfg = config(0.05, 0.4);
+        let mut provenance = cfg.velocity_provenance();
+        provenance.parameters.insert(
+            "min_confidence".to_owned(),
+            ParameterValue::Float(f64::from(0.4_f32)),
+        );
+
+        assert_eq!(
+            KinematicsConfig::from_velocity_provenance(&provenance),
+            Ok(cfg)
+        );
+    }
+
+    #[test]
+    fn velocity_provenance_accepts_integer_parameters() {
+        let mut provenance = config(1.0, 1.0).velocity_provenance();
+        provenance
+            .parameters
+            .insert("max_gap_s".to_owned(), ParameterValue::Integer(1));
+        provenance
+            .parameters
+            .insert("min_confidence".to_owned(), ParameterValue::Integer(1));
+
+        assert_eq!(
+            KinematicsConfig::from_velocity_provenance(&provenance),
+            Ok(config(1.0, 1.0))
+        );
+    }
+
+    #[test]
+    fn velocity_provenance_rejects_invalid_or_non_numeric_parameters() {
+        let mut out_of_range = config(0.1, 0.5).velocity_provenance();
+        out_of_range
+            .parameters
+            .insert("min_confidence".to_owned(), ParameterValue::Float(1.5));
+        assert!(matches!(
+            KinematicsConfig::from_velocity_provenance(&out_of_range),
+            Err(KinematicsError::InvalidMinimumConfidence { .. })
+        ));
+
+        let mut text = config(0.1, 0.5).velocity_provenance();
+        text.parameters.insert(
+            "max_gap_s".to_owned(),
+            ParameterValue::Text("0.1".to_owned()),
+        );
+        assert_eq!(
+            KinematicsConfig::from_velocity_provenance(&text),
+            Err(KinematicsError::InvalidMethodParameter {
+                name: "max_gap_s".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn verification_accepts_derived_trajectory_and_rejects_length_mismatch() {
+        let samples = [
+            sample_metric_position(0.0, 0.0, 0.0, 1.0),
+            sample_metric_position(0.1, 0.1, 0.2, 0.9),
+            sample_metric_position(0.3, 0.2, 0.4, 0.8),
+        ];
+        let mut trajectory =
+            derive_kinematic_trajectory(&samples, KinematicsInput::Calibrated, config(0.15, 0.0))
+                .unwrap();
+        assert_eq!(trajectory.samples[2].vx_mps, None);
+        assert_eq!(verify_kinematic_trajectory(&samples, &trajectory), Ok(()));
+
+        trajectory.samples.pop();
+        assert_eq!(
+            verify_kinematic_trajectory(&samples, &trajectory),
+            Err(KinematicsError::TrajectoryMismatch { index: 2 })
+        );
+    }
+
+    #[test]
+    fn verification_survives_exact_json_float_round_trip() {
+        // Real tracker output has full-precision positions and 1/fps timestamps. The
+        // float_roundtrip parser contract must recover those fixed-precision values exactly so a
+        // persisted trajectory can be re-derived without widening the semantic tolerance.
+        for fps in [30.0, 60.0, 240.0] {
+            let samples: Vec<_> = (0..300)
+                .map(|index| {
+                    let phase = f64::from(index) * 0.37;
+                    sample_metric_position(
+                        f64::from(index) / fps,
+                        0.123_456_789_012_345 + 0.731 * phase.sin(),
+                        -0.987_654_321_098_765 + 1.137 * (phase * 0.5).cos(),
+                        0.9,
+                    )
+                })
+                .collect();
+            let trajectory = derive_kinematic_trajectory(
+                &samples,
+                KinematicsInput::Calibrated,
+                config(1.0, 0.0),
+            )
+            .unwrap();
+
+            let input: Vec<MetricPositionSample> =
+                serde_json::from_str(&serde_json::to_string(&samples).unwrap()).unwrap();
+            let persisted: KinematicTrajectory =
+                serde_json::from_str(&serde_json::to_string(&trajectory).unwrap()).unwrap();
+
+            assert_eq!(input, samples);
+            assert_eq!(persisted, trajectory);
+            assert_eq!(verify_kinematic_trajectory(&input, &persisted), Ok(()));
+        }
+    }
+
+    #[test]
+    fn verification_rejects_forged_velocity_for_pathological_timestamp_spacing() {
+        // A tolerance scaled by 1/dt can become enormous for a tiny but valid interval and
+        // accidentally accept arbitrary finite velocity. Canonical verification must stay narrow.
+        let samples = [
+            sample_metric_position(0.0, 1.0, 0.0, 1.0),
+            sample_metric_position(1.0e-300, 1.0, 0.0, 1.0),
+        ];
+        let mut trajectory =
+            derive_kinematic_trajectory(&samples, KinematicsInput::Calibrated, config(1.0, 0.0))
+                .unwrap();
+        assert_eq!(trajectory.samples[1].vx_mps, Some(0.0));
+
+        trajectory.samples[1].vx_mps = Some(1.0e200);
+
+        assert_eq!(
+            verify_kinematic_trajectory(&samples, &trajectory),
+            Err(KinematicsError::TrajectoryMismatch { index: 1 })
+        );
     }
 }

@@ -109,13 +109,13 @@ This prevents a numeric derivative from erasing weaker endpoint evidence.
 
 The method/configuration therefore travels with the derived layer in canonical analysis JSON.
 
-Canonical `Analysis::validate` also treats a persisted claim of `backward-difference@1` as a
-reproducibility contract: `max_gap_s` and `min_confidence` must be present with the expected
-types, and the stored velocity/confidence values must reproduce a fresh derivation from the
-declared calibrated or filtered input. Velocity availability (missing vs present) must match
-exactly; finite velocity values use the same narrow floating-point comparison tolerance as other
-canonical derived-value checks. This prevents a JSON document from retaining plausible numbers
-while misrepresenting the method or quality rules that produced them.
+`min_confidence` is persisted as the shortest decimal that round-trips the applied `f32` threshold.
+`KinematicsConfig::from_velocity_provenance` reconstructs the exact configuration, and
+`verify_kinematic_trajectory` re-derives the layer to confirm that persisted samples match the
+recorded method. `Analysis` validation runs this check for every `backward-difference` layer.
+Canonical JSON parsing uses serde_json's `float_roundtrip` mode, so values emitted by OpenBar
+round-trip exactly; finite velocity comparison therefore stays at the existing narrow canonical
+floating-point tolerance instead of scaling tolerance by derivative conditioning.
 
 ## Range of motion
 
