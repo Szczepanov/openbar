@@ -413,10 +413,7 @@ fn validate_optional_range(
     }
 }
 
-fn validate_optional_positive(
-    name: &str,
-    value: Option<f64>,
-) -> Result<(), RecordingSupportError> {
+fn validate_optional_positive(name: &str, value: Option<f64>) -> Result<(), RecordingSupportError> {
     match value {
         Some(value) if !value.is_finite() || value <= 0.0 => {
             Err(invalid(format!("{name} must be finite and positive")))
