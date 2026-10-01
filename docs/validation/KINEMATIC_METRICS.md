@@ -109,6 +109,12 @@ This prevents a numeric derivative from erasing weaker endpoint evidence.
 
 The method/configuration therefore travels with the derived layer in canonical analysis JSON.
 
+Canonical `Analysis::validate` also treats a persisted claim of `backward-difference@1` as a
+reproducibility contract: `max_gap_s` and `min_confidence` must be present with the expected
+types, and the stored velocity/confidence values must exactly match a fresh derivation from the
+declared calibrated or filtered input. This prevents a JSON document from retaining plausible
+numbers while misrepresenting the method or quality rules that produced them.
+
 ## Range of motion
 
 For an explicitly named axis:
