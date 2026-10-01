@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 pub(crate) const RENDERER_ID: &str = "diagnostic-svg";
 pub(crate) const RENDERER_VERSION: &str = "1";
 
-const W: f64 = 1200.0;
 const X: f64 = 50.0;
 const PW: f64 = 1100.0;
 const PH: f64 = 180.0;
