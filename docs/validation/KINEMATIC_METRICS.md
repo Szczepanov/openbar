@@ -119,6 +119,9 @@ ROM = max(position) - min(position)
 
 over the supplied series.
 
+At least two supported position samples are required. A single observation is insufficient evidence
+for a movement range and therefore returns unavailable rather than a numeric zero.
+
 ROM is unavailable if the supplied series contains an unsupported continuity gap or any sample below
 the configured confidence threshold. Returned metric confidence is the minimum confidence across all
 contributing samples.
