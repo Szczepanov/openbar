@@ -721,6 +721,20 @@ mod tests {
     }
 
     #[test]
+    fn moving_average_zero_window_returns_error() {
+        let input = [sample(0.0, 1.0, 2.0)];
+
+        assert_eq!(
+            moving_average(&[], 0),
+            Err(FilterError::InvalidWindow { window: 0 })
+        );
+        assert_eq!(
+            moving_average(&input, 0),
+            Err(FilterError::InvalidWindow { window: 0 })
+        );
+    }
+
+    #[test]
     fn centered_filters_do_not_cross_long_timestamp_gaps() {
         let input = vec![
             sample(0.00, 0.0, 0.0),
