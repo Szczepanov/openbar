@@ -65,6 +65,7 @@ Detailed policies and workflows:
 - [`docs/validation/TRACKER_EXPERIMENTS.md`](../docs/validation/TRACKER_EXPERIMENTS.md)
 - [`docs/validation/FILTER_EXPERIMENTS.md`](../docs/validation/FILTER_EXPERIMENTS.md)
 - [`docs/validation/M0_EVIDENCE.md`](../docs/validation/M0_EVIDENCE.md)
+- [`docs/validation/M0_EVIDENCE_REPORT.md`](../docs/validation/M0_EVIDENCE_REPORT.md)
 
 Do not add public media merely because it is technically accessible. Every committed media
 fixture must have affirmative redistribution rights documented in its manifest metadata.
