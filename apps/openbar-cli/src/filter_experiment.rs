@@ -344,8 +344,7 @@ fn evaluate_scenario(scenario: &Scenario, config: FilterConfig) -> AnyResult<Sce
     let run = apply_filter(&scenario.observed, config)?;
     let runtime_ms = started.elapsed().as_secs_f64() * 1_000.0;
     let metrics = evaluate_filter_case(&scenario.truth, &run.trajectory.samples)?;
-    let edge_position_mae_m =
-        edge_position_mae(&scenario.truth, &run.trajectory.samples, 2);
+    let edge_position_mae_m = edge_position_mae(&scenario.truth, &run.trajectory.samples, 2);
 
     Ok(ScenarioResult {
         split: scenario.split,
@@ -480,7 +479,9 @@ fn build_regular_scenario(
     truth_fn: impl Fn(f64, usize) -> (f64, f64),
     noise_amplitude: f64,
 ) -> Scenario {
-    let timestamps = (0..count).map(|index| index as f64 * dt).collect::<Vec<_>>();
+    let timestamps = (0..count)
+        .map(|index| index as f64 * dt)
+        .collect::<Vec<_>>();
     build_scenario(
         split,
         name,
@@ -645,9 +646,9 @@ mod tests {
 
         assert!(!development.is_empty());
         assert!(!validation.is_empty());
-        assert!(development
+        assert!(development.iter().all(|name| !validation
             .iter()
-            .all(|name| !validation.iter().any(|validation_name| validation_name == name)));
+            .any(|validation_name| validation_name == name)));
     }
 
     #[test]
