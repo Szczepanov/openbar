@@ -88,7 +88,7 @@ Prerequisites:
 - **Rust 1.98.1** with clippy and rustfmt. `rust-toolchain.toml` pins it, so `rustup` installs
   the right toolchain on first use.
 - **Python 3.14** for the validation tooling. Standard library only; no packages to install.
-- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) for `tracker-run` and the decode tests. OpenBar
+- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) for `analyze`, `tracker-run`, and the decode tests. OpenBar
   runs FFmpeg as a separate program and neither links nor ships it (ADR-0006). Without FFmpeg,
   the decode tests print `SKIPPED` locally. CI sets `OPENBAR_REQUIRE_FFMPEG=1`, so a missing
   install fails there. The frame source needs `-fps_mode` and `-enc_time_base demux`, so use a
@@ -101,11 +101,16 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
+cargo run --locked -p openbar-cli -- filter-experiment --output target/filter-experiment.json
+cargo run --locked -p openbar-cli -- analyze --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json --plate-diameter-m 0.45 --tracker template --filter raw --kinematics-max-gap-s 0.2 --kinematics-min-confidence 0 --output target/analyze-smoke.json
 cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json --output target/benchmark-smoke.json
 cargo run --locked -p openbar-cli -- tracker-run --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json --output-dir target/tracker-run-smoke
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
+python validation/tools/schema_check.py --schema validation/schema/analysis-v1.schema.json target/analyze-smoke.json
 python validation/tools/schema_check.py
 ```
+
+`analyze` is the canonical M0 integration command. It requires explicit tracker, filter and kinematics configuration and writes `analysis-v1` JSON. See [docs/validation/CLI_PIPELINE.md](docs/validation/CLI_PIPELINE.md). `render` is wired as a canonical-input boundary but remains intentionally unavailable until #13 implements diagnostics.
 
 CI also runs [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) against
 [`deny.toml`](deny.toml) to check dependency licences, advisories and sources. To run it locally,

@@ -1,3 +1,4 @@
+use crate::cli_error::{CliError, CliResult};
 use openbar_core::benchmark::{
     aggregate_metrics, evaluate_tracker_case, BenchmarkParameters, GroundTruthSample,
     TrackerMetrics, TrackerPrediction, TrackerPredictionState, BENCHMARK_METRIC_VERSION,
@@ -236,7 +237,7 @@ struct AggregateResult {
     metrics: TrackerMetrics,
 }
 
-pub fn run_cli() -> AnyResult<()> {
+pub fn run_cli() -> CliResult<()> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() {
         println!("OpenBar M0 foundation");
@@ -247,7 +248,7 @@ pub fn run_cli() -> AnyResult<()> {
     }
 
     if args[0] != "benchmark" {
-        return Err(data_error(format!(
+        return Err(CliError::invalid_input(format!(
             "unknown command '{}'; expected 'benchmark'",
             args[0]
         )));
@@ -262,14 +263,14 @@ pub fn run_cli() -> AnyResult<()> {
                 index += 1;
                 let value = args
                     .get(index)
-                    .ok_or_else(|| data_error("--suite requires a path"))?;
+                    .ok_or_else(|| CliError::invalid_input("--suite requires a path"))?;
                 suite_path = Some(PathBuf::from(value));
             }
             "--output" => {
                 index += 1;
                 let value = args
                     .get(index)
-                    .ok_or_else(|| data_error("--output requires a path"))?;
+                    .ok_or_else(|| CliError::invalid_input("--output requires a path"))?;
                 output_path = Some(PathBuf::from(value));
             }
             "--help" | "-h" => {
@@ -280,24 +281,40 @@ pub fn run_cli() -> AnyResult<()> {
                 return Ok(());
             }
             other => {
-                return Err(data_error(format!("unknown benchmark argument '{other}'")));
+                return Err(CliError::invalid_input(format!(
+                    "unknown benchmark argument '{other}'"
+                )));
             }
         }
         index += 1;
     }
 
-    let suite_path = suite_path.ok_or_else(|| data_error("benchmark requires --suite <path>"))?;
-    let artifact = run_suite(&suite_path)?;
+    let suite_path =
+        suite_path.ok_or_else(|| CliError::invalid_input("benchmark requires --suite <path>"))?;
+    let artifact = run_suite(&suite_path)
+        .map_err(|error| CliError::benchmark(format!("benchmark data/config mismatch: {error}")))?;
     eprintln!("{}", render_summary(&artifact));
 
-    let serialized = serde_json::to_string_pretty(&artifact)?;
+    let serialized = serde_json::to_string_pretty(&artifact).map_err(|error| {
+        CliError::output(format!("failed to serialize benchmark output: {error}"))
+    })?;
     if let Some(output_path) = output_path {
         if let Some(parent) = output_path.parent() {
             if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
+                fs::create_dir_all(parent).map_err(|error| {
+                    CliError::output(format!(
+                        "failed to create benchmark output directory '{}': {error}",
+                        parent.display()
+                    ))
+                })?;
             }
         }
-        fs::write(output_path, format!("{serialized}\n"))?;
+        fs::write(&output_path, format!("{serialized}\n")).map_err(|error| {
+            CliError::output(format!(
+                "failed to write benchmark output '{}': {error}",
+                output_path.display()
+            ))
+        })?;
     } else {
         println!("{serialized}");
     }
@@ -922,6 +939,18 @@ mod tests {
     fn synthetic_suite_path() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json")
+    }
+
+    #[test]
+    fn malformed_benchmark_manifest_is_rejected() {
+        let path = std::env::temp_dir().join(format!(
+            "openbar-malformed-benchmark-{}.json",
+            std::process::id()
+        ));
+        fs::write(&path, "{not-json").expect("write malformed benchmark suite");
+        let error = run_suite(&path).expect_err("malformed benchmark input must fail");
+        assert!(error.to_string().contains("failed to parse"));
+        let _ = fs::remove_file(path);
     }
 
     #[test]
