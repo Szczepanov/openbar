@@ -693,6 +693,11 @@ mod tests {
 // Filter/kinematic evaluation extends the tracker benchmark contract without changing
 // tracker metric semantics. Filter outputs are expected to preserve the reference
 // timestamps one-for-one; filters must not manufacture samples to improve metrics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FilterBenchmarkParameters {
+    pub max_velocity_gap_s: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FilterMetrics {
     pub comparable_position_samples: usize,
@@ -713,6 +718,7 @@ pub struct FilterMetrics {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterBenchmarkError {
+    InvalidMaximumVelocityGap { value: f64 },
     LengthMismatch {
         reference: usize,
         filtered: usize,
@@ -740,6 +746,10 @@ pub enum FilterBenchmarkError {
 impl fmt::Display for FilterBenchmarkError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidMaximumVelocityGap { value } => write!(
+                formatter,
+                "max_velocity_gap_s must be finite and positive, got {value}"
+            ),
             Self::LengthMismatch {
                 reference,
                 filtered,
@@ -778,7 +788,13 @@ impl std::error::Error for FilterBenchmarkError {}
 pub fn evaluate_filter_case(
     reference: &[crate::trajectory::MetricPositionSample],
     filtered: &[crate::trajectory::MetricPositionSample],
+    parameters: FilterBenchmarkParameters,
 ) -> Result<FilterMetrics, FilterBenchmarkError> {
+    if !parameters.max_velocity_gap_s.is_finite() || parameters.max_velocity_gap_s <= 0.0 {
+        return Err(FilterBenchmarkError::InvalidMaximumVelocityGap {
+            value: parameters.max_velocity_gap_s,
+        });
+    }
     if reference.len() != filtered.len() {
         return Err(FilterBenchmarkError::LengthMismatch {
             reference: reference.len(),
@@ -865,12 +881,20 @@ pub fn evaluate_filter_case(
     let mut reference_peak: Option<(f64, f64)> = None;
     let mut filtered_peak: Option<(f64, f64)> = None;
 
-    for (truth, actual) in reference_velocity.iter().zip(&filtered_velocity) {
+    for (index, (truth, actual)) in reference_velocity
+        .iter()
+        .zip(&filtered_velocity)
+        .enumerate()
+    {
         let (Some(truth_vx), Some(truth_vy), Some(actual_vx), Some(actual_vy)) =
             (truth.vx_mps, truth.vy_mps, actual.vx_mps, actual.vy_mps)
         else {
             continue;
         };
+        let dt = reference[index].timestamp_s - reference[index - 1].timestamp_s;
+        if dt > parameters.max_velocity_gap_s {
+            continue;
+        }
 
         let dvx = actual_vx - truth_vx;
         let dvy = actual_vy - truth_vy;
@@ -947,7 +971,14 @@ mod filter_benchmark_tests {
         let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0), sample(2.0, 2.0)];
         let filtered = vec![sample(0.0, 0.0), sample(1.0, 0.5), sample(2.0, 1.5)];
 
-        let metrics = evaluate_filter_case(&reference, &filtered).unwrap();
+        let metrics = evaluate_filter_case(
+            &reference,
+            &filtered,
+            FilterBenchmarkParameters {
+                max_velocity_gap_s: 1.5,
+            },
+        )
+        .unwrap();
         assert_eq!(metrics.comparable_position_samples, 3);
         assert_eq!(metrics.comparable_velocity_samples, 2);
         assert!((metrics.position_mae_m.unwrap() - (1.0 / 3.0)).abs() < 1.0e-12);
@@ -959,17 +990,69 @@ mod filter_benchmark_tests {
     }
 
     #[test]
+    fn filter_metrics_exclude_velocity_across_unsupported_gaps() {
+        let reference = vec![
+            sample(0.0, 0.0),
+            sample(0.02, 0.02),
+            sample(0.50, 0.50),
+            sample(0.52, 0.52),
+        ];
+        let filtered = reference.clone();
+
+        let metrics = evaluate_filter_case(
+            &reference,
+            &filtered,
+            FilterBenchmarkParameters {
+                max_velocity_gap_s: 0.05,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(metrics.comparable_position_samples, 4);
+        assert_eq!(metrics.comparable_velocity_samples, 2);
+        assert_eq!(metrics.velocity_mae_mps, Some(0.0));
+        assert_eq!(metrics.ground_truth_peak_speed_mps, Some(1.0));
+    }
+
+    #[test]
+    fn filter_metrics_reject_invalid_velocity_gap_policy() {
+        let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0)];
+        assert!(matches!(
+            evaluate_filter_case(
+                &reference,
+                &reference,
+                FilterBenchmarkParameters {
+                    max_velocity_gap_s: 0.0,
+                },
+            ),
+            Err(FilterBenchmarkError::InvalidMaximumVelocityGap { .. })
+        ));
+    }
+
+    #[test]
     fn filter_metrics_reject_timestamp_changes_or_synthesized_samples() {
         let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0)];
         let too_many = vec![sample(0.0, 0.0), sample(0.5, 0.5), sample(1.0, 1.0)];
         assert!(matches!(
-            evaluate_filter_case(&reference, &too_many),
+            evaluate_filter_case(
+                &reference,
+                &too_many,
+                FilterBenchmarkParameters {
+                    max_velocity_gap_s: 1.5,
+                },
+            ),
             Err(FilterBenchmarkError::LengthMismatch { .. })
         ));
 
         let shifted = vec![sample(0.0, 0.0), sample(1.1, 1.0)];
         assert!(matches!(
-            evaluate_filter_case(&reference, &shifted),
+            evaluate_filter_case(
+                &reference,
+                &shifted,
+                FilterBenchmarkParameters {
+                    max_velocity_gap_s: 1.5,
+                },
+            ),
             Err(FilterBenchmarkError::TimestampMismatch { .. })
         ));
     }
