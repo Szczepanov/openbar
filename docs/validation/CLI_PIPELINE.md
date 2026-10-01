@@ -55,10 +55,16 @@ written to `--output` when supplied and the concise human-readable report is wri
 
 ### `render`
 
-`render --analysis <analysis.json> --output <path>` is the stable integration boundary for #13.
-It parses and validates canonical analysis-v1 input, then currently exits with
-`render-unavailable`. It does not create a placeholder file and does not recompute measurements.
-Issue #13 owns the diagnostic renderer implementation.
+`render --analysis <analysis.json> --output <report.svg>` consumes validated canonical
+analysis-v1 and produces a deterministic diagnostic SVG. Optional
+`--video <source-video>` embeds a verified display-oriented source frame; optional
+`--frame-timestamp-s <s>` must identify a canonical raw-observation timestamp. Existing reports
+are not overwritten unless `--force` is supplied.
+
+The renderer does not rerun tracking, filtering, calibration, interpolation, or kinematics.
+Lost observations break plotted paths, low-confidence observations remain explicit, and absent
+filtered/kinematic layers are reported as absent. See `DIAGNOSTIC_RENDERING.md` for the rendering
+and source-frame verification contract.
 
 ## Canonical analysis guarantees
 
@@ -121,7 +127,6 @@ pipeline reliable.
 | 6 | `tracking` | selected tracker cannot execute the input |
 | 7 | `output` | serialization/write/overwrite failure |
 | 8 | `benchmark` | benchmark suite/data mismatch |
-| 9 | `render-unavailable` | canonical input is valid but #13 renderer is not implemented |
 
 Invalid benchmark command-line syntax remains `invalid-input`; benchmark dataset/config failures
 use `benchmark`.
@@ -130,7 +135,10 @@ use `benchmark`.
 
 The public synthetic fixture is exercised end to end in Rust tests and CI. The integration test
 runs the same analysis twice and compares bytes, round-trips the output through the canonical
-reader, and verifies the no-overwrite default. CI additionally validates the generated artifact
-against `validation/schema/analysis-v1.schema.json`.
+reader, verifies the no-overwrite default, renders an SVG with a verified source frame, and proves
+rendering leaves canonical analysis bytes unchanged. A second render fixture preserves explicit
+lost/low-confidence state while filtered and kinematic layers are absent. CI additionally validates
+the generated analysis artifact against `validation/schema/analysis-v1.schema.json` and uploads
+both success and failure SVG diagnostics.
 
 FFmpeg remains an external runtime prerequisite under ADR-0006; no Cargo dependency is added.
