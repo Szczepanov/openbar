@@ -146,6 +146,7 @@ jobs:
           target/m0-evidence/m0-evidence-v1.json
       - name: M0 evidence report
         run: |
+          diff -u docs/validation/M0_EVIDENCE_REPORT.md target/m0-evidence/M0_EVIDENCE_REPORT.md
           cat target/m0-evidence/M0_EVIDENCE_REPORT.md
           cat target/m0-evidence/M0_EVIDENCE_REPORT.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload M0 smoke evidence
