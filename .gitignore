@@ -34,6 +34,10 @@ Thumbs.db
 *.mov
 *.avi
 *.mkv
+# Private research data stays local; only the .gitkeep placeholders are tracked.
+/validation/private/**
+!/validation/private/**/
+!/validation/private/**/.gitkeep
 ml/data/
 ml/runs/
 ml/checkpoints/
