@@ -13,7 +13,7 @@ Measurement rules remain unchanged:
 - lost tracking is explicit;
 - no last-known coordinate is emitted as if measured;
 - no interpolation is performed;
-- target bounds exist only for tracked samples;
+- target bounds exist only for tracked/low-confidence samples; v1 bounds retain the manual-seed target size and are not a scale estimate;
 - visibility is explicit but v1 reports `unknown` rather than inferring occlusion from tracker
   failure;
 - confidence values are algorithm-specific signals, not interchangeable probabilities.
