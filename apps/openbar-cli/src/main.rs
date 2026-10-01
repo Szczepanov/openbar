@@ -2,9 +2,7 @@ use openbar_core::benchmark::{
     aggregate_metrics, evaluate_tracker_case, BenchmarkParameters, GroundTruthSample,
     TrackerMetrics, TrackerPrediction, TrackerPredictionState, BENCHMARK_METRIC_VERSION,
 };
-use openbar_core::manual_seed::{
-    ManualTargetSeedDocument, PixelPoint, SeedValidationContext,
-};
+use openbar_core::manual_seed::{ManualTargetSeedDocument, PixelPoint, SeedValidationContext};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -495,8 +493,7 @@ fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult>
         );
     }
 
-    let selected_media_duration_s =
-        spec.selected_range_s.end_s - spec.selected_range_s.start_s;
+    let selected_media_duration_s = spec.selected_range_s.end_s - spec.selected_range_s.start_s;
     let runtime = predictions
         .runtime
         .as_ref()
@@ -710,10 +707,7 @@ fn condition_labels(fixture: &FixtureEntry) -> Vec<String> {
         format!("exercise={}", fixture.exercise),
         format!("camera_view={}", fixture.camera.view),
         format!("lighting={}", fixture.conditions.lighting),
-        format!(
-            "plate_visibility={}",
-            fixture.conditions.plate_visibility
-        ),
+        format!("plate_visibility={}", fixture.conditions.plate_visibility),
         format!("occlusion={}", fixture.conditions.occlusion),
         format!("motion_blur={}", fixture.conditions.motion_blur),
     ];
@@ -730,10 +724,8 @@ fn condition_labels(fixture: &FixtureEntry) -> Vec<String> {
 }
 
 fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
-    let mut groups: BTreeMap<
-        (String, String),
-        (ImplementationIdentity, Vec<TrackerMetrics>),
-    > = BTreeMap::new();
+    let mut groups: BTreeMap<(String, String), (ImplementationIdentity, Vec<TrackerMetrics>)> =
+        BTreeMap::new();
 
     for case in cases {
         let implementation_key = serde_json::to_string(&case.implementation)?;
@@ -769,10 +761,7 @@ fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
 }
 
 fn push_aggregate_group(
-    groups: &mut BTreeMap<
-        (String, String),
-        (ImplementationIdentity, Vec<TrackerMetrics>),
-    >,
+    groups: &mut BTreeMap<(String, String), (ImplementationIdentity, Vec<TrackerMetrics>)>,
     implementation_key: String,
     group: String,
     implementation: &ImplementationIdentity,
@@ -863,12 +852,10 @@ fn resolve_path(base: &Path, value: &str) -> PathBuf {
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> AnyResult<T> {
-    let content = fs::read_to_string(path).map_err(|error| {
-        data_error(format!("failed to read '{}': {error}", path.display()))
-    })?;
-    serde_json::from_str(&content).map_err(|error| {
-        data_error(format!("failed to parse '{}': {error}", path.display()))
-    })
+    let content = fs::read_to_string(path)
+        .map_err(|error| data_error(format!("failed to read '{}': {error}", path.display())))?;
+    serde_json::from_str(&content)
+        .map_err(|error| data_error(format!("failed to parse '{}': {error}", path.display())))
 }
 
 fn data_error(message: impl Into<String>) -> Box<dyn Error> {
@@ -908,8 +895,7 @@ mod tests {
         assert_eq!(imperfect.metrics.timestamp_unmatched_samples, 1);
         assert!((imperfect.metrics.plate_center_mae_px.unwrap() - 25.0 / 7.0).abs() < 1e-12);
         assert!(
-            (imperfect.metrics.plate_center_rmse_px.unwrap() - (125.0_f64 / 7.0).sqrt())
-                .abs()
+            (imperfect.metrics.plate_center_rmse_px.unwrap() - (125.0_f64 / 7.0).sqrt()).abs()
                 < 1e-12
         );
         assert!((imperfect.metrics.x_bias_px.unwrap() - 9.0 / 7.0).abs() < 1e-12);
