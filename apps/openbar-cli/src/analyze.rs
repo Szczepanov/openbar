@@ -232,7 +232,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         "--plate-diameter-m",
     )?;
     if !plate_diameter_m.is_finite() || plate_diameter_m <= 0.0 {
-        return Err(CliError::invalid_input(
+        return Err(CliError::seed_calibration(
             "--plate-diameter-m must be finite and positive",
         ));
     }
@@ -1194,7 +1194,7 @@ mod tests {
             .expect("flag");
         args[index + 1] = "0".to_owned();
         let error = parse_args(args).expect_err("zero plate diameter must fail");
-        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert_eq!(error.kind(), CliErrorKind::SeedCalibration);
     }
 
     #[test]
