@@ -942,6 +942,18 @@ mod tests {
     }
 
     #[test]
+    fn malformed_benchmark_manifest_is_rejected() {
+        let path = std::env::temp_dir().join(format!(
+            "openbar-malformed-benchmark-{}.json",
+            std::process::id()
+        ));
+        fs::write(&path, "{not-json").expect("write malformed benchmark suite");
+        let error = run_suite(&path).expect_err("malformed benchmark input must fail");
+        assert!(error.to_string().contains("failed to parse"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn committed_synthetic_suite_has_hand_checkable_metrics_and_is_repeatable() {
         let first = run_suite(&synthetic_suite_path()).unwrap();
         let second = run_suite(&synthetic_suite_path()).unwrap();
