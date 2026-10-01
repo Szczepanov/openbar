@@ -54,28 +54,56 @@
         "synthetic_fixture_count",
         "non_synthetic_fixture_count",
         "annotated_fixture_count",
+        "development_fixture_count",
+        "validation_fixture_count",
         "held_out_real_validation_fixture_count",
         "held_out_real_annotated_fixture_count",
         "exercises",
         "camera_views",
+        "camera_movements",
+        "motion_blur_levels",
+        "occlusion_levels",
+        "lighting_conditions",
+        "camera_distance_m_values",
+        "approx_yaw_deg_values",
+        "challenge_tags",
         "fps_values",
-        "purposes"
+        "purposes",
+        "metadata_gaps"
       ],
       "properties": {
         "fixture_count": {"type": "integer", "minimum": 0},
         "synthetic_fixture_count": {"type": "integer", "minimum": 0},
         "non_synthetic_fixture_count": {"type": "integer", "minimum": 0},
         "annotated_fixture_count": {"type": "integer", "minimum": 0},
+        "development_fixture_count": {"type": "integer", "minimum": 0},
+        "validation_fixture_count": {"type": "integer", "minimum": 0},
         "held_out_real_validation_fixture_count": {"type": "integer", "minimum": 0},
         "held_out_real_annotated_fixture_count": {"type": "integer", "minimum": 0},
         "exercises": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "camera_views": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "camera_movements": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "motion_blur_levels": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "occlusion_levels": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "lighting_conditions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "camera_distance_m_values": {
+          "type": "array",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "uniqueItems": true
+        },
+        "approx_yaw_deg_values": {
+          "type": "array",
+          "items": {"type": "number", "minimum": -180, "maximum": 180},
+          "uniqueItems": true
+        },
+        "challenge_tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "fps_values": {
           "type": "array",
           "items": {"type": "number", "exclusiveMinimum": 0},
           "uniqueItems": true
         },
-        "purposes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        "purposes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "metadata_gaps": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
       }
     },
     "determinism": {
