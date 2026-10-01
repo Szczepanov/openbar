@@ -979,7 +979,6 @@ mod tests {
         assert_eq!(perfect.metrics.plate_center_rmse_px, Some(0.0));
     }
 
-
     fn rotated_fixture() -> FixtureEntry {
         FixtureEntry {
             id: "rotated-fixture".to_owned(),
