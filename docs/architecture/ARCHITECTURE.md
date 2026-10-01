@@ -50,7 +50,7 @@ M0 Rust tracking experiments behind a decoder-agnostic boundary.
 
 The crate accepts display-oriented grayscale image access, authoritative timestamps, and the
 canonical manual seed from `openbar-core`. It owns experimental tracker implementations,
-explicit tracker loss/quality state, and adapters into the common benchmark prediction contract.
+explicit tracked/low-confidence/lost state, and adapters into the common benchmark prediction contract.
 
 It deliberately does **not** own codecs, media paths, camera APIs, Flutter types, or nominal-FPS
 measurement logic. A future media layer may adapt decoded buffers into this boundary without
