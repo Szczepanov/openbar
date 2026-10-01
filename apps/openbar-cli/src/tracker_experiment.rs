@@ -1,9 +1,7 @@
 use openbar_core::benchmark::{
     evaluate_tracker_case, BenchmarkParameters, GroundTruthSample, TrackerMetrics,
 };
-use openbar_core::manual_seed::{
-    ManualTargetSeed, PixelPoint, PlateTarget, SeedValidationContext,
-};
+use openbar_core::manual_seed::{ManualTargetSeed, PixelPoint, PlateTarget, SeedValidationContext};
 use openbar_tracking::{
     FrameSample, GrayFrame, LocalContrastTracker, ManualSeedTracker, TemplateMatchTracker,
     TrackerLossReason, TrackerObservationState, TrackerRun,
@@ -96,7 +94,11 @@ pub fn run_cli() -> AnyResult<()> {
                 );
                 return Ok(());
             }
-            other => return Err(data_error(format!("unknown tracker-experiment argument '{other}'"))),
+            other => {
+                return Err(data_error(format!(
+                    "unknown tracker-experiment argument '{other}'"
+                )))
+            }
         }
         index += 1;
     }
@@ -166,8 +168,7 @@ fn run_experiment() -> AnyResult<ExperimentArtifact> {
             let started = Instant::now();
             let run = tracker.track(&frame_samples, &manual_seed)?;
             let runtime_s = started.elapsed().as_secs_f64();
-            let metrics =
-                evaluate_tracker_case(&truth, &run.benchmark_predictions(), parameters)?;
+            let metrics = evaluate_tracker_case(&truth, &run.benchmark_predictions(), parameters)?;
             let selected_media_duration_s = scenario.timestamps.last().copied().unwrap_or_default()
                 - scenario.timestamps.first().copied().unwrap_or_default();
             let identity = &run.tracker;
@@ -320,11 +321,7 @@ fn scenarios() -> Vec<Scenario> {
     ]
 }
 
-fn simple_scenario(
-    name: &'static str,
-    factor: &'static str,
-    centers: &[(i32, i32)],
-) -> Scenario {
+fn simple_scenario(name: &'static str, factor: &'static str, centers: &[(i32, i32)]) -> Scenario {
     Scenario {
         name,
         factor,
@@ -371,7 +368,10 @@ fn validate_scenario(scenario: &Scenario) -> AnyResult<()> {
         || scenario.rendered_radii.len() != expected
         || scenario.hide_right_half.len() != expected
     {
-        return Err(data_error(format!("scenario '{}' has misaligned inputs", scenario.name)));
+        return Err(data_error(format!(
+            "scenario '{}' has misaligned inputs",
+            scenario.name
+        )));
     }
     Ok(())
 }
@@ -448,17 +448,13 @@ fn render_summary(artifact: &ExperimentArtifact) -> String {
             .metrics
             .plate_center_mae_px
             .map_or_else(|| "n/a".to_owned(), |value| format!("{value:.3}"));
-        let availability = result
-            .metrics
-            .tracking_availability
-            .map_or_else(|| "n/a".to_owned(), |value| format!("{:.1}%", value * 100.0));
+        let availability = result.metrics.tracking_availability.map_or_else(
+            || "n/a".to_owned(),
+            |value| format!("{:.1}%", value * 100.0),
+        );
         output.push_str(&format!(
             "- {} / {}: MAE={} px, availability={}, loss={}\n",
-            result.scenario,
-            result.tracker_id,
-            mae,
-            availability,
-            result.metrics.lost_samples
+            result.scenario, result.tracker_id, mae, availability, result.metrics.lost_samples
         ));
     }
     output.push_str("Recommendation: carry both families into real-fixture benchmarking; no production winner from procedural evidence.\n");
