@@ -85,30 +85,13 @@ pub struct TimedMetricEstimate {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum KinematicsError {
-    InvalidMaximumGap {
-        value: f64,
-    },
-    InvalidMinimumConfidence {
-        value: f32,
-    },
-    InvalidSample {
-        index: usize,
-        reason: String,
-    },
-    NonIncreasingTimestamp {
-        previous_index: usize,
-        index: usize,
-    },
-    InvalidInterval {
-        start_s: f64,
-        end_s: f64,
-    },
-    IntervalBoundaryNotSampled {
-        timestamp_s: f64,
-    },
-    NonFiniteDerivedValue {
-        index: usize,
-    },
+    InvalidMaximumGap { value: f64 },
+    InvalidMinimumConfidence { value: f32 },
+    InvalidSample { index: usize, reason: String },
+    NonIncreasingTimestamp { previous_index: usize, index: usize },
+    InvalidInterval { start_s: f64, end_s: f64 },
+    IntervalBoundaryNotSampled { timestamp_s: f64 },
+    NonFiniteDerivedValue { index: usize },
 }
 
 impl fmt::Display for KinematicsError {
@@ -228,8 +211,8 @@ pub fn axis_displacement(
         return Ok(None);
     }
 
-    let value = axis_value(*samples.last().expect("length checked"), axis)
-        - axis_value(samples[0], axis);
+    let value =
+        axis_value(*samples.last().expect("length checked"), axis) - axis_value(samples[0], axis);
     if !value.is_finite() {
         return Err(KinematicsError::NonFiniteDerivedValue {
             index: samples.len() - 1,
@@ -250,10 +233,10 @@ pub fn range_of_motion(
     validate_config(config)?;
     validate_samples(samples)?;
 
-    if samples.is_empty() {
+    if samples.len() < 2 {
         return Ok(None);
     }
-    if samples.len() > 1 && !series_supported(samples, 0, samples.len() - 1, config) {
+    if !series_supported(samples, 0, samples.len() - 1, config) {
         return Ok(None);
     }
     if samples[0].confidence < config.min_confidence {
@@ -574,10 +557,9 @@ mod tests {
         ];
         let cfg = config(0.2, 0.5);
 
-        let horizontal_rom =
-            range_of_motion(&samples, MetricAxis::HorizontalX, cfg)
-                .unwrap()
-                .unwrap();
+        let horizontal_rom = range_of_motion(&samples, MetricAxis::HorizontalX, cfg)
+            .unwrap()
+            .unwrap();
         assert!((horizontal_rom.value - 0.4).abs() < 1.0e-12);
         assert!((horizontal_rom.confidence - 0.7).abs() < f32::EPSILON);
 
@@ -587,12 +569,21 @@ mod tests {
         assert!((vertical_rom.value - 0.7).abs() < 1.0e-12);
         assert!((vertical_rom.confidence - 0.7).abs() < f32::EPSILON);
 
-        let vertical_displacement =
-            axis_displacement(&samples, MetricAxis::VerticalY, cfg)
-                .unwrap()
-                .unwrap();
+        let vertical_displacement = axis_displacement(&samples, MetricAxis::VerticalY, cfg)
+            .unwrap()
+            .unwrap();
         assert!((vertical_displacement.value - 0.3).abs() < 1.0e-12);
         assert!((vertical_displacement.confidence - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn range_of_motion_requires_at_least_two_supported_samples() {
+        let samples = [sample_metric_position(0.0, 0.2, 0.4, 1.0)];
+
+        assert_eq!(
+            range_of_motion(&samples, MetricAxis::VerticalY, config(0.1, 0.0)).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -617,10 +608,14 @@ mod tests {
         ];
         let interval = MetricInterval::try_new(0.0, 0.7).unwrap();
 
-        let mean =
-            mean_axis_velocity(&samples, MetricAxis::HorizontalX, interval, config(0.6, 0.5))
-                .unwrap()
-                .unwrap();
+        let mean = mean_axis_velocity(
+            &samples,
+            MetricAxis::HorizontalX,
+            interval,
+            config(0.6, 0.5),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!((mean.value - 2.0).abs() < 1.0e-12);
         assert!((mean.confidence - 0.7).abs() < f32::EPSILON);
@@ -657,10 +652,14 @@ mod tests {
         ];
         let interval = MetricInterval::try_new(1.0, 3.0).unwrap();
 
-        let peak =
-            peak_axis_velocity(&samples, MetricAxis::HorizontalX, interval, config(1.1, 0.0))
-                .unwrap()
-                .unwrap();
+        let peak = peak_axis_velocity(
+            &samples,
+            MetricAxis::HorizontalX,
+            interval,
+            config(1.1, 0.0),
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(peak.value, 4.0);
         assert_eq!(peak.timestamp_s, 3.0);
@@ -677,10 +676,14 @@ mod tests {
         ];
         let interval = MetricInterval::try_new(0.0, 3.0).unwrap();
 
-        let peak =
-            peak_axis_velocity(&samples, MetricAxis::HorizontalX, interval, config(1.1, 0.0))
-                .unwrap()
-                .unwrap();
+        let peak = peak_axis_velocity(
+            &samples,
+            MetricAxis::HorizontalX,
+            interval,
+            config(1.1, 0.0),
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(peak.value, 5.0);
         assert_eq!(peak.timestamp_s, 2.0);
@@ -734,7 +737,7 @@ mod tests {
         );
         assert_eq!(
             provenance.parameters.get("min_confidence"),
-            Some(&ParameterValue::Float(0.4))
+            Some(&ParameterValue::Float(f64::from(0.4_f32)))
         );
     }
 }
