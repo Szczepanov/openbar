@@ -67,18 +67,40 @@ For later formal validation consider Bland–Altman analysis, ICC where appropri
 
 ## Filtering experiment
 
-Every candidate filter should run against the same fixture/reference set.
+Every candidate filter runs behind the same Rust contract and benchmark semantics.
+
+Initial candidates:
+
+- raw identity baseline;
+- centred moving average;
+- timestamp-aware Savitzky–Golay local polynomial fit;
+- causal constant-velocity Kalman/state-space baseline.
 
 Record:
 
-- parameters;
-- latency/edge behaviour;
-- position error;
-- velocity error;
-- peak attenuation;
-- failure modes.
+- implementation/version and effective typed parameters;
+- causal/non-causal latency semantics;
+- irregular-timestamp behaviour;
+- explicit gap/reset behaviour;
+- edge behaviour;
+- position MAE/RMSE/bias;
+- downstream velocity MAE/RMSE with an explicit maximum continuity gap;
+- peak attenuation only when the reference scenario contains an intentionally defined peak;
+- peak timing shift only for those peak-bearing scenarios;
+- filter segment count and maximum observed input gap;
+- runtime and condition/failure notes.
 
-Select the production default from measured trade-offs, not visual smoothness.
+Parameter development must remain separate from held-out validation as far as the available M0
+material allows. The committed `filter-experiment` command uses deterministic seeded Gaussian-noise
+development signals, averaged across three independent seeds per signal, to select one configuration
+per family. It evaluates those frozen configurations on disjoint held-out synthetic signals with
+separate seeds. Peak metrics are left null for scenarios that do not define a meaningful peak.
+
+This is contract/regression evidence, not sufficient evidence for a production default. Production
+selection remains deferred until the same configurations have real decoded-video/reference evidence
+across the supported recording envelope.
+
+See [`FILTER_EXPERIMENTS.md`](FILTER_EXPERIMENTS.md).
 
 ## Failure policy
 

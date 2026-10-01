@@ -50,6 +50,10 @@ jobs:
         run: >-
           cargo run --locked -p openbar-cli -- tracker-experiment
           --output target/tracker-experiment.json
+      - name: Filter comparison
+        run: >-
+          cargo run --locked -p openbar-cli -- filter-experiment
+          --output target/filter-experiment.json
       - name: Benchmark regression smoke
         run: >-
           cargo run --locked -p openbar-cli -- benchmark
@@ -61,6 +65,7 @@ jobs:
           name: m0-smoke-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             target/tracker-experiment.json
+            target/filter-experiment.json
             target/benchmark-smoke.json
           if-no-files-found: error
           retention-days: 14

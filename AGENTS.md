@@ -17,7 +17,7 @@ uncertainty explicit. Measurement correctness and reproducibility outrank featur
 |------|------------------|
 | `crates/openbar-core` | Authoritative deterministic domain logic: `analysis` (canonical versioned `Analysis` aggregate), `calibration`, `manual_seed`, `trajectory`, `filtering`, `kinematics`, `benchmark` (metric semantics), `math`. No UI/media/ML deps. |
 | `crates/openbar-tracking` | Decoder-agnostic M0 tracker experiments (`template`, `contrast`) behind the `GrayscaleImage` / `FrameSample` boundary. Depends only on `openbar-core`. |
-| `apps/openbar-cli` | Headless CLI + validation harness: `benchmark` (default subcommand) and `tracker-experiment`. Hand-rolled arg parsing, no clap. |
+| `apps/openbar-cli` | Headless CLI + validation harness: `benchmark` (default subcommand), `tracker-experiment`, and `filter-experiment`. Hand-rolled arg parsing, no clap. |
 | `validation/` | JSON schemas, public fixtures (manifest, annotations, seeds, predictions), benchmark suites, and the stdlib-only Python annotation tool + tests. `validation/private/` is git-ignored. |
 | `docs/adr/` | Accepted architecture decisions. Read the relevant ADR before changing a boundary. |
 | `docs/validation/` | Contracts for fixtures, seeds, annotations, calibration, benchmark, tracker experiments. |
@@ -35,6 +35,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
+cargo run --locked -p openbar-cli -- filter-experiment --output target/filter-experiment.json
 cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json --output target/benchmark-smoke.json
 ```
 
