@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "pipeline_version": "m0-decoded-tracker-preflight-v1",
+  "cases": [
+    {
+      "id": "synthetic-decoded-template",
+      "fixture_manifest": "../fixtures/public/manifest.json",
+      "fixture_id": "synthetic-clean-side-12",
+      "annotations": "../fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json",
+      "manual_seed": "../fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+      "predictions": "../../target/tracker-run-smoke/synthetic-clean-side-12.template-sad-v1.prediction-v1.json",
+      "selected_range_s": {"start_s": 0.0, "end_s": 0.916667},
+      "timestamp_tolerance_s": 0.001,
+      "min_confidence": 0.0
+    },
+    {
+      "id": "synthetic-decoded-contrast",
+      "fixture_manifest": "../fixtures/public/manifest.json",
+      "fixture_id": "synthetic-clean-side-12",
+      "annotations": "../fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json",
+      "manual_seed": "../fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+      "predictions": "../../target/tracker-run-smoke/synthetic-clean-side-12.local-contrast-centroid-v1.prediction-v1.json",
+      "selected_range_s": {"start_s": 0.0, "end_s": 0.916667},
+      "timestamp_tolerance_s": 0.001,
+      "min_confidence": 0.0
+    }
+  ]
+}
