@@ -920,16 +920,11 @@ fn validate_canonical_kinematics(
         )));
     }
 
-    let max_gap_s = required_kinematics_float_parameter(&kinematics.method, "max_gap_s")?;
-    let min_confidence = required_kinematics_float_parameter(&kinematics.method, "min_confidence")?;
-    let min_confidence_f32 = min_confidence as f32;
-    if f64::from(min_confidence_f32) != min_confidence {
-        return Err(invalid(
-            "kinematics.method.parameters.min_confidence must be exactly representable as f32",
-        ));
-    }
+    let max_gap_s = required_kinematics_numeric_parameter(&kinematics.method, "max_gap_s")?;
+    let min_confidence =
+        required_kinematics_numeric_parameter(&kinematics.method, "min_confidence")? as f32;
 
-    let config = KinematicsConfig::try_new(max_gap_s, min_confidence_f32)
+    let config = KinematicsConfig::try_new(max_gap_s, min_confidence)
         .map_err(|error| invalid(format!("invalid persisted kinematics configuration: {error}")))?;
     let expected = derive_velocity(input, config)
         .map_err(|error| invalid(format!("cannot reproduce persisted kinematics: {error}")))?;
@@ -956,14 +951,15 @@ fn validate_canonical_kinematics(
     Ok(())
 }
 
-fn required_kinematics_float_parameter(
+fn required_kinematics_numeric_parameter(
     method: &ImplementationProvenance,
     name: &str,
 ) -> Result<f64, AnalysisValidationError> {
     match method.parameters.get(name) {
         Some(ParameterValue::Float(value)) => Ok(*value),
+        Some(ParameterValue::Integer(value)) => Ok(*value as f64),
         Some(_) => Err(invalid(format!(
-            "kinematics.method.parameters.{name} must be a floating-point value"
+            "kinematics.method.parameters.{name} must be numeric"
         ))),
         None => Err(invalid(format!(
             "kinematics method {}@{} is missing required parameter {name}",
