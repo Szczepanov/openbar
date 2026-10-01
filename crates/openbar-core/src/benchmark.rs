@@ -2,7 +2,7 @@ use crate::manual_seed::PixelPoint;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub const BENCHMARK_METRIC_VERSION: &str = "tracker-v1";
+pub const BENCHMARK_METRIC_VERSION: &str = "tracker-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GroundTruthSample {
@@ -38,6 +38,14 @@ pub struct TrackerMetrics {
     pub timestamp_unmatched_samples: usize,
     pub plate_center_mae_px: Option<f64>,
     pub plate_center_rmse_px: Option<f64>,
+    pub x_mae_px: Option<f64>,
+    pub x_rmse_px: Option<f64>,
+    pub y_mae_px: Option<f64>,
+    pub y_rmse_px: Option<f64>,
+    pub plate_center_p50_px: Option<f64>,
+    pub plate_center_p90_px: Option<f64>,
+    pub plate_center_p95_px: Option<f64>,
+    pub plate_center_max_px: Option<f64>,
     pub x_bias_px: Option<f64>,
     pub y_bias_px: Option<f64>,
     pub tracking_availability: Option<f64>,
@@ -128,6 +136,11 @@ struct EvaluationAccumulator {
     evaluated: Vec<EvaluatedSample>,
     absolute_error_sum: f64,
     squared_error_sum: f64,
+    absolute_x_error_sum: f64,
+    squared_x_error_sum: f64,
+    absolute_y_error_sum: f64,
+    squared_y_error_sum: f64,
+    radial_errors: Vec<f64>,
     x_bias_sum: f64,
     y_bias_sum: f64,
     tracked_samples: usize,
@@ -142,6 +155,11 @@ impl EvaluationAccumulator {
             evaluated: Vec::with_capacity(capacity),
             absolute_error_sum: 0.0,
             squared_error_sum: 0.0,
+            absolute_x_error_sum: 0.0,
+            squared_x_error_sum: 0.0,
+            absolute_y_error_sum: 0.0,
+            squared_y_error_sum: 0.0,
+            radial_errors: Vec::with_capacity(capacity),
             x_bias_sum: 0.0,
             y_bias_sum: 0.0,
             tracked_samples: 0,
@@ -191,6 +209,11 @@ impl EvaluationAccumulator {
 
         self.absolute_error_sum += error;
         self.squared_error_sum += squared_error;
+        self.absolute_x_error_sum += dx.abs();
+        self.squared_x_error_sum += dx * dx;
+        self.absolute_y_error_sum += dy.abs();
+        self.squared_y_error_sum += dy * dy;
+        self.radial_errors.push(error);
         self.x_bias_sum += dx;
         self.y_bias_sum += dy;
         self.tracked_samples += 1;
@@ -218,6 +241,18 @@ impl EvaluationAccumulator {
                 .then_some(self.absolute_error_sum / tracked_denominator),
             plate_center_rmse_px: (self.tracked_samples > 0)
                 .then_some((self.squared_error_sum / tracked_denominator).sqrt()),
+            x_mae_px: (self.tracked_samples > 0)
+                .then_some(self.absolute_x_error_sum / tracked_denominator),
+            x_rmse_px: (self.tracked_samples > 0)
+                .then_some((self.squared_x_error_sum / tracked_denominator).sqrt()),
+            y_mae_px: (self.tracked_samples > 0)
+                .then_some(self.absolute_y_error_sum / tracked_denominator),
+            y_rmse_px: (self.tracked_samples > 0)
+                .then_some((self.squared_y_error_sum / tracked_denominator).sqrt()),
+            plate_center_p50_px: nearest_rank_percentile(&self.radial_errors, 0.50),
+            plate_center_p90_px: nearest_rank_percentile(&self.radial_errors, 0.90),
+            plate_center_p95_px: nearest_rank_percentile(&self.radial_errors, 0.95),
+            plate_center_max_px: self.radial_errors.iter().copied().reduce(f64::max),
             x_bias_px: (self.tracked_samples > 0).then_some(self.x_bias_sum / tracked_denominator),
             y_bias_px: (self.tracked_samples > 0).then_some(self.y_bias_sum / tracked_denominator),
             tracking_availability: Some(tracked_denominator / comparable_denominator),
@@ -327,6 +362,16 @@ pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
         |value| value.plate_center_mae_px,
         |value| value.tracked_samples,
     );
+    let x_mae_px = weighted_mean(
+        metrics,
+        |value| value.x_mae_px,
+        |value| value.tracked_samples,
+    );
+    let y_mae_px = weighted_mean(
+        metrics,
+        |value| value.y_mae_px,
+        |value| value.tracked_samples,
+    );
     let x_bias_px = weighted_mean(
         metrics,
         |value| value.x_bias_px,
@@ -337,6 +382,19 @@ pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
         |value| value.y_bias_px,
         |value| value.tracked_samples,
     );
+
+    let x_rmse_squared_mean = weighted_mean(
+        metrics,
+        |value| value.x_rmse_px.map(|metric| metric * metric),
+        |value| value.tracked_samples,
+    );
+    let x_rmse_px = x_rmse_squared_mean.map(f64::sqrt);
+    let y_rmse_squared_mean = weighted_mean(
+        metrics,
+        |value| value.y_rmse_px.map(|metric| metric * metric),
+        |value| value.tracked_samples,
+    );
+    let y_rmse_px = y_rmse_squared_mean.map(f64::sqrt);
 
     let rmse_squared_mean = weighted_mean(
         metrics,
@@ -368,6 +426,19 @@ pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
         timestamp_unmatched_samples,
         plate_center_mae_px,
         plate_center_rmse_px,
+        x_mae_px,
+        x_rmse_px,
+        y_mae_px,
+        y_rmse_px,
+        // Exact pooled percentiles cannot be reconstructed from case-level summaries.
+        // They remain case-level evidence; aggregate max is still exact.
+        plate_center_p50_px: None,
+        plate_center_p90_px: None,
+        plate_center_p95_px: None,
+        plate_center_max_px: metrics
+            .iter()
+            .filter_map(|value| value.plate_center_max_px)
+            .reduce(f64::max),
         x_bias_px,
         y_bias_px,
         tracking_availability,
@@ -498,6 +569,17 @@ fn maximum_loss_span(samples: &[EvaluatedSample]) -> (usize, f64) {
     (max_samples, max_duration_s)
 }
 
+fn nearest_rank_percentile(values: &[f64], quantile: f64) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    debug_assert!(quantile > 0.0 && quantile <= 1.0);
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let rank = (quantile * sorted.len() as f64).ceil() as usize;
+    Some(sorted[rank.saturating_sub(1).min(sorted.len() - 1)])
+}
+
 fn weighted_mean(
     metrics: &[TrackerMetrics],
     value: impl Fn(&TrackerMetrics) -> Option<f64>,
@@ -530,6 +612,14 @@ fn empty_metrics() -> TrackerMetrics {
         timestamp_unmatched_samples: 0,
         plate_center_mae_px: None,
         plate_center_rmse_px: None,
+        x_mae_px: None,
+        x_rmse_px: None,
+        y_mae_px: None,
+        y_rmse_px: None,
+        plate_center_p50_px: None,
+        plate_center_p90_px: None,
+        plate_center_p95_px: None,
+        plate_center_max_px: None,
         x_bias_px: None,
         y_bias_px: None,
         tracking_availability: None,
@@ -590,6 +680,14 @@ mod tests {
         assert_eq!(metrics.lost_samples, 0);
         assert_eq!(metrics.plate_center_mae_px, Some(0.0));
         assert_eq!(metrics.plate_center_rmse_px, Some(0.0));
+        assert_eq!(metrics.x_mae_px, Some(0.0));
+        assert_eq!(metrics.x_rmse_px, Some(0.0));
+        assert_eq!(metrics.y_mae_px, Some(0.0));
+        assert_eq!(metrics.y_rmse_px, Some(0.0));
+        assert_eq!(metrics.plate_center_p50_px, Some(0.0));
+        assert_eq!(metrics.plate_center_p90_px, Some(0.0));
+        assert_eq!(metrics.plate_center_p95_px, Some(0.0));
+        assert_eq!(metrics.plate_center_max_px, Some(0.0));
         assert_eq!(metrics.x_bias_px, Some(0.0));
         assert_eq!(metrics.y_bias_px, Some(0.0));
         assert_eq!(metrics.tracking_availability, Some(1.0));
@@ -607,6 +705,14 @@ mod tests {
 
         assert_eq!(metrics.plate_center_mae_px, Some(5.0));
         assert_eq!(metrics.plate_center_rmse_px, Some(5.0));
+        assert_eq!(metrics.x_mae_px, Some(3.0));
+        assert_eq!(metrics.x_rmse_px, Some(3.0));
+        assert_eq!(metrics.y_mae_px, Some(4.0));
+        assert_eq!(metrics.y_rmse_px, Some(4.0));
+        assert_eq!(metrics.plate_center_p50_px, Some(5.0));
+        assert_eq!(metrics.plate_center_p90_px, Some(5.0));
+        assert_eq!(metrics.plate_center_p95_px, Some(5.0));
+        assert_eq!(metrics.plate_center_max_px, Some(5.0));
         assert_eq!(metrics.x_bias_px, Some(3.0));
         assert_eq!(metrics.y_bias_px, Some(4.0));
     }
@@ -723,6 +829,14 @@ mod tests {
             timestamp_unmatched_samples: 0,
             plate_center_mae_px: Some(2.0),
             plate_center_rmse_px: Some(2.0),
+            x_mae_px: Some(1.0),
+            x_rmse_px: Some(1.0),
+            y_mae_px: Some(0.0),
+            y_rmse_px: Some(0.0),
+            plate_center_p50_px: Some(2.0),
+            plate_center_p90_px: Some(2.0),
+            plate_center_p95_px: Some(2.0),
+            plate_center_max_px: Some(2.0),
             x_bias_px: Some(1.0),
             y_bias_px: Some(0.0),
             tracking_availability: Some(1.0),
@@ -739,6 +853,14 @@ mod tests {
             timestamp_unmatched_samples: 0,
             plate_center_mae_px: Some(5.0),
             plate_center_rmse_px: Some(5.0),
+            x_mae_px: Some(4.0),
+            x_rmse_px: Some(4.0),
+            y_mae_px: Some(0.0),
+            y_rmse_px: Some(0.0),
+            plate_center_p50_px: Some(5.0),
+            plate_center_p90_px: Some(5.0),
+            plate_center_p95_px: Some(5.0),
+            plate_center_max_px: Some(5.0),
             x_bias_px: Some(4.0),
             y_bias_px: Some(0.0),
             tracking_availability: Some(0.5),
@@ -753,6 +875,12 @@ mod tests {
         assert_eq!(aggregate.tracked_samples, 3);
         assert!((aggregate.plate_center_mae_px.unwrap() - 3.0).abs() < 1e-12);
         assert!((aggregate.plate_center_rmse_px.unwrap() - 3.3166247903554).abs() < 1e-12);
+        assert!((aggregate.x_mae_px.unwrap() - 2.0).abs() < 1e-12);
+        assert!((aggregate.x_rmse_px.unwrap() - 6.0_f64.sqrt()).abs() < 1e-12);
+        assert_eq!(aggregate.plate_center_p50_px, None);
+        assert_eq!(aggregate.plate_center_p90_px, None);
+        assert_eq!(aggregate.plate_center_p95_px, None);
+        assert_eq!(aggregate.plate_center_max_px, Some(5.0));
         assert_eq!(aggregate.tracking_availability, Some(0.75));
         assert_eq!(aggregate.lost_frame_percentage, Some(25.0));
     }

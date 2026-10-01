@@ -135,6 +135,20 @@ jobs:
           cargo run --locked -p openbar-cli -- render
           --analysis crates/openbar-core/tests/fixtures/analysis-v1.golden.json
           --output target/render-failure.svg
+      - name: Reproducible M0 public evidence package
+        run: >-
+          python3 validation/tools/m0_evidence.py
+          --output-dir target/m0-evidence
+      - name: M0 evidence schema
+        run: >-
+          python3 validation/tools/schema_check.py
+          --schema validation/schema/m0-evidence-v1.schema.json
+          target/m0-evidence/m0-evidence-v1.json
+      - name: M0 evidence report
+        run: |
+          diff -u docs/validation/M0_EVIDENCE_REPORT.md target/m0-evidence/M0_EVIDENCE_REPORT.md
+          cat target/m0-evidence/M0_EVIDENCE_REPORT.md
+          cat target/m0-evidence/M0_EVIDENCE_REPORT.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload M0 smoke evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -147,6 +161,7 @@ jobs:
             target/render-success.svg
             target/render-failure.svg
             target/tracker-run-smoke/
+            target/m0-evidence/
           if-no-files-found: error
           retention-days: 14
 

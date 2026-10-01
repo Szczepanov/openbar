@@ -10,6 +10,7 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `schema/benchmark-suite-v1.schema.json` — benchmark suite/case contract.
 - `schema/tracker-prediction-v1.schema.json` — tracker prediction interchange contract.
 - `schema/benchmark-result-v1.schema.json` — versioned benchmark result artifact.
+- `schema/m0-evidence-v1.schema.json` — issue #14 aggregate public evidence/gate-status contract.
 - `schema/analysis-v1.schema.json` — structural wire contract for the canonical Rust `Analysis` (see `docs/data/ANALYSIS_SCHEMA.md`).
 - `fixtures/public/manifest.json` — committed manifest for redistribution-safe fixtures.
 - `fixtures/public/annotations/` — canonical annotations/repeatability artifacts for public fixtures.
@@ -36,6 +37,23 @@ The filter comparison is generated with:
 cargo run -p openbar-cli -- filter-experiment --output target/filter-experiment.json
 ```
 
+The complete reproducible public M0 evidence package is generated with:
+
+```bash
+python3 validation/tools/m0_evidence.py --output-dir target/m0-evidence
+python3 validation/tools/schema_check.py \
+  --schema validation/schema/m0-evidence-v1.schema.json \
+  target/m0-evidence/m0-evidence-v1.json
+```
+
+The evidence runner repeats tracker and canonical analysis execution, benchmarks both retained M0
+tracker baselines against the same public annotations, records environment/runtime provenance,
+generates diagnostic renders, and assigns an explicit status to every provisional M0 gate. It does
+not reinterpret unavailable real-world evidence as a PASS.
+
+Add `--private-manifest validation/private/manifest.json` to also evaluate local real clips with a
+release build. Private results are aggregates only (`M0_PRIVATE_EVIDENCE_REPORT.md`).
+
 CI retains the filter JSON inside the hardened `m0-smoke-<head-sha>` workflow artifact alongside
 tracker and benchmark-smoke evidence. The retained filter JSON is deterministic measurement/contract
 evidence; environment-sensitive runtime is printed to the console and intentionally excluded from
@@ -49,6 +67,9 @@ Detailed policies and workflows:
 - [`docs/validation/BENCHMARK.md`](../docs/validation/BENCHMARK.md)
 - [`docs/validation/TRACKER_EXPERIMENTS.md`](../docs/validation/TRACKER_EXPERIMENTS.md)
 - [`docs/validation/FILTER_EXPERIMENTS.md`](../docs/validation/FILTER_EXPERIMENTS.md)
+- [`docs/validation/M0_EVIDENCE.md`](../docs/validation/M0_EVIDENCE.md)
+- [`docs/validation/M0_EVIDENCE_REPORT.md`](../docs/validation/M0_EVIDENCE_REPORT.md)
+- [`docs/validation/M0_PRIVATE_EVIDENCE_REPORT.md`](../docs/validation/M0_PRIVATE_EVIDENCE_REPORT.md)
 
 Do not add public media merely because it is technically accessible. Every committed media
 fixture must have affirmative redistribution rights documented in its manifest metadata.
