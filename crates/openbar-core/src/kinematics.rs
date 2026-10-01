@@ -239,10 +239,6 @@ pub fn range_of_motion(
     if !series_supported(samples, 0, samples.len() - 1, config) {
         return Ok(None);
     }
-    if samples[0].confidence < config.min_confidence {
-        return Ok(None);
-    }
-
     let mut minimum = axis_value(samples[0], axis);
     let mut maximum = minimum;
     for sample in &samples[1..] {
@@ -432,6 +428,50 @@ mod tests {
 
     fn config(max_gap_s: f64, min_confidence: f32) -> KinematicsConfig {
         KinematicsConfig::try_new(max_gap_s, min_confidence).unwrap()
+    }
+
+    #[test]
+    fn rejects_invalid_kinematics_configuration() {
+        assert!(matches!(
+            KinematicsConfig::try_new(0.0, 0.5),
+            Err(KinematicsError::InvalidMaximumGap { .. })
+        ));
+        assert!(matches!(
+            KinematicsConfig::try_new(f64::NAN, 0.5),
+            Err(KinematicsError::InvalidMaximumGap { .. })
+        ));
+        assert!(matches!(
+            KinematicsConfig::try_new(0.1, 1.1),
+            Err(KinematicsError::InvalidMinimumConfidence { .. })
+        ));
+        assert!(matches!(
+            KinematicsConfig::try_new(0.1, f32::NAN),
+            Err(KinematicsError::InvalidMinimumConfidence { .. })
+        ));
+    }
+
+    #[test]
+    fn aggregate_metrics_are_unavailable_when_interval_contains_low_confidence_sample() {
+        let samples = [
+            sample_metric_position(0.0, 0.0, 0.0, 0.9),
+            sample_metric_position(0.1, 0.2, 0.4, 0.4),
+            sample_metric_position(0.2, 0.4, 0.8, 0.9),
+        ];
+        let cfg = config(0.2, 0.5);
+        let interval = MetricInterval::try_new(0.0, 0.2).unwrap();
+
+        assert_eq!(
+            range_of_motion(&samples, MetricAxis::VerticalY, cfg).unwrap(),
+            None
+        );
+        assert_eq!(
+            mean_axis_velocity(&samples, MetricAxis::VerticalY, interval, cfg).unwrap(),
+            None
+        );
+        assert_eq!(
+            peak_axis_velocity(&samples, MetricAxis::VerticalY, interval, cfg).unwrap(),
+            None
+        );
     }
 
     #[test]
