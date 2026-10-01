@@ -56,10 +56,15 @@ impl Default for TemplateMatchTracker {
 impl ManualSeedTracker for TemplateMatchTracker {
     fn identity(&self) -> TrackerIdentity {
         let mut config = BTreeMap::new();
-        config.insert("search_radius_px".to_owned(), self.config.search_radius_px.to_string());
+        config.insert(
+            "search_radius_px".to_owned(),
+            self.config.search_radius_px.to_string(),
+        );
         config.insert(
             "max_normalized_mean_absolute_difference".to_owned(),
-            self.config.max_normalized_mean_absolute_difference.to_string(),
+            self.config
+                .max_normalized_mean_absolute_difference
+                .to_string(),
         );
         config.insert(
             "seed_timestamp_tolerance_s".to_owned(),
@@ -112,8 +117,11 @@ impl ManualSeedTracker for TemplateMatchTracker {
 
         let mut last_center = seed.target().center();
         let mut was_lost = false;
-        let search_radius = i32::try_from(self.config.search_radius_px)
-            .map_err(|_| TrackerError::InvalidConfiguration { field: "search_radius_px" })?;
+        let search_radius = i32::try_from(self.config.search_radius_px).map_err(|_| {
+            TrackerError::InvalidConfiguration {
+                field: "search_radius_px",
+            }
+        })?;
 
         for frame in frames.iter().skip(seed_index + 1) {
             let search_center = rounded_point(last_center);
@@ -139,7 +147,11 @@ impl ManualSeedTracker for TemplateMatchTracker {
             }
 
             let Some((candidate, score)) = best else {
-                observations.push(lost_observation(frame, TrackerLossReason::NoCandidate, None));
+                observations.push(lost_observation(
+                    frame,
+                    TrackerLossReason::NoCandidate,
+                    None,
+                ));
                 was_lost = true;
                 continue;
             };
