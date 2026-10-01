@@ -569,8 +569,7 @@ fn parse_filter_config(
             )));
         }
     };
-    config
-        .validate()
+    apply_filter(&[], config)
         .map_err(|error| CliError::invalid_input(format!("invalid filter config: {error}")))?;
     Ok(config)
 }
