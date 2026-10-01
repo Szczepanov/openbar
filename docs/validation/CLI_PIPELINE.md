@@ -38,7 +38,9 @@ cargo run --locked -p openbar-cli -- analyze \
 
 A direct media path may be supplied with `--video`. In fixture mode, `--video` is an explicit
 media override and the decoded source is still checked against the fixture's hash/encoded
-dimensions/rotation when those values are present.
+dimensions/rotation when those values are present. Fixture mode also cross-checks
+`--plate-diameter-m` against the manifest's required `load.plate_diameter_m` before media I/O,
+so a fixture identity cannot silently carry a different metric scale.
 
 There is deliberately **no default tracker or production filter**. The caller must choose both.
 Filtering evidence from #10 explicitly deferred a production winner; the CLI therefore cannot

@@ -103,6 +103,7 @@ struct ManifestFixture {
     #[serde(default)]
     media: Option<ManifestMedia>,
     video: ManifestVideo,
+    load: ManifestLoad,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -121,6 +122,11 @@ struct ManifestVideo {
     rotation_deg: Option<u16>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestLoad {
+    plate_diameter_m: f64,
+}
+
 pub fn run_cli() -> CliResult<()> {
     let Some(args) = parse_args(env::args().skip(2).collect())? else {
         println!("{USAGE}");
@@ -134,6 +140,9 @@ fn run(args: &Args) -> CliResult<()> {
         (Some(path), Some(fixture_id)) => Some(load_fixture(path, fixture_id)?),
         _ => None,
     };
+    if let Some(fixture) = fixture.as_ref() {
+        validate_fixture_plate_diameter(fixture, args.plate_diameter_m)?;
+    }
     let media_path = resolve_media_path(args, fixture.as_ref())?;
     let seed = read_seed(&args.seed, args.fixture_id.as_deref())?;
     let tracker = build_tracker(args)?;
@@ -930,6 +939,26 @@ fn load_fixture(path: &Path, fixture_id: &str) -> CliResult<ManifestFixture> {
         })
 }
 
+fn validate_fixture_plate_diameter(
+    fixture: &ManifestFixture,
+    plate_diameter_m: f64,
+) -> CliResult<()> {
+    let expected = fixture.load.plate_diameter_m;
+    if !expected.is_finite() || expected <= 0.0 {
+        return Err(CliError::invalid_input(format!(
+            "fixture '{}' has invalid load.plate_diameter_m {expected}; expected a finite positive value",
+            fixture.id
+        )));
+    }
+    if plate_diameter_m != expected {
+        return Err(CliError::seed_calibration(format!(
+            "--plate-diameter-m {plate_diameter_m} conflicts with fixture '{}' load.plate_diameter_m {expected}; use the fixture's recorded diameter or analyze without fixture identity",
+            fixture.id
+        )));
+    }
+    Ok(())
+}
+
 fn resolve_media_path(args: &Args, fixture: Option<&ManifestFixture>) -> CliResult<PathBuf> {
     if let Some(path) = &args.video {
         return Ok(path.clone());
@@ -1270,6 +1299,21 @@ mod tests {
     }
 
     #[test]
+    fn fixture_plate_diameter_must_match_manifest_before_media_io() {
+        let fixture = load_fixture(
+            &repo_path("validation/fixtures/public/manifest.json"),
+            "synthetic-clean-side-12",
+        )
+        .expect("fixture loads");
+
+        validate_fixture_plate_diameter(&fixture, 0.45).expect("matching diameter is accepted");
+        let error = validate_fixture_plate_diameter(&fixture, 0.50)
+            .expect_err("mismatched fixture diameter must fail");
+        assert_eq!(error.kind(), CliErrorKind::SeedCalibration);
+        assert!(error.to_string().contains("load.plate_diameter_m"));
+    }
+
+    #[test]
     fn unsupported_fixture_geometry_and_tracking_failure_are_explicit() {
         if !ffmpeg_available() {
             return;
@@ -1285,6 +1329,9 @@ mod tests {
                     "width_px": 999,
                     "height_px": 96,
                     "rotation_deg": 0
+                },
+                "load": {
+                    "plate_diameter_m": 0.45
                 }
             }]
         });
