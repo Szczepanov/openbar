@@ -51,6 +51,12 @@ ml/             # added when the first CV experiment is started
 validation/     # fixtures/annotations added only with redistribution rights
 ```
 
+## Validation data
+
+M0 fixture metadata is versioned under `validation/`. Public fixture media may only be
+committed when redistribution rights are documented; private/local research footage stays
+outside Git. See [M0 fixture dataset and provenance](docs/validation/FIXTURE_DATASET.md).
+
 ## Product direction
 
 The intended official app can be free for core athlete workflows while leaving room for optional paid features later, such as advanced longitudinal analytics, cloud sync, AI-assisted explanations, or coach/team workflows.
