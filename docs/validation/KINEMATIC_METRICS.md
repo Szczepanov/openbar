@@ -111,9 +111,11 @@ The method/configuration therefore travels with the derived layer in canonical a
 
 Canonical `Analysis::validate` also treats a persisted claim of `backward-difference@1` as a
 reproducibility contract: `max_gap_s` and `min_confidence` must be present with the expected
-types, and the stored velocity/confidence values must exactly match a fresh derivation from the
-declared calibrated or filtered input. This prevents a JSON document from retaining plausible
-numbers while misrepresenting the method or quality rules that produced them.
+types, and the stored velocity/confidence values must reproduce a fresh derivation from the
+declared calibrated or filtered input. Velocity availability (missing vs present) must match
+exactly; finite velocity values use the same narrow floating-point comparison tolerance as other
+canonical derived-value checks. This prevents a JSON document from retaining plausible numbers
+while misrepresenting the method or quality rules that produced them.
 
 ## Range of motion
 
