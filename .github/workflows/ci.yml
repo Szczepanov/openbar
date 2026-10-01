@@ -35,25 +35,21 @@ jobs:
         run: |
           rustc --version --verbose
           cargo --version
-      - name: Bootstrap Cargo.lock
-        run: |
-          cargo generate-lockfile
-          echo "::group::Cargo.lock"
-          cat Cargo.lock
-          echo "::endgroup::"
+      - name: Verify dependency lock
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace --all-targets --all-features
+        run: cargo test --locked --workspace --all-targets --all-features
       - name: First tracker comparison
         run: >-
-          cargo run -p openbar-cli -- tracker-experiment
+          cargo run --locked -p openbar-cli -- tracker-experiment
           --output target/tracker-experiment.json
       - name: Benchmark regression smoke
         run: >-
-          cargo run -p openbar-cli -- benchmark
+          cargo run --locked -p openbar-cli -- benchmark
           --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json
           --output target/benchmark-smoke.json
       - name: Upload M0 smoke evidence
