@@ -715,6 +715,12 @@ mod tests {
     }
 
     #[test]
+    fn moving_average_handles_empty_samples() {
+        let result = moving_average(&[], 3).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
     fn centered_filters_do_not_cross_long_timestamp_gaps() {
         let input = vec![
             sample(0.00, 0.0, 0.0),
