@@ -130,7 +130,8 @@ impl TrackerRun {
             .map(|observation| TrackerPrediction {
                 timestamp_s: observation.timestamp_s,
                 state: match observation.state {
-                    TrackerObservationState::Tracked { center, confidence } => {
+                    TrackerObservationState::Tracked { center, confidence }
+                    | TrackerObservationState::LowConfidence { center, confidence } => {
                         TrackerPredictionState::Tracked { center, confidence }
                     }
                     TrackerObservationState::Lost { .. } => TrackerPredictionState::Lost,
