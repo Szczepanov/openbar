@@ -84,7 +84,6 @@ impl CliError {
         Self::new(CliErrorKind::Benchmark, message)
     }
 
-
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(CliErrorKind::Internal, message)
     }
