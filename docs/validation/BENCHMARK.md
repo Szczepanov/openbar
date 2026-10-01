@@ -114,12 +114,22 @@ For `T > 0`:
 ```text
 plate-centre MAE  = sum(e_i) / T
 plate-centre RMSE = sqrt(sum(e_i^2) / T)
+X MAE             = sum(abs(dx_i)) / T
+X RMSE            = sqrt(sum(dx_i^2) / T)
+Y MAE             = sum(abs(dy_i)) / T
+Y RMSE            = sqrt(sum(dy_i^2) / T)
 X bias            = sum(dx_i) / T
 Y bias            = sum(dy_i) / T
 ```
 
-When `T = 0`, coordinate metrics are `null`. Tracking loss is carried by availability/loss
-metrics instead of fabricated coordinates.
+Issue #14 also requires the shape of the error distribution rather than averages alone. Each case
+therefore records radial-error p50, p90, p95 and maximum. Percentiles use the deterministic
+nearest-rank definition over sorted tracked-sample radial errors: rank = ceil(p * T), one-indexed.
+Lost/low-confidence/unmatched samples are represented by availability/loss fields and are never
+inserted into the coordinate distribution as zero error.
+
+When `T = 0`, coordinate and distribution metrics are `null`. Tracking loss is carried by
+availability/loss metrics instead of fabricated coordinates.
 
 ## Aggregation
 
@@ -134,9 +144,13 @@ Results retain every case separately and additionally aggregate by implementatio
 - motion blur;
 - every fixture challenge tag.
 
-Coordinate means are weighted by tracked sample count. Aggregate RMSE is reconstructed from the
-per-case mean squared error weighted by tracked sample count. Availability/loss uses summed sample
-counts. Maximum loss metrics take the maximum observed case value.
+Coordinate MAE/bias values are weighted by tracked sample count. Aggregate RMSE values are
+reconstructed from per-case mean squared error weighted by tracked sample count. Availability/loss
+uses summed sample counts. Maximum loss metrics take the maximum observed case value.
+
+Exact pooled percentiles cannot be reconstructed from per-case percentile summaries, so p50/p90/p95
+are intentionally `null` on aggregate rows. Per-case distributions remain authoritative evidence;
+aggregate radial maximum is exact and is retained.
 
 Different implementation configurations are separate groups even if they share a name/version.
 
