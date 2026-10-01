@@ -68,7 +68,7 @@ The CLI additionally records:
 - input/output sample counts;
 - filter segment count, making an over-small `max_gap_s` that degenerates into one-sample segments visible;
 - maximum observed timestamp gap;
-- wall-clock runtime as environment-sensitive diagnostic data.
+- wall-clock runtime as an environment-sensitive console diagnostic; it is deliberately excluded from the retained JSON evidence artifact so identical inputs/configuration keep deterministic machine-readable output.
 
 A filter that changes timestamps or synthesizes samples is rejected by the filter benchmark
 contract rather than receiving deceptively favourable metrics. The benchmark also receives an
