@@ -613,13 +613,7 @@ fn build_gap_scenario(
     let resume_at = timestamps.last().copied().unwrap_or_default() + gap_s;
     timestamps.extend((0..13).map(|index| resume_at + index as f64 * dt));
     build_scenario(
-        scenario_definition(
-            "held_out_validation",
-            name,
-            condition,
-            noise_seed,
-            false,
-        ),
+        scenario_definition("held_out_validation", name, condition, noise_seed, false),
         timestamps,
         |time, _| (0.025 * time, 0.18 + 0.48 * time),
         0.003,
