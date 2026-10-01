@@ -24,9 +24,25 @@ Commands:\n\
 Use 'openbar-cli <command> --help' for command-specific options.";
 
 fn main() {
-    if let Err(error) = dispatch() {
-        eprintln!("status=failure error[{}]: {error}", error.kind().label());
-        std::process::exit(error.exit_code());
+    match std::env::args().nth(1).as_deref() {
+        // Preserve the pre-#12 behavior of the developer/validation harnesses. Their
+        // coarse exit-code contract is intentionally not retrofitted in this PR.
+        Some("tracker-experiment") => run_legacy(tracker_experiment::run_cli()),
+        Some("tracker-run") => run_legacy(tracker_run::run_cli()),
+        Some("filter-experiment") => run_legacy(filter_experiment::run_cli()),
+        _ => {
+            if let Err(error) = dispatch() {
+                eprintln!("status=failure error[{}]: {error}", error.kind().label());
+                std::process::exit(error.exit_code());
+            }
+        }
+    }
+}
+
+fn run_legacy(result: Result<(), Box<dyn std::error::Error>>) {
+    if let Err(error) = result {
+        eprintln!("error: {error}");
+        std::process::exit(2);
     }
 }
 
@@ -35,15 +51,6 @@ fn dispatch() -> CliResult<()> {
         Some("analyze") => analyze::run_cli(),
         Some("benchmark") => benchmark::run_cli(),
         Some("render") => render::run_cli(),
-        Some("tracker-experiment") => {
-            tracker_experiment::run_cli().map_err(|error| CliError::tracking(error.to_string()))
-        }
-        Some("tracker-run") => {
-            tracker_run::run_cli().map_err(|error| CliError::tracking(error.to_string()))
-        }
-        Some("filter-experiment") => {
-            filter_experiment::run_cli().map_err(|error| CliError::internal(error.to_string()))
-        }
         None | Some("--help") | Some("-h") => {
             println!("{USAGE}");
             Ok(())
