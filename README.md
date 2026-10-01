@@ -88,7 +88,7 @@ Prerequisites:
 - **Rust 1.98.1** with clippy and rustfmt. `rust-toolchain.toml` pins it, so `rustup` installs
   the right toolchain on first use.
 - **Python 3.14** for the validation tooling. Standard library only; no packages to install.
-- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) for `analyze`, `tracker-run`, and the decode tests. OpenBar
+- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) for `analyze`, `tracker-run`, source-frame `render`, and the decode tests. OpenBar
   runs FFmpeg as a separate program and neither links nor ships it (ADR-0006). Without FFmpeg,
   the decode tests print `SKIPPED` locally. CI sets `OPENBAR_REQUIRE_FFMPEG=1`, so a missing
   install fails there. The frame source needs `-fps_mode` and `-enc_time_base demux`, so use a
@@ -110,7 +110,7 @@ python validation/tools/schema_check.py --schema validation/schema/analysis-v1.s
 python validation/tools/schema_check.py
 ```
 
-`analyze` is the canonical M0 integration command. It requires explicit tracker, filter and kinematics configuration and writes `analysis-v1` JSON. See [docs/validation/CLI_PIPELINE.md](docs/validation/CLI_PIPELINE.md). `render` is wired as a canonical-input boundary but remains intentionally unavailable until #13 implements diagnostics.
+`analyze` is the canonical M0 integration command. It requires explicit tracker, filter and kinematics configuration and writes `analysis-v1` JSON. `render` now produces a deterministic diagnostic SVG from that canonical output, with optional verified source-frame overlay, explicit lost/low-confidence states, raw-vs-filtered trajectories, and position/velocity/confidence plots. See [docs/validation/CLI_PIPELINE.md](docs/validation/CLI_PIPELINE.md) and [docs/validation/DIAGNOSTIC_RENDERING.md](docs/validation/DIAGNOSTIC_RENDERING.md).
 
 CI also runs [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) against
 [`deny.toml`](deny.toml) to check dependency licences, advisories and sources. To run it locally,
