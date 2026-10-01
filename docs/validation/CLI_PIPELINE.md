@@ -78,10 +78,12 @@ The output therefore preserves:
 No wall-clock runtime or generated run identifier enters canonical analysis JSON. Repeated
 execution over the same input and effective configuration is tested for byte-identical output.
 
-`provenance.pipeline.git_commit` is compile-time provenance. CI sets `OPENBAR_GIT_COMMIT` to the
-pull-request head SHA (or push SHA) before compiling, so uploaded M0 evidence identifies the exact
-source revision without making the runtime environment alter otherwise identical output. Local
-builds omit the optional commit unless `OPENBAR_GIT_COMMIT` is set when they are compiled.
+`provenance.pipeline.git_commit` is compile-time provenance. CI sets `OPENBAR_GIT_COMMIT` to
+`github.sha`, the same revision that the default `actions/checkout` step tests (the synthetic merge
+revision for pull requests and the pushed revision for push runs). Uploaded M0 evidence therefore
+identifies the code tree CI actually compiled without making the runtime environment alter otherwise
+identical output. Local builds omit the optional commit unless `OPENBAR_GIT_COMMIT` is set when they
+are compiled.
 
 Calibration quality starts as `unassessed` because the CLI cannot infer camera geometry quality
 from the pixels without evidence. That warning remains visible rather than being silently promoted
