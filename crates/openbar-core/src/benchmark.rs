@@ -124,6 +124,143 @@ struct EvaluatedSample {
     unavailable_reason: Option<UnavailableReason>,
 }
 
+struct EvaluationAccumulator {
+    evaluated: Vec<EvaluatedSample>,
+    absolute_error_sum: f64,
+    squared_error_sum: f64,
+    x_bias_sum: f64,
+    y_bias_sum: f64,
+    tracked_samples: usize,
+    declared_loss_samples: usize,
+    low_confidence_samples: usize,
+    timestamp_unmatched_samples: usize,
+}
+
+impl EvaluationAccumulator {
+    fn new(capacity: usize) -> Self {
+        Self {
+            evaluated: Vec::with_capacity(capacity),
+            absolute_error_sum: 0.0,
+            squared_error_sum: 0.0,
+            x_bias_sum: 0.0,
+            y_bias_sum: 0.0,
+            tracked_samples: 0,
+            declared_loss_samples: 0,
+            low_confidence_samples: 0,
+            timestamp_unmatched_samples: 0,
+        }
+    }
+
+    fn record_unmatched(&mut self, timestamp_s: f64) {
+        self.timestamp_unmatched_samples += 1;
+        self.evaluated.push(EvaluatedSample {
+            timestamp_s,
+            available: false,
+            unavailable_reason: Some(UnavailableReason::TimestampUnmatched),
+        });
+    }
+
+    fn record_declared_loss(&mut self, timestamp_s: f64) {
+        self.declared_loss_samples += 1;
+        self.evaluated.push(EvaluatedSample {
+            timestamp_s,
+            available: false,
+            unavailable_reason: Some(UnavailableReason::DeclaredLost),
+        });
+    }
+
+    fn record_low_confidence(&mut self, timestamp_s: f64) {
+        self.low_confidence_samples += 1;
+        self.evaluated.push(EvaluatedSample {
+            timestamp_s,
+            available: false,
+            unavailable_reason: Some(UnavailableReason::LowConfidence),
+        });
+    }
+
+    fn record_tracked(
+        &mut self,
+        timestamp_s: f64,
+        truth_center: PixelPoint,
+        predicted_center: PixelPoint,
+    ) {
+        let dx = predicted_center.x_px() - truth_center.x_px();
+        let dy = predicted_center.y_px() - truth_center.y_px();
+        let squared_error = dx.mul_add(dx, dy * dy);
+        let error = squared_error.sqrt();
+
+        self.absolute_error_sum += error;
+        self.squared_error_sum += squared_error;
+        self.x_bias_sum += dx;
+        self.y_bias_sum += dy;
+        self.tracked_samples += 1;
+        self.evaluated.push(EvaluatedSample {
+            timestamp_s,
+            available: true,
+            unavailable_reason: None,
+        });
+    }
+
+    fn into_metrics(self, comparable_samples: usize) -> TrackerMetrics {
+        let lost_samples = comparable_samples - self.tracked_samples;
+        let tracked_denominator = self.tracked_samples as f64;
+        let comparable_denominator = comparable_samples as f64;
+        let (max_loss_samples, max_loss_duration_s) = maximum_loss_span(&self.evaluated);
+
+        TrackerMetrics {
+            comparable_samples,
+            tracked_samples: self.tracked_samples,
+            lost_samples,
+            tracker_declared_loss_samples: self.declared_loss_samples,
+            low_confidence_samples: self.low_confidence_samples,
+            timestamp_unmatched_samples: self.timestamp_unmatched_samples,
+            plate_center_mae_px: (self.tracked_samples > 0)
+                .then_some(self.absolute_error_sum / tracked_denominator),
+            plate_center_rmse_px: (self.tracked_samples > 0)
+                .then_some((self.squared_error_sum / tracked_denominator).sqrt()),
+            x_bias_px: (self.tracked_samples > 0).then_some(self.x_bias_sum / tracked_denominator),
+            y_bias_px: (self.tracked_samples > 0).then_some(self.y_bias_sum / tracked_denominator),
+            tracking_availability: Some(tracked_denominator / comparable_denominator),
+            lost_frame_percentage: Some(100.0 * lost_samples as f64 / comparable_denominator),
+            max_consecutive_tracking_loss_samples: Some(max_loss_samples),
+            max_consecutive_tracking_loss_duration_s: Some(max_loss_duration_s),
+        }
+    }
+}
+
+fn advance_prediction_index(
+    predictions: &[TrackerPrediction],
+    mut start_index: usize,
+    min_timestamp_s: f64,
+) -> usize {
+    while start_index < predictions.len()
+        && predictions[start_index].timestamp_s < min_timestamp_s
+    {
+        start_index += 1;
+    }
+    start_index
+}
+
+fn evaluate_matched_prediction(
+    prediction: &TrackerPrediction,
+    truth: &GroundTruthSample,
+    min_confidence: f32,
+    accumulator: &mut EvaluationAccumulator,
+) {
+    match prediction.state {
+        TrackerPredictionState::Lost => {
+            accumulator.record_declared_loss(truth.timestamp_s);
+        }
+        TrackerPredictionState::Tracked { center, confidence } => {
+            if confidence < min_confidence {
+                accumulator.record_low_confidence(truth.timestamp_s);
+            } else {
+                accumulator.record_tracked(truth.timestamp_s, truth.center, center);
+            }
+        }
+    }
+}
+
 pub fn evaluate_tracker_case(
     ground_truth: &[GroundTruthSample],
     predictions: &[TrackerPrediction],
@@ -136,23 +273,14 @@ pub fn evaluate_tracker_case(
     }
 
     let mut prediction_index = 0usize;
-    let mut evaluated = Vec::with_capacity(ground_truth.len());
-    let mut absolute_error_sum = 0.0;
-    let mut squared_error_sum = 0.0;
-    let mut x_bias_sum = 0.0;
-    let mut y_bias_sum = 0.0;
-    let mut tracked_samples = 0usize;
-    let mut declared_loss_samples = 0usize;
-    let mut low_confidence_samples = 0usize;
-    let mut timestamp_unmatched_samples = 0usize;
+    let mut accumulator = EvaluationAccumulator::new(ground_truth.len());
 
     for truth in ground_truth {
-        while prediction_index < predictions.len()
-            && predictions[prediction_index].timestamp_s
-                < truth.timestamp_s - parameters.timestamp_tolerance_s
-        {
-            prediction_index += 1;
-        }
+        prediction_index = advance_prediction_index(
+            predictions,
+            prediction_index,
+            truth.timestamp_s - parameters.timestamp_tolerance_s,
+        );
 
         let best_index = nearest_prediction_index(
             predictions,
@@ -162,79 +290,20 @@ pub fn evaluate_tracker_case(
         );
 
         let Some(best_index) = best_index else {
-            timestamp_unmatched_samples += 1;
-            evaluated.push(EvaluatedSample {
-                timestamp_s: truth.timestamp_s,
-                available: false,
-                unavailable_reason: Some(UnavailableReason::TimestampUnmatched),
-            });
+            accumulator.record_unmatched(truth.timestamp_s);
             continue;
         };
 
         prediction_index = best_index + 1;
-        match predictions[best_index].state {
-            TrackerPredictionState::Lost => {
-                declared_loss_samples += 1;
-                evaluated.push(EvaluatedSample {
-                    timestamp_s: truth.timestamp_s,
-                    available: false,
-                    unavailable_reason: Some(UnavailableReason::DeclaredLost),
-                });
-            }
-            TrackerPredictionState::Tracked { center, confidence } => {
-                if confidence < parameters.min_confidence {
-                    low_confidence_samples += 1;
-                    evaluated.push(EvaluatedSample {
-                        timestamp_s: truth.timestamp_s,
-                        available: false,
-                        unavailable_reason: Some(UnavailableReason::LowConfidence),
-                    });
-                    continue;
-                }
-
-                let dx = center.x_px() - truth.center.x_px();
-                let dy = center.y_px() - truth.center.y_px();
-                let squared_error = dx.mul_add(dx, dy * dy);
-                let error = squared_error.sqrt();
-
-                absolute_error_sum += error;
-                squared_error_sum += squared_error;
-                x_bias_sum += dx;
-                y_bias_sum += dy;
-                tracked_samples += 1;
-                evaluated.push(EvaluatedSample {
-                    timestamp_s: truth.timestamp_s,
-                    available: true,
-                    unavailable_reason: None,
-                });
-            }
-        }
+        evaluate_matched_prediction(
+            &predictions[best_index],
+            truth,
+            parameters.min_confidence,
+            &mut accumulator,
+        );
     }
 
-    let comparable_samples = ground_truth.len();
-    let lost_samples = comparable_samples - tracked_samples;
-    let tracked_denominator = tracked_samples as f64;
-    let comparable_denominator = comparable_samples as f64;
-    let (max_loss_samples, max_loss_duration_s) = maximum_loss_span(&evaluated);
-
-    Ok(TrackerMetrics {
-        comparable_samples,
-        tracked_samples,
-        lost_samples,
-        tracker_declared_loss_samples: declared_loss_samples,
-        low_confidence_samples,
-        timestamp_unmatched_samples,
-        plate_center_mae_px: (tracked_samples > 0)
-            .then_some(absolute_error_sum / tracked_denominator),
-        plate_center_rmse_px: (tracked_samples > 0)
-            .then_some((squared_error_sum / tracked_denominator).sqrt()),
-        x_bias_px: (tracked_samples > 0).then_some(x_bias_sum / tracked_denominator),
-        y_bias_px: (tracked_samples > 0).then_some(y_bias_sum / tracked_denominator),
-        tracking_availability: Some(tracked_denominator / comparable_denominator),
-        lost_frame_percentage: Some(100.0 * lost_samples as f64 / comparable_denominator),
-        max_consecutive_tracking_loss_samples: Some(max_loss_samples),
-        max_consecutive_tracking_loss_duration_s: Some(max_loss_duration_s),
-    })
+    Ok(accumulator.into_metrics(ground_truth.len()))
 }
 
 pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
