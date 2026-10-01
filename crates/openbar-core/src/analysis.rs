@@ -1230,6 +1230,54 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_identity_fields_and_fixture_id_mismatch() {
+        let mut blank_source = analysis();
+        blank_source.identity.source_id = "   ".to_owned();
+        let error = blank_source.validate().unwrap_err();
+        assert!(error.to_string().contains("identity.source_id must not be blank"));
+
+        let mut invalid_fixture = analysis();
+        invalid_fixture.identity.fixture_id = Some("Bad Fixture!".to_owned());
+        let error = invalid_fixture.validate().unwrap_err();
+        assert!(error.to_string().contains("identity.fixture_id"));
+
+        let mut invalid_hash = analysis();
+        invalid_hash.identity.source_sha256 = Some("not_64_hex_chars".to_owned());
+        let error = invalid_hash.validate().unwrap_err();
+        assert!(error.to_string().contains("identity.source_sha256"));
+    }
+
+    #[test]
+    fn rejects_analysis_fixture_id_mismatch() {
+        let mut analysis_item = analysis();
+        analysis_item.identity.fixture_id = Some("INVALID_FIXTURE_ID_UPPERCASE".to_owned());
+        let error = analysis_item.validate().unwrap_err();
+        assert!(error.to_string().contains("identity.fixture_id"));
+    }
+
+    #[test]
+    fn rejects_mismatched_tracker_id_and_out_of_range_timestamps() {
+        let mut mismatched_tracker = analysis();
+        mismatched_tracker.raw_observations[0].tracker_id = "other-tracker".to_owned();
+        let error = mismatched_tracker.validate().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("references tracker_id 'other-tracker'"));
+
+        let mut out_of_range = analysis();
+        out_of_range.raw_observations[0].timestamp_s = 0.1; // outside trim [0.5, 2.0]
+        out_of_range.raw_observations[0].measurement.as_mut().unwrap().timestamp_s = 0.1;
+        assert!(out_of_range.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_non_increasing_raw_observation_timestamps() {
+        let mut unordered = analysis();
+        unordered.raw_observations[1].timestamp_s = 0.9; // raw_a is 1.0, raw_b is 0.9
+        assert!(unordered.validate().is_err());
+    }
+
+    #[test]
     fn golden_json_is_stable() {
         let golden = include_str!("../tests/fixtures/analysis-v1.golden.json");
         let expected = analysis();
