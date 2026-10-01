@@ -427,6 +427,8 @@ pub enum CalibrationError {
     NegativeReferenceTimestamp,
     NonFiniteReferenceGeometry,
     NonPositiveReferenceBounds,
+    UnsupportedSourceRotation,
+    ReferenceGeometryCentreMismatch,
     ReferenceGeometryDiameterMismatch,
     NonFiniteSelectionConfidence,
     SelectionConfidenceOutOfRange,
@@ -459,6 +461,12 @@ impl fmt::Display for CalibrationError {
             Self::NonFiniteReferenceGeometry => "calibration reference geometry must be finite",
             Self::NonPositiveReferenceBounds => {
                 "calibration reference bounds must have positive width and height"
+            }
+            Self::UnsupportedSourceRotation => {
+                "calibration source rotation must be 0, 90, 180, or 270 degrees"
+            }
+            Self::ReferenceGeometryCentreMismatch => {
+                "calibration reference bounds must be centred on the recorded reference centre"
             }
             Self::ReferenceGeometryDiameterMismatch => {
                 "reference bounds must match the observed plate diameter used for calibration"
@@ -535,6 +543,17 @@ fn validate_reference(reference: &CalibrationReference) -> Result<(), Calibratio
     }
     if bounds.width_px <= 0.0 || bounds.height_px <= 0.0 {
         return Err(CalibrationError::NonPositiveReferenceBounds);
+    }
+    if !matches!(reference.source_rotation_deg, 0 | 90 | 180 | 270) {
+        return Err(CalibrationError::UnsupportedSourceRotation);
+    }
+
+    let bounds_center_x = bounds.left_px + bounds.width_px / 2.0;
+    let bounds_center_y = bounds.top_px + bounds.height_px / 2.0;
+    if !approximately_equal(bounds_center_x, center.x_px())
+        || !approximately_equal(bounds_center_y, center.y_px())
+    {
+        return Err(CalibrationError::ReferenceGeometryCentreMismatch);
     }
 
     if let CalibrationProvenance::ManualTargetSeed {
@@ -778,6 +797,32 @@ mod tests {
         assert!(error
             .to_string()
             .contains("persisted metres-per-pixel scale"));
+    }
+
+    #[test]
+    fn deserialization_rejects_invalid_reference_rotation_and_off_centre_bounds() {
+        let calibration = PlateDiameterCalibration::try_from_manual_seed(
+            0.45,
+            &seed(),
+            CalibrationQuality::unassessed(),
+        )
+        .unwrap();
+
+        let mut invalid_rotation = serde_json::to_value(&calibration).unwrap();
+        invalid_rotation["reference"]["source_rotation_deg"] = serde_json::json!(45);
+        let rotation_error =
+            serde_json::from_value::<PlateDiameterCalibration>(invalid_rotation).unwrap_err();
+        assert!(rotation_error
+            .to_string()
+            .contains("source rotation must be 0, 90, 180, or 270"));
+
+        let mut off_centre = serde_json::to_value(&calibration).unwrap();
+        off_centre["reference"]["geometry"]["bounds_px"]["left_px"] = serde_json::json!(0.0);
+        let geometry_error =
+            serde_json::from_value::<PlateDiameterCalibration>(off_centre).unwrap_err();
+        assert!(geometry_error
+            .to_string()
+            .contains("bounds must be centred on the recorded reference centre"));
     }
 
     #[test]
