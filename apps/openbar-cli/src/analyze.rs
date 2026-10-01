@@ -11,8 +11,8 @@ use crate::media::{
 use openbar_core::analysis::{
     Analysis, AnalysisIdentity, AnalysisProvenance, CalibratedTrajectory, Configuration,
     DerivedData, EnvironmentProvenance, FrameRateMetadata, ImplementationProvenance,
-    KinematicsInput, ParameterValue, PipelineProvenance, RawObservation, TimeRange,
-    TimestampBasis, TrackerProvenance, TrackingState, VideoMetadata, VisibilityState,
+    KinematicsInput, ParameterValue, PipelineProvenance, RawObservation, TimeRange, TimestampBasis,
+    TrackerProvenance, TrackingState, VideoMetadata, VisibilityState,
 };
 use openbar_core::calibration::{CalibrationQuality, PlateDiameterCalibration};
 use openbar_core::filtering::{apply_filter, FilterConfig};
@@ -165,8 +165,9 @@ fn run(args: &Args) -> CliResult<()> {
 
     let raw_observations = canonical_raw_observations(&tracker_run)?;
     let calibrated_samples = calibrate_measurements(&raw_observations, &calibration)?;
-    let filter_run = apply_filter(&calibrated_samples, args.filter)
-        .map_err(|error| CliError::invalid_input(format!("invalid filter configuration/input: {error}")))?;
+    let filter_run = apply_filter(&calibrated_samples, args.filter).map_err(|error| {
+        CliError::invalid_input(format!("invalid filter configuration/input: {error}"))
+    })?;
     let kinematic = derive_kinematic_trajectory(
         &filter_run.trajectory.samples,
         KinematicsInput::Filtered,
@@ -178,9 +179,10 @@ fn run(args: &Args) -> CliResult<()> {
 
     let analysis = Analysis::try_new(
         AnalysisIdentity {
-            source_id: fixture
-                .as_ref()
-                .map_or_else(|| format!("sha256:{source_sha256}"), |fixture| fixture.id.clone()),
+            source_id: fixture.as_ref().map_or_else(
+                || format!("sha256:{source_sha256}"),
+                |fixture| fixture.id.clone(),
+            ),
             fixture_id: fixture.as_ref().map(|fixture| fixture.id.clone()),
             source_sha256: Some(source_sha256),
         },
@@ -209,7 +211,10 @@ fn run(args: &Args) -> CliResult<()> {
 }
 
 fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
-    if args.iter().any(|value| matches!(value.as_str(), "--help" | "-h")) {
+    if args
+        .iter()
+        .any(|value| matches!(value.as_str(), "--help" | "-h"))
+    {
         return Ok(None);
     }
 
@@ -242,11 +247,9 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         }
     };
     let tracker_search_radius_px = take_parsed(&mut values, "--tracker-search-radius-px")?;
-    let template_low_confidence_nmad =
-        take_parsed(&mut values, "--template-low-confidence-nmad")?;
+    let template_low_confidence_nmad = take_parsed(&mut values, "--template-low-confidence-nmad")?;
     let template_max_nmad = take_parsed(&mut values, "--template-max-nmad")?;
-    let contrast_min_seed_contrast =
-        take_parsed(&mut values, "--contrast-min-seed-contrast")?;
+    let contrast_min_seed_contrast = take_parsed(&mut values, "--contrast-min-seed-contrast")?;
     let contrast_min_mass_ratio = take_parsed(&mut values, "--contrast-min-mass-ratio")?;
     let contrast_low_confidence_mass_ratio =
         take_parsed(&mut values, "--contrast-low-confidence-mass-ratio")?;
@@ -274,17 +277,11 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     )
     .map_err(|error| CliError::invalid_input(format!("invalid kinematics config: {error}")))?;
 
-    let selection = match (
-        values.remove("--start-s"),
-        values.remove("--end-s"),
-    ) {
+    let selection = match (values.remove("--start-s"), values.remove("--end-s")) {
         (None, None) => None,
         (Some(start), Some(end)) => Some(
-            MediaTimeRange::try_new(
-                parse_f64(&start, "--start-s")?,
-                parse_f64(&end, "--end-s")?,
-            )
-            .map_err(classify_media_error)?,
+            MediaTimeRange::try_new(parse_f64(&start, "--start-s")?, parse_f64(&end, "--end-s")?)
+                .map_err(classify_media_error)?,
         ),
         _ => {
             return Err(CliError::invalid_input(
@@ -370,9 +367,9 @@ fn collect_flag_values(args: &[String]) -> CliResult<(BTreeMap<String, String>, 
                 "unknown analyze argument '{flag}'"
             )));
         }
-        let value = args.get(index + 1).ok_or_else(|| {
-            CliError::invalid_input(format!("{flag} requires a value"))
-        })?;
+        let value = args
+            .get(index + 1)
+            .ok_or_else(|| CliError::invalid_input(format!("{flag} requires a value")))?;
         if values.insert(flag.to_owned(), value.clone()).is_some() {
             return Err(CliError::invalid_input(format!(
                 "{flag} was given more than once"
@@ -533,10 +530,7 @@ fn parse_filter_config(
             ])?;
             FilterConfig::Kalman {
                 acceleration_variance_m2_s4: parse_f64(
-                    &required_raw(
-                        acceleration,
-                        "--filter-acceleration-variance-m2-s4",
-                    )?,
+                    &required_raw(acceleration, "--filter-acceleration-variance-m2-s4")?,
                     "--filter-acceleration-variance-m2-s4",
                 )?,
                 measurement_variance_m2: parse_f64(
@@ -544,17 +538,11 @@ fn parse_filter_config(
                     "--filter-measurement-variance-m2",
                 )?,
                 initial_velocity_variance_m2_s2: parse_f64(
-                    &required_raw(
-                        initial_velocity,
-                        "--filter-initial-velocity-variance-m2-s2",
-                    )?,
+                    &required_raw(initial_velocity, "--filter-initial-velocity-variance-m2-s2")?,
                     "--filter-initial-velocity-variance-m2-s2",
                 )?,
                 confidence_window_samples: parse_usize(
-                    &required_raw(
-                        confidence_window,
-                        "--filter-confidence-window-samples",
-                    )?,
+                    &required_raw(confidence_window, "--filter-confidence-window-samples")?,
                     "--filter-confidence-window-samples",
                 )?,
                 max_gap_s: parse_f64(
@@ -683,9 +671,13 @@ fn calibrate_measurements(
     raw.iter()
         .filter_map(|observation| observation.measurement)
         .map(|measurement| {
-            let calibrated = calibration.calibrate_observation(measurement).map_err(|error| {
-                CliError::seed_calibration(format!("calibration failed for tracked sample: {error}"))
-            })?;
+            let calibrated = calibration
+                .calibrate_observation(measurement)
+                .map_err(|error| {
+                    CliError::seed_calibration(format!(
+                        "calibration failed for tracked sample: {error}"
+                    ))
+                })?;
             Ok(MetricPositionSample {
                 timestamp_s: calibrated.raw.timestamp_s,
                 x_m: calibrated.x_m,
@@ -752,8 +744,9 @@ fn analysis_provenance(
         "confidence_semantics".to_owned(),
         ParameterValue::Text(tracker.confidence_semantics.clone()),
     );
-    let decoder = serde_json::to_string(&clip.provenance)
-        .map_err(|error| CliError::output(format!("failed to serialize decoder provenance: {error}")))?;
+    let decoder = serde_json::to_string(&clip.provenance).map_err(|error| {
+        CliError::output(format!("failed to serialize decoder provenance: {error}"))
+    })?;
 
     Ok(AnalysisProvenance {
         pipeline: PipelineProvenance {
@@ -791,9 +784,9 @@ fn parameter_value(value: &str) -> ParameterValue {
 }
 
 fn write_analysis(path: &Path, analysis: &Analysis, force: bool) -> CliResult<()> {
-    let serialized = analysis
-        .to_json_pretty()
-        .map_err(|error| CliError::output(format!("failed to serialize canonical analysis: {error}")))?;
+    let serialized = analysis.to_json_pretty().map_err(|error| {
+        CliError::output(format!("failed to serialize canonical analysis: {error}"))
+    })?;
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -1037,7 +1030,8 @@ fn check_fixture_matches_media(
 
 fn classify_media_error(error: MediaError) -> CliError {
     match error {
-        MediaError::UnsupportedRotation { .. } | MediaError::UnsupportedSampleAspectRatio { .. } => {
+        MediaError::UnsupportedRotation { .. }
+        | MediaError::UnsupportedSampleAspectRatio { .. } => {
             CliError::unsupported(error.to_string())
         }
         MediaError::InvalidRange { .. }
@@ -1079,9 +1073,7 @@ fn take_raw(values: &mut BTreeMap<String, String>, flag: &str) -> Option<String>
 }
 
 fn required_raw(value: Option<String>, flag: &str) -> CliResult<String> {
-    value.ok_or_else(|| {
-        CliError::invalid_input(format!("selected filter requires {flag}"))
-    })
+    value.ok_or_else(|| CliError::invalid_input(format!("selected filter requires {flag}")))
 }
 
 fn take_parsed<T: std::str::FromStr>(
