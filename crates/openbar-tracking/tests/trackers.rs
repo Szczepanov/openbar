@@ -80,7 +80,8 @@ fn samples<'a>(frames: &'a [GrayFrame], timestamps: &[f64]) -> Vec<FrameSample<'
 
 fn tracked_center(observation: &TrackerObservation) -> PixelPoint {
     match observation.state {
-        TrackerObservationState::Tracked { center, .. } => center,
+        TrackerObservationState::Tracked { center, .. }
+        | TrackerObservationState::LowConfidence { center, .. } => center,
         TrackerObservationState::Lost { reason } => {
             panic!("expected tracked observation, got {reason:?}")
         }
@@ -271,6 +272,35 @@ fn one_frame_sequence_is_supported_and_low_contrast_seed_fails_explicitly() {
     assert!(matches!(
         LocalContrastTracker::default().track(&flat_samples, &seed((24, 40))),
         Err(TrackerError::InsufficientSeedContrast { .. })
+    ));
+}
+
+#[test]
+fn low_confidence_is_explicit_for_both_tracker_families() {
+    let template_frames = [
+        disk_frame_with_geometry(WIDTH, HEIGHT, Some((24, 40)), RADIUS, 40),
+        disk_frame_with_geometry(WIDTH, HEIGHT, Some((24, 40)), RADIUS, 110),
+    ];
+    let template_samples = samples(&template_frames, &[0.0, 0.1]);
+    let template_run = TemplateMatchTracker::default()
+        .track(&template_samples, &seed((24, 40)))
+        .unwrap();
+    assert!(matches!(
+        template_run.observations[1].state,
+        TrackerObservationState::LowConfidence { .. }
+    ));
+
+    let contrast_frames = [
+        disk_frame_with_geometry(WIDTH, HEIGHT, Some((24, 40)), RADIUS, 40),
+        disk_frame_with_geometry(WIDTH, HEIGHT, Some((24, 40)), 4, 40),
+    ];
+    let contrast_samples = samples(&contrast_frames, &[0.0, 0.1]);
+    let contrast_run = LocalContrastTracker::default()
+        .track(&contrast_samples, &seed((24, 40)))
+        .unwrap();
+    assert!(matches!(
+        contrast_run.observations[1].state,
+        TrackerObservationState::LowConfidence { .. }
     ));
 }
 
