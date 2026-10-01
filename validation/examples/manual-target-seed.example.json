@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixture_id": "example-clean-side-60",
+  "seed": {
+    "timestamp_s": 1.25,
+    "frame_index": 75,
+    "target": {
+      "center": {
+        "x_px": 960.5,
+        "y_px": 700.25
+      },
+      "radius_px": 122.0
+    },
+    "coordinate_space": "display_top_left",
+    "source_rotation_deg": 0,
+    "selection_confidence": 0.95,
+    "notes": "Metadata-only example manual selection; no video is distributed."
+  }
+}

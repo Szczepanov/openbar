@@ -6,3 +6,7 @@ license-file = "../../LICENSE.md"
 description = "Deterministic measurement core for OpenBar."
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
