@@ -178,6 +178,9 @@ with a full camera model.
 - units are explicit in field and method names;
 - non-finite and non-positive physical/pixel diameters are rejected;
 - non-finite pixel displacements and raw observation coordinates are rejected;
+- source rotation must be one of 0, 90, 180, or 270 degrees;
+- persisted measurement bounds must remain centred on the recorded reference centre and match
+  the observed diameter;
 - derived metric overflow is rejected;
 - a persisted derived scale must match the recorded diameters;
 - timestamps remain in the decoded media time base;
