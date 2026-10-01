@@ -167,7 +167,7 @@ impl ManualTargetSeed {
 
         if let Some(confidence) = self.selection_confidence {
             if !confidence.is_finite() {
-                return Err(SeedValidationError::NonFiniteSelectionConfidence { value: confidence });
+                return Err(SeedValidationError::NonFiniteSelectionConfidence {\n                    value: confidence,\n                });
             }
             if !(0.0..=1.0).contains(&confidence) {
                 return Err(SeedValidationError::SelectionConfidenceOutOfRange {
