@@ -248,3 +248,253 @@ impl Analysis {
                 )));
             }
         }
+
+        if let Some(filtered) = &self.derived.filtered {
+            filtered.filter.validate("filter")?;
+            validate_metric_series(&filtered.samples, "filtered")?;
+            validate_aligned_metric_series(calibrated, &filtered.samples, "filtered")?;
+        }
+
+        if let Some(kinematics) = &self.derived.kinematics {
+            kinematics.method.validate("kinematics.method")?;
+            validate_kinematic_series(&kinematics.samples)?;
+            let input = match kinematics.input {
+                KinematicsInput::Calibrated => calibrated,
+                KinematicsInput::Filtered => self
+                    .derived
+                    .filtered
+                    .as_ref()
+                    .ok_or_else(|| {
+                        invalid("kinematics declares filtered input but no filtered series exists")
+                    })?
+                    .samples
+                    .as_slice(),
+            };
+            if input.len() != kinematics.samples.len() {
+                return Err(invalid(
+                    "kinematic series must stay sample-aligned with its declared position input",
+                ));
+            }
+            for (index, (position, sample)) in input.iter().zip(&kinematics.samples).enumerate() {
+                if position.timestamp_s != sample.timestamp_s
+                    || !approximately_equal(position.x_m, sample.x_m)
+                    || !approximately_equal(position.y_m, sample.y_m)
+                {
+                    return Err(invalid(format!(
+                        "kinematic sample {index} does not match its declared position input"
+                    )));
+                }
+                if sample.confidence > position.confidence {
+                    return Err(invalid(format!(
+                        "kinematic sample {index} confidence exceeds its position input confidence"
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl TryFrom<AnalysisRepr> for Analysis {
+    type Error = AnalysisValidationError;
+
+    fn try_from(value: AnalysisRepr) -> Result<Self, Self::Error> {
+        let analysis = Self {
+            schema_version: value.schema_version,
+            identity: value.identity,
+            video: value.video,
+            manual_seed: value.manual_seed,
+            calibration: value.calibration,
+            raw_observations: value.raw_observations,
+            derived: value.derived,
+            provenance: value.provenance,
+        };
+        analysis.validate()?;
+        Ok(analysis)
+    }
+}
+
+impl From<Analysis> for AnalysisRepr {
+    fn from(value: Analysis) -> Self {
+        Self {
+            schema_version: value.schema_version,
+            identity: value.identity,
+            video: value.video,
+            manual_seed: value.manual_seed,
+            calibration: value.calibration,
+            raw_observations: value.raw_observations,
+            derived: value.derived,
+            provenance: value.provenance,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnalysisIdentity {
+    pub source_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixture_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
+}
+
+impl AnalysisIdentity {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        validate_non_blank("identity.source_id", &self.source_id)?;
+        if let Some(fixture_id) = self.fixture_id.as_deref() {
+            validate_identifier("identity.fixture_id", fixture_id)?;
+        }
+        if let Some(hash) = self.source_sha256.as_deref() {
+            validate_sha256("identity.source_sha256", hash)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeRange {
+    pub start_s: f64,
+    pub end_s: f64,
+}
+
+impl TimeRange {
+    pub fn contains(self, timestamp_s: f64) -> bool {
+        timestamp_s >= self.start_s && timestamp_s <= self.end_s
+    }
+
+    fn validate(self) -> Result<(), AnalysisValidationError> {
+        if !self.start_s.is_finite() || !self.end_s.is_finite() {
+            return Err(invalid("video trim range must be finite"));
+        }
+        if self.start_s < 0.0 || self.end_s < self.start_s {
+            return Err(invalid(
+                "video trim range must be non-negative and ordered",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimestampBasis {
+    DecodedPresentationTimestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameRateMetadata {
+    pub timestamp_basis: TimestampBasis,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominal_fps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured_fps: Option<f64>,
+}
+
+impl FrameRateMetadata {
+    fn validate(self) -> Result<(), AnalysisValidationError> {
+        for (name, value) in [
+            ("video.frame_rate.nominal_fps", self.nominal_fps),
+            ("video.frame_rate.measured_fps", self.measured_fps),
+        ] {
+            if let Some(value) = value {
+                if !value.is_finite() || value <= 0.0 {
+                    return Err(invalid(format!("{name} must be finite and positive")));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoMetadata {
+    pub decoded_width_px: u32,
+    pub decoded_height_px: u32,
+    pub display_width_px: u32,
+    pub display_height_px: u32,
+    pub source_rotation_deg: u16,
+    pub frame_rate: FrameRateMetadata,
+    pub trim: TimeRange,
+}
+
+impl VideoMetadata {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        if self.decoded_width_px == 0
+            || self.decoded_height_px == 0
+            || self.display_width_px == 0
+            || self.display_height_px == 0
+        {
+            return Err(invalid("video dimensions must be positive"));
+        }
+        if !matches!(self.source_rotation_deg, 0 | 90 | 180 | 270) {
+            return Err(invalid(
+                "video source rotation must be 0, 90, 180, or 270 degrees",
+            ));
+        }
+        self.frame_rate.validate()?;
+        self.trim.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackingState {
+    Tracked,
+    LowConfidence,
+    Lost,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityState {
+    Visible,
+    PartiallyOccluded,
+    Occluded,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawObservation {
+    pub timestamp_s: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_index: Option<u64>,
+    pub tracking_state: TrackingState,
+    pub visibility: VisibilityState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<PixelObservation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_bounds_px: Option<PixelBoundingBox>,
+    pub tracker_id: String,
+}
+
+impl RawObservation {
+    pub fn validate(&self) -> Result<(), AnalysisValidationError> {
+        if !self.timestamp_s.is_finite() || self.timestamp_s < 0.0 {
+            return Err(invalid(
+                "raw observation timestamp must be finite and non-negative",
+            ));
+        }
+        validate_non_blank("raw observation tracker_id", &self.tracker_id)?;
+
+        match (self.tracking_state, self.measurement) {
+            (TrackingState::Lost, Some(_)) => {
+                return Err(invalid(
+                    "lost raw observation must not contain measured coordinates",
+                ));
+            }
+            (TrackingState::Tracked | TrackingState::LowConfidence, None) => {
+                return Err(invalid(
+                    "tracked/low-confidence raw observation requires measured coordinates",
+                ));
+            }
+            _ => {}
+        }
+
+        if let Some(measurement) = self.measurement {
