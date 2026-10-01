@@ -1209,6 +1209,15 @@ mod tests {
         let output = scratch_file("missing-video.json");
         let mut values = base_args(&output.display().to_string());
         values[1] = scratch_file("definitely-missing.mp4").display().to_string();
+        let seed_index = values
+            .iter()
+            .position(|arg| arg == "--seed")
+            .expect("seed flag");
+        values[seed_index + 1] = repo_path(
+            "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+        )
+        .display()
+        .to_string();
         let args = parse_args(values)
             .expect("arguments parse")
             .expect("not help");
