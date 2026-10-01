@@ -404,12 +404,12 @@ fn validate_optional_range(
     minimum: f64,
     maximum: f64,
 ) -> Result<(), RecordingSupportError> {
-    if let Some(value) = value {
-        if !value.is_finite() || value < minimum || value > maximum {
-            return Err(invalid(format!(
-                "{name} must be finite and within [{minimum}, {maximum}]"
-            )));
-        }
+    if let Some(value) = value
+        && (!value.is_finite() || value < minimum || value > maximum)
+    {
+        return Err(invalid(format!(
+            "{name} must be finite and within [{minimum}, {maximum}]"
+        )));
     }
     Ok(())
 }
@@ -418,10 +418,10 @@ fn validate_optional_positive(
     name: &str,
     value: Option<f64>,
 ) -> Result<(), RecordingSupportError> {
-    if let Some(value) = value {
-        if !value.is_finite() || value <= 0.0 {
-            return Err(invalid(format!("{name} must be finite and positive")));
-        }
+    if let Some(value) = value
+        && (!value.is_finite() || value <= 0.0)
+    {
+        return Err(invalid(format!("{name} must be finite and positive")));
     }
     Ok(())
 }
