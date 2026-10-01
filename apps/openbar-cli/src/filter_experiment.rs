@@ -61,6 +61,7 @@ struct ScenarioResult {
     filter_segment_count: usize,
     max_input_gap_s: Option<f64>,
     edge_position_mae_m: Option<f64>,
+    #[serde(skip_serializing)]
     runtime_ms: f64,
 }
 
@@ -219,7 +220,7 @@ fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
         limitations: vec![
             "Synthetic measurement noise is seeded pseudo-random Gaussian noise used for repeatable regression/tuning; it is not a model of blur, compression, occlusion, camera motion, or tracker-correlated error.",
             "Velocity is the existing timestamp-based backward difference and is used consistently for reference and filtered trajectories.",
-            "Runtime is environment-sensitive and excluded from deterministic filter-output correctness.",
+            "Runtime is environment-sensitive, printed only as a console diagnostic, and excluded from the retained deterministic JSON evidence artifact.",
             "No missing timestamp is synthesized; long-gap scenarios contain only observed samples on each side of the loss span.",
             "Peak attenuation/timing fields are emitted only for scenarios with an intentionally defined velocity peak.",
         ],
@@ -686,7 +687,7 @@ fn render_summary(artifact: &FilterExperimentArtifact) -> String {
     lines.push("held-out validation:".to_owned());
     for result in &artifact.held_out_validation {
         lines.push(format!(
-            "  {:>18} | {:>29} | pos_rmse={} m | vel_rmse={} m/s | peak_att={} | shift={} s | edge_mae={} m | samples={}/{} | segments={}",
+            "  {:>18} | {:>29} | pos_rmse={} m | vel_rmse={} m/s | peak_att={} | shift={} s | edge_mae={} m | samples={}/{} | segments={} | runtime_ms={:.3}",
             result.scenario,
             result.filter.implementation,
             display_option(result.metrics.position_rmse_m),
@@ -697,6 +698,7 @@ fn render_summary(artifact: &FilterExperimentArtifact) -> String {
             result.output_samples,
             result.input_samples,
             result.filter_segment_count,
+            result.runtime_ms,
         ));
     }
     lines.push(format!(
@@ -739,6 +741,13 @@ mod tests {
         assert!(development.iter().all(|name| !validation
             .iter()
             .any(|validation_name| validation_name == name)));
+    }
+
+    #[test]
+    fn serialized_artifact_excludes_environment_sensitive_runtime() {
+        let artifact = run_experiment().unwrap();
+        let serialized = serde_json::to_string(&artifact).unwrap();
+        assert!(!serialized.contains("runtime_ms"));
     }
 
     #[test]
