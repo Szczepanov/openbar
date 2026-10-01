@@ -126,11 +126,10 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         index += 2;
     }
 
-    let analysis = PathBuf::from(
-        values
-            .remove("--analysis")
-            .ok_or_else(|| CliError::invalid_input("render requires --analysis <analysis.json>"))?,
-    );
+    let analysis =
+        PathBuf::from(values.remove("--analysis").ok_or_else(|| {
+            CliError::invalid_input("render requires --analysis <analysis.json>")
+        })?);
     let output = PathBuf::from(
         values
             .remove("--output")
@@ -338,7 +337,10 @@ fn write_report(path: &Path, report: &str, force: bool) -> CliResult<()> {
 }
 
 fn grayscale_png_data_uri(image: &dyn GrayscaleImage) -> String {
-    format!("data:image/png;base64,{}", base64_encode(&encode_png(image)))
+    format!(
+        "data:image/png;base64,{}",
+        base64_encode(&encode_png(image))
+    )
 }
 
 fn encode_png(image: &dyn GrayscaleImage) -> Vec<u8> {
@@ -438,17 +440,13 @@ mod tests {
 
     #[test]
     fn render_requires_svg_output_and_video_for_frame_timestamp() {
-        let missing = parse_args(strings(&["--analysis", "a.json"]))
-            .expect_err("missing output must fail");
+        let missing =
+            parse_args(strings(&["--analysis", "a.json"])).expect_err("missing output must fail");
         assert!(missing.to_string().contains("--output"));
 
-        let bad_extension = parse_args(strings(&[
-            "--analysis",
-            "a.json",
-            "--output",
-            "report.txt",
-        ]))
-        .expect_err("non-SVG output must fail");
+        let bad_extension =
+            parse_args(strings(&["--analysis", "a.json", "--output", "report.txt"]))
+                .expect_err("non-SVG output must fail");
         assert!(bad_extension.to_string().contains(".svg"));
 
         let missing_video = parse_args(strings(&[
