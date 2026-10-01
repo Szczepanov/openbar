@@ -121,6 +121,7 @@ class EvidenceTests(unittest.TestCase):
             if item["id"] == "repeat_analysis_determinism"
         )
         self.assertEqual(status["status"], "FAIL")
+        self.assertEqual(evidence["overall_status"], "PRECHECK_FAILED")
         self.assertFalse(evidence["analysis_determinism"]["byte_identical"])
 
     def test_mismatched_commit_provenance_fails_closed(self):
