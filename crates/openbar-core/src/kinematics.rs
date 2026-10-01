@@ -574,27 +574,25 @@ mod tests {
         ];
         let cfg = config(0.2, 0.5);
 
-        assert_eq!(
-            range_of_motion(&samples, MetricAxis::HorizontalX, cfg).unwrap(),
-            Some(MetricEstimate {
-                value: 0.4,
-                confidence: 0.7,
-            })
-        );
-        assert!((range_of_motion(&samples, MetricAxis::VerticalY, cfg)
+        let horizontal_rom =
+            range_of_motion(&samples, MetricAxis::HorizontalX, cfg)
+                .unwrap()
+                .unwrap();
+        assert!((horizontal_rom.value - 0.4).abs() < 1.0e-12);
+        assert!((horizontal_rom.confidence - 0.7).abs() < f32::EPSILON);
+
+        let vertical_rom = range_of_motion(&samples, MetricAxis::VerticalY, cfg)
             .unwrap()
-            .unwrap()
-            .value
-            - 0.7)
-            .abs()
-            < 1.0e-12);
-        assert_eq!(
-            axis_displacement(&samples, MetricAxis::VerticalY, cfg).unwrap(),
-            Some(MetricEstimate {
-                value: 0.3,
-                confidence: 0.7,
-            })
-        );
+            .unwrap();
+        assert!((vertical_rom.value - 0.7).abs() < 1.0e-12);
+        assert!((vertical_rom.confidence - 0.7).abs() < f32::EPSILON);
+
+        let vertical_displacement =
+            axis_displacement(&samples, MetricAxis::VerticalY, cfg)
+                .unwrap()
+                .unwrap();
+        assert!((vertical_displacement.value - 0.3).abs() < 1.0e-12);
+        assert!((vertical_displacement.confidence - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]
