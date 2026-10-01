@@ -133,7 +133,9 @@ impl Analysis {
     }
 
     pub fn from_json(input: &str) -> Result<Self, AnalysisJsonError> {
-        serde_json::from_str(input).map_err(|error| AnalysisJsonError::Json(error.to_string()))
+        let representation: AnalysisRepr =
+            serde_json::from_str(input).map_err(|error| AnalysisJsonError::Json(error.to_string()))?;
+        Self::try_from(representation).map_err(AnalysisJsonError::Validation)
     }
 
     fn validate_calibration_context(&self) -> Result<(), AnalysisValidationError> {
@@ -202,6 +204,17 @@ impl Analysis {
                 {
                     return Err(invalid(format!(
                         "raw observation {index} measured centre lies outside the display-oriented frame"
+                    )));
+                }
+            }
+            if let Some(bounds) = observation.target_bounds_px {
+                if bounds.left_px < 0.0
+                    || bounds.top_px < 0.0
+                    || bounds.right_px() > f64::from(self.video.display_width_px)
+                    || bounds.bottom_px() > f64::from(self.video.display_height_px)
+                {
+                    return Err(invalid(format!(
+                        "raw observation {index} target bounds lie outside the display-oriented frame"
                     )));
                 }
             }
@@ -1197,14 +1210,32 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unsupported_schema_version_and_unknown_fields() {
+        let mut wrong_version = serde_json::to_value(analysis()).unwrap();
+        wrong_version["schema_version"] = serde_json::json!(2);
+        let error = serde_json::from_value::<Analysis>(wrong_version).unwrap_err();
+        assert!(error.to_string().contains("schema version 2 is unsupported"));
+
+        let mut unknown_field = serde_json::to_value(analysis()).unwrap();
+        unknown_field["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<Analysis>(unknown_field).is_err());
+    }
+
+    #[test]
+    fn rejects_target_bounds_outside_display_frame() {
+        let mut value = serde_json::to_value(analysis()).unwrap();
+        value["raw_observations"][0]["target_bounds_px"]["left_px"] = serde_json::json!(-1.0);
+        assert!(serde_json::from_value::<Analysis>(value).is_err());
+    }
+
+    #[test]
     fn golden_json_is_stable() {
         let golden = include_str!("../tests/fixtures/analysis-v1.golden.json");
-        let decoded = Analysis::from_json(golden).unwrap();
         let expected = analysis();
+        let serialized = expected.to_json_pretty().unwrap();
+        assert_eq!(serialized, golden.trim_end());
+
+        let decoded = Analysis::from_json(golden).unwrap();
         assert_eq!(decoded, expected);
-        assert_eq!(
-            decoded.to_json_pretty().unwrap(),
-            expected.to_json_pretty().unwrap()
-        );
     }
 }
