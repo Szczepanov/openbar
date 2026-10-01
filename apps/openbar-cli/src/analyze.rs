@@ -22,6 +22,7 @@ use openbar_core::trajectory::{MetricPositionSample, PixelObservation};
 use openbar_tracking::{
     LocalContrastConfig, LocalContrastTracker, ManualSeedTracker, TemplateMatchConfig,
     TemplateMatchTracker, TrackerIdentity, TrackerObservationState, TrackerRun,
+    TrackerVisibilityState,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -655,13 +656,19 @@ fn canonical_raw_observations(run: &TrackerRun) -> CliResult<Vec<RawObservation>
                 timestamp_s: observation.timestamp_s,
                 frame_index: observation.frame_index,
                 tracking_state,
-                visibility: VisibilityState::Unknown,
+                visibility: canonical_visibility(observation.visibility),
                 measurement,
                 target_bounds_px,
                 tracker_id: run.tracker.id.clone(),
             })
         })
         .collect()
+}
+
+fn canonical_visibility(visibility: TrackerVisibilityState) -> VisibilityState {
+    match visibility {
+        TrackerVisibilityState::Unknown => VisibilityState::Unknown,
+    }
 }
 
 fn calibrate_measurements(
