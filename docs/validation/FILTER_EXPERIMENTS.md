@@ -53,8 +53,8 @@ reference sample count and timestamps. It reports:
 
 - position MAE/RMSE and maximum radial position error;
 - X/Y position bias;
-- downstream velocity MAE/RMSE;
-- reference and filtered peak speed;
+- downstream velocity MAE/RMSE over contiguous intervals only;
+- reference and filtered peak speed over contiguous intervals only;
 - peak attenuation and attenuation fraction;
 - peak timing shift.
 
@@ -66,7 +66,10 @@ The CLI additionally records:
 - wall-clock runtime as environment-sensitive diagnostic data.
 
 A filter that changes timestamps or synthesizes samples is rejected by the filter benchmark
-contract rather than receiving deceptively favourable metrics.
+contract rather than receiving deceptively favourable metrics. The benchmark also receives an
+explicit `max_velocity_gap_s` continuity threshold. Finite differences that would bridge a larger
+missing/lost interval are excluded from velocity and peak metrics rather than treating the span as
+supported motion.
 
 ## Development versus held-out validation
 
