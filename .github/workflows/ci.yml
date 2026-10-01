@@ -41,10 +41,29 @@ jobs:
           rustup --version
           rustc --version --verbose
           cargo --version
-      - name: Install FFmpeg (external decode prerequisite, ADR-0006)
+      # The Ubuntu mirror can serve the ~66 MB of FFmpeg packages at <100 kB/s, so the
+      # .deb files are cached. The key hashes the exact package set apt would fetch, so
+      # a package bump in the archive gets a fresh cache entry instead of a stale one.
+      - name: Resolve FFmpeg packages (external decode prerequisite, ADR-0006)
+        id: ffmpeg-debs
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
+          sudo apt-get install --yes --no-install-recommends --print-uris -qq ffmpeg \
+            | grep "^'" | sort > "$RUNNER_TEMP/ffmpeg-debs.txt"
+          echo "$(wc -l < "$RUNNER_TEMP/ffmpeg-debs.txt") packages to fetch"
+          echo "key=ffmpeg-debs-${{ runner.os }}-$(sha256sum "$RUNNER_TEMP/ffmpeg-debs.txt" | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Cache FFmpeg packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ffmpeg-debs
+          key: ${{ steps.ffmpeg-debs.outputs.key }}
+      - name: Install FFmpeg
+        run: |
+          mkdir -p ~/.cache/ffmpeg-debs/partial
+          sudo apt-get install --yes --no-install-recommends \
+            -o Dir::Cache::Archives="$HOME/.cache/ffmpeg-debs" ffmpeg
+          # apt leaves root/_apt-owned files; the cache post-step runs as the runner user.
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/ffmpeg-debs
           ffmpeg -hide_banner -version | head -n 1
       - name: Verify dependency lock
         run: cargo metadata --locked --format-version 1 > /dev/null
