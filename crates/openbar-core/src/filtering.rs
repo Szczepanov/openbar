@@ -1,4 +1,6 @@
-use crate::analysis::{Configuration, FilteredTrajectory, ImplementationProvenance, ParameterValue};
+use crate::analysis::{
+    Configuration, FilteredTrajectory, ImplementationProvenance, ParameterValue,
+};
 use crate::trajectory::MetricPositionSample;
 use std::fmt;
 
@@ -138,9 +140,7 @@ impl FilterConfig {
                 );
                 parameters.insert(
                     "polynomial_order".to_owned(),
-                    ParameterValue::Integer(
-                        i64::try_from(polynomial_order).unwrap_or(i64::MAX),
-                    ),
+                    ParameterValue::Integer(i64::try_from(polynomial_order).unwrap_or(i64::MAX)),
                 );
                 parameters.insert("max_gap_s".to_owned(), ParameterValue::Float(max_gap_s));
                 (SAVITZKY_GOLAY_IMPLEMENTATION, FILTER_VERSION)
@@ -345,10 +345,12 @@ pub fn moving_average(
 fn validate_input(samples: &[MetricPositionSample]) -> Result<(), FilterError> {
     let mut previous_timestamp = None;
     for (index, sample) in samples.iter().copied().enumerate() {
-        sample.validate().map_err(|error| FilterError::InvalidSample {
-            index,
-            reason: error.to_string(),
-        })?;
+        sample
+            .validate()
+            .map_err(|error| FilterError::InvalidSample {
+                index,
+                reason: error.to_string(),
+            })?;
         if let Some(previous) = previous_timestamp {
             if sample.timestamp_s <= previous {
                 return Err(FilterError::NonIncreasingTimestamp {
@@ -476,18 +478,12 @@ fn savitzky_golay_range(
         }
 
         let target_timestamp = samples[index].timestamp_s;
-        let x_m = local_polynomial_value(
-            slice,
-            polynomial_order,
-            target_timestamp,
-            |sample| sample.x_m,
-        )?;
-        let y_m = local_polynomial_value(
-            slice,
-            polynomial_order,
-            target_timestamp,
-            |sample| sample.y_m,
-        )?;
+        let x_m = local_polynomial_value(slice, polynomial_order, target_timestamp, |sample| {
+            sample.x_m
+        })?;
+        let y_m = local_polynomial_value(slice, polynomial_order, target_timestamp, |sample| {
+            sample.y_m
+        })?;
         let confidence = slice
             .iter()
             .map(|sample| sample.confidence)
@@ -610,13 +606,7 @@ impl KalmanAxis {
         }
     }
 
-    fn update(
-        &mut self,
-        measurement: f64,
-        dt: f64,
-        process_noise: f64,
-        measurement_noise: f64,
-    ) {
+    fn update(&mut self, measurement: f64, dt: f64, process_noise: f64, measurement_noise: f64) {
         self.position += self.velocity * dt;
 
         let dt2 = dt * dt;
@@ -652,10 +642,8 @@ fn kalman_segmented(
     }
 
     let mut output = Vec::with_capacity(samples.len());
-    let mut x_state =
-        KalmanAxis::new(samples[0].x_m, measurement_noise, initial_velocity_variance);
-    let mut y_state =
-        KalmanAxis::new(samples[0].y_m, measurement_noise, initial_velocity_variance);
+    let mut x_state = KalmanAxis::new(samples[0].x_m, measurement_noise, initial_velocity_variance);
+    let mut y_state = KalmanAxis::new(samples[0].y_m, measurement_noise, initial_velocity_variance);
     let mut state_confidence = samples[0].confidence;
     output.push(samples[0]);
 
