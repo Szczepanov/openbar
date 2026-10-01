@@ -1199,10 +1199,7 @@ mod tests {
         analysis.validate().unwrap();
 
         let json = analysis.to_json_pretty().unwrap();
-        assert!(json.contains(
-            "\"min_confidence\": 0.4
-"
-        ));
+        assert!(json.contains("\"min_confidence\": 0.4"));
         assert_eq!(Analysis::from_json(&json).unwrap(), analysis);
     }
 

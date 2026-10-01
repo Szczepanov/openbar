@@ -1085,9 +1085,9 @@ mod tests {
 
     #[test]
     fn verification_survives_exact_json_float_round_trip() {
-        // Real tracker output has full-precision positions and 1/fps timestamps. JSON parsing may
-        // move each input by an ulp, which the 1/dt of a derivative amplifies; a persisted
-        // trajectory must still verify after it is written and read back.
+        // Real tracker output has full-precision positions and 1/fps timestamps. The
+        // float_roundtrip parser contract must recover those fixed-precision values exactly so a
+        // persisted trajectory can be re-derived without widening the semantic tolerance.
         for fps in [30.0, 60.0, 240.0] {
             let samples: Vec<_> = (0..300)
                 .map(|index| {
@@ -1117,6 +1117,7 @@ mod tests {
             assert_eq!(verify_kinematic_trajectory(&input, &persisted), Ok(()));
         }
     }
+
     #[test]
     fn verification_rejects_forged_velocity_for_pathological_timestamp_spacing() {
         // A tolerance scaled by 1/dt can become enormous for a tiny but valid interval and
