@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/m0-evidence-v1.schema.json",
+  "title": "OpenBar M0 public evidence package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_version",
+    "evaluated_commit",
+    "scope",
+    "candidate_configuration",
+    "coverage",
+    "annotation_repeatability",
+    "tracker_results",
+    "determinism",
+    "environment",
+    "gates",
+    "artifacts",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "evidence_version": {"const": "m0-public-evidence-v1"},
+    "evaluated_commit": {"type": "string", "minLength": 1},
+    "scope": {"const": "public_reproducible_subset"},
+    "candidate_configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trackers",
+        "production_tracker_selected",
+        "integration_probe_tracker",
+        "filter",
+        "production_filter_selected",
+        "plate_diameter_m",
+        "kinematics_method",
+        "kinematics_max_gap_s",
+        "kinematics_min_confidence",
+        "benchmark_timestamp_tolerance_s",
+        "benchmark_min_confidence"
+      ],
+      "properties": {
+        "trackers": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+        "production_tracker_selected": {"type": "boolean"},
+        "integration_probe_tracker": {"type": "string", "minLength": 1},
+        "filter": {"type": "string", "minLength": 1},
+        "production_filter_selected": {"type": "boolean"},
+        "plate_diameter_m": {"type": "number", "exclusiveMinimum": 0},
+        "kinematics_method": {"type": "string", "minLength": 1},
+        "kinematics_max_gap_s": {"type": "number", "exclusiveMinimum": 0},
+        "kinematics_min_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "benchmark_timestamp_tolerance_s": {"type": "number", "minimum": 0},
+        "benchmark_min_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_manifest",
+        "fixture_manifest_sha256",
+        "fixture_count",
+        "development_fixture_count",
+        "held_out_fixture_count",
+        "comparable_labelled_samples",
+        "exercises",
+        "nominal_fps"
+      ],
+      "properties": {
+        "fixture_manifest": {"type": "string", "minLength": 1},
+        "fixture_manifest_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+        "fixture_count": {"type": "integer", "minimum": 0},
+        "development_fixture_count": {"type": "integer", "minimum": 0},
+        "held_out_fixture_count": {"type": "integer", "minimum": 0},
+        "comparable_labelled_samples": {"type": "integer", "minimum": 0},
+        "exercises": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "nominal_fps": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}}
+      }
+    },
+    "annotation_repeatability": {"type": "object", "additionalProperties": true},
+    "tracker_results": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["implementation", "metrics", "runtime", "warnings"],
+        "properties": {
+          "implementation": {"type": "string", "minLength": 1},
+          "metrics": {"type": "object", "additionalProperties": true},
+          "runtime": {"type": ["object", "null"], "additionalProperties": true},
+          "warnings": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "determinism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tracker_runs",
+        "tracker_predictions_identical",
+        "benchmark_repeats_per_tracker",
+        "benchmark_outputs_identical",
+        "canonical_analysis_runs",
+        "canonical_analysis_identical"
+      ],
+      "properties": {
+        "tracker_runs": {"type": "integer", "minimum": 2},
+        "tracker_predictions_identical": {"type": "boolean"},
+        "benchmark_repeats_per_tracker": {"type": "integer", "minimum": 2},
+        "benchmark_outputs_identical": {"type": "boolean"},
+        "canonical_analysis_runs": {"type": "integer", "minimum": 2},
+        "canonical_analysis_identical": {"type": "boolean"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "machine", "cpu", "python", "rustc", "cargo", "ffmpeg"],
+      "properties": {
+        "os": {"type": "string"},
+        "machine": {"type": "string"},
+        "cpu": {"type": "string"},
+        "python": {"type": "string"},
+        "rustc": {"type": "string"},
+        "cargo": {"type": "string"},
+        "ffmpeg": {"type": "string"}
+      }
+    },
+    "gates": {
+      "type": "array",
+      "minItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric", "target", "status", "evidence", "rationale"],
+        "properties": {
+          "metric": {"type": "string", "minLength": 1},
+          "target": {"type": "string", "minLength": 1},
+          "status": {"enum": ["PASS", "FAIL", "NOT MEASURABLE YET", "REVISED"]},
+          "evidence": {"type": "string", "minLength": 1},
+          "rationale": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "artifacts": {"type": "object", "additionalProperties": true},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+  }
+}
