@@ -85,14 +85,16 @@ Record:
 - edge behaviour;
 - position MAE/RMSE/bias;
 - downstream velocity MAE/RMSE with an explicit maximum continuity gap;
-- peak attenuation on supported contiguous intervals;
-- peak timing shift;
+- peak attenuation only when the reference scenario contains an intentionally defined peak;
+- peak timing shift only for those peak-bearing scenarios;
+- filter segment count and maximum observed input gap;
 - runtime and condition/failure notes.
 
 Parameter development must remain separate from held-out validation as far as the available M0
-material allows. The committed `filter-experiment` command uses deterministic synthetic development
-signals to select one configuration per family and evaluates those frozen configurations on disjoint
-held-out synthetic signals.
+material allows. The committed `filter-experiment` command uses deterministic seeded Gaussian-noise
+development signals, averaged across three independent seeds per signal, to select one configuration
+per family. It evaluates those frozen configurations on disjoint held-out synthetic signals with
+separate seeds. Peak metrics are left null for scenarios that do not define a meaningful peak.
 
 This is contract/regression evidence, not sufficient evidence for a production default. Production
 selection remains deferred until the same configurations have real decoded-video/reference evidence
