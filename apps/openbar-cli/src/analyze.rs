@@ -135,6 +135,7 @@ fn run(args: &Args) -> CliResult<()> {
     };
     let media_path = resolve_media_path(args, fixture.as_ref())?;
     let seed = read_seed(&args.seed, args.fixture_id.as_deref())?;
+    let tracker = build_tracker(args)?;
 
     let probed = ProbedVideo::open(&media_path).map_err(classify_media_error)?;
     let stream = probed.stream();
@@ -151,7 +152,6 @@ fn run(args: &Args) -> CliResult<()> {
         .map_err(classify_media_error)?;
 
     validate_seed(&seed, &stream, args.selection, &clip)?;
-    let tracker = build_tracker(args)?;
     let tracker_run = tracker
         .track(&clip.frame_samples(), seed.seed())
         .map_err(|error| CliError::tracking(format!("selected tracker failed: {error}")))?;
