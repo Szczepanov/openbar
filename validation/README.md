@@ -35,10 +35,9 @@ cargo run -p openbar-cli -- filter-experiment --output target/filter-experiment.
 ```
 
 CI retains the filter JSON inside the hardened `m0-smoke-<head-sha>` workflow artifact alongside
-tracker and benchmark-smoke evidence. Both experiment
-artifacts are deterministic measurement/contract evidence apart from separately reported
-environment-sensitive runtime, and are intentionally separate from real-video M0 validation
-results.
+tracker and benchmark-smoke evidence. The retained filter JSON is deterministic measurement/contract
+evidence; environment-sensitive runtime is printed to the console and intentionally excluded from
+that JSON. Both experiment artifacts remain separate from real-video M0 validation results.
 
 Detailed policies and workflows:
 
