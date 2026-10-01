@@ -168,7 +168,7 @@ struct PredictionSample {
     confidence: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PredictionState {
     Tracked,
