@@ -9,6 +9,12 @@ pub enum PixelCoordinateSpace {
     DisplayTopLeft,
 }
 
+pub trait SpatialFrameReference {
+    fn timestamp_s(&self) -> f64;
+    fn frame_index(&self) -> Option<u64>;
+    fn coordinate_space(&self) -> PixelCoordinateSpace;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelAxis {
     X,
@@ -228,6 +234,20 @@ impl ManualTargetSeed {
 
     pub fn notes(&self) -> Option<&str> {
         self.notes.as_deref()
+    }
+}
+
+impl SpatialFrameReference for ManualTargetSeed {
+    fn timestamp_s(&self) -> f64 {
+        self.timestamp_s
+    }
+
+    fn frame_index(&self) -> Option<u64> {
+        self.frame_index
+    }
+
+    fn coordinate_space(&self) -> PixelCoordinateSpace {
+        self.coordinate_space
     }
 }
 

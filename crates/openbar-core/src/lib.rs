@@ -9,3 +9,5 @@ pub mod filtering;
 pub mod kinematics;
 pub mod manual_seed;
 pub mod trajectory;
+
+pub use manual_seed::SpatialFrameReference;
