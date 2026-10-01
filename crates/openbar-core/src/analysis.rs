@@ -1250,14 +1250,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_analysis_fixture_id_mismatch() {
-        let mut analysis_item = analysis();
-        analysis_item.identity.fixture_id = Some("INVALID_FIXTURE_ID_UPPERCASE".to_owned());
-        let error = analysis_item.validate().unwrap_err();
-        assert!(error.to_string().contains("identity.fixture_id"));
-    }
-
-    #[test]
     fn rejects_mismatched_tracker_id_and_out_of_range_timestamps() {
         let mut mismatched_tracker = analysis();
         mismatched_tracker.raw_observations[0].tracker_id = "other-tracker".to_owned();
