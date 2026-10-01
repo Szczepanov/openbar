@@ -662,8 +662,7 @@ impl KalmanAxis {
             + 2.0 * dt * self.p01
             + dt2 * self.p11
             + acceleration_variance_m2_s4 * dt4 / 4.0;
-        let predicted_p01 =
-            self.p01 + dt * self.p11 + acceleration_variance_m2_s4 * dt3 / 2.0;
+        let predicted_p01 = self.p01 + dt * self.p11 + acceleration_variance_m2_s4 * dt3 / 2.0;
         let predicted_p11 = self.p11 + acceleration_variance_m2_s4 * dt2;
 
         let innovation = measurement - self.position;
@@ -934,8 +933,7 @@ mod tests {
         let input = (0..21)
             .map(|index| {
                 let t = index as f64 / 240.0;
-                let x = 0.2 + 0.3 * t - 0.4 * t.powi(2) + 0.2 * t.powi(3)
-                    - 0.1 * t.powi(4)
+                let x = 0.2 + 0.3 * t - 0.4 * t.powi(2) + 0.2 * t.powi(3) - 0.1 * t.powi(4)
                     + 0.05 * t.powi(5);
                 sample(t, x, -0.1 + 0.8 * t)
             })
