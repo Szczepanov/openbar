@@ -540,12 +540,12 @@ fn validate_reference(reference: &CalibrationReference) -> Result<(), Calibratio
     if let CalibrationProvenance::ManualTargetSeed {
         selection_confidence: Some(confidence),
         ..
-    } = reference.provenance
+    } = &reference.provenance
     {
         if !confidence.is_finite() {
             return Err(CalibrationError::NonFiniteSelectionConfidence);
         }
-        if !(0.0..=1.0).contains(&confidence) {
+        if !(0.0..=1.0).contains(confidence) {
             return Err(CalibrationError::SelectionConfidenceOutOfRange);
         }
     }
