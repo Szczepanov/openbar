@@ -1230,6 +1230,31 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_video_metadata_and_trim_range() {
+        let mut invalid_trim = analysis();
+        invalid_trim.video.trim.start_s = 5.0;
+        invalid_trim.video.trim.end_s = 2.0;
+        let error = invalid_trim.validate().unwrap_err();
+        assert_eq!(
+            error.message(),
+            "video trim range must be non-negative and ordered"
+        );
+
+        let mut invalid_dim = analysis();
+        invalid_dim.video.display_width_px = 0;
+        let error = invalid_dim.validate().unwrap_err();
+        assert_eq!(error.message(), "video dimensions must be positive");
+
+        let mut invalid_rotation = analysis();
+        invalid_rotation.video.source_rotation_deg = 45;
+        let error = invalid_rotation.validate().unwrap_err();
+        assert_eq!(
+            error.message(),
+            "video source rotation must be 0, 90, 180, or 270 degrees"
+        );
+    }
+
+    #[test]
     fn golden_json_is_stable() {
         let golden = include_str!("../tests/fixtures/analysis-v1.golden.json");
         let expected = analysis();
