@@ -400,7 +400,7 @@ fn nearest_prediction_index(
 
 fn maximum_loss_span(samples: &[EvaluatedSample]) -> (usize, f64) {
     let mut max_samples = 0usize;
-    let mut max_duration_s = 0.0;
+    let mut max_duration_s: f64 = 0.0;
     let mut index = 0usize;
 
     while index < samples.len() {
