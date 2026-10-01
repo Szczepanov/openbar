@@ -393,6 +393,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&valid_seed)
         .arg("--plate-diameter-m")
@@ -415,6 +419,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&malformed_seed)
         .arg("--plate-diameter-m")
@@ -437,6 +445,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&valid_seed)
         .arg("--plate-diameter-m")
@@ -463,6 +475,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&valid_seed)
         .arg("--plate-diameter-m")
@@ -515,12 +531,23 @@ fn assert_runtime_media_failures(output_path: &Path) {
         "fixtures": [{
             "id": "synthetic-clean-side-12",
             "video": {
+                "nominal_fps": 12.0,
                 "width_px": 999,
                 "height_px": 96,
                 "rotation_deg": 0
             },
+            "camera": {
+                "view": "side",
+                "movement": "fixed"
+            },
             "load": {
                 "plate_diameter_m": 0.45
+            },
+            "conditions": {
+                "lighting": "good",
+                "plate_visibility": "clear",
+                "occlusion": "none",
+                "motion_blur": "none"
             }
         }]
     });
