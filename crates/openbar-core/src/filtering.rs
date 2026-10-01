@@ -2,6 +2,7 @@ use crate::analysis::{
     Configuration, FilteredTrajectory, ImplementationProvenance, ParameterValue,
 };
 use crate::trajectory::MetricPositionSample;
+use std::collections::VecDeque;
 use std::fmt;
 
 const RAW_IMPLEMENTATION: &str = "raw-identity";
@@ -24,9 +25,10 @@ pub enum FilterConfig {
         max_gap_s: f64,
     },
     Kalman {
-        process_noise: f64,
-        measurement_noise: f64,
-        initial_velocity_variance: f64,
+        acceleration_variance_m2_s4: f64,
+        measurement_variance_m2: f64,
+        initial_velocity_variance_m2_s2: f64,
+        confidence_window_samples: usize,
         max_gap_s: f64,
     },
 }
@@ -34,6 +36,7 @@ pub enum FilterConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilterBehavior {
     pub causal: bool,
+    pub confidence_behavior: &'static str,
     pub irregular_timestamp_behavior: &'static str,
     pub gap_behavior: &'static str,
     pub edge_behavior: &'static str,
@@ -44,6 +47,7 @@ pub struct FilterBehavior {
 pub struct FilterRun {
     pub trajectory: FilteredTrajectory,
     pub behavior: FilterBehavior,
+    pub segment_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,9 +59,10 @@ pub enum FilterError {
     InvalidPolynomialOrder { order: usize, window: usize },
     PolynomialOrderTooHigh { order: usize, max_supported: usize },
     InvalidGapThreshold { value: f64 },
-    InvalidProcessNoise { value: f64 },
-    InvalidMeasurementNoise { value: f64 },
+    InvalidAccelerationVariance { value: f64 },
+    InvalidMeasurementVariance { value: f64 },
     InvalidInitialVelocityVariance { value: f64 },
+    InvalidConfidenceWindow { value: usize },
     SingularPolynomialFit,
 }
 
@@ -95,17 +100,21 @@ impl fmt::Display for FilterError {
                 formatter,
                 "max_gap_s must be finite and positive, got {value}"
             ),
-            Self::InvalidProcessNoise { value } => write!(
+            Self::InvalidAccelerationVariance { value } => write!(
                 formatter,
-                "process_noise must be finite and non-negative, got {value}"
+                "acceleration_variance_m2_s4 must be finite and non-negative, got {value}"
             ),
-            Self::InvalidMeasurementNoise { value } => write!(
+            Self::InvalidMeasurementVariance { value } => write!(
                 formatter,
-                "measurement_noise must be finite and positive, got {value}"
+                "measurement_variance_m2 must be finite and positive, got {value}"
             ),
             Self::InvalidInitialVelocityVariance { value } => write!(
                 formatter,
-                "initial_velocity_variance must be finite and positive, got {value}"
+                "initial_velocity_variance_m2_s2 must be finite and positive, got {value}"
+            ),
+            Self::InvalidConfidenceWindow { value } => write!(
+                formatter,
+                "confidence_window_samples must be at least 1, got {value}"
             ),
             Self::SingularPolynomialFit => formatter.write_str(
                 "timestamp-aware polynomial fit became singular for a validated timestamp window",
@@ -146,22 +155,29 @@ impl FilterConfig {
                 (SAVITZKY_GOLAY_IMPLEMENTATION, FILTER_VERSION)
             }
             Self::Kalman {
-                process_noise,
-                measurement_noise,
-                initial_velocity_variance,
+                acceleration_variance_m2_s4,
+                measurement_variance_m2,
+                initial_velocity_variance_m2_s2,
+                confidence_window_samples,
                 max_gap_s,
             } => {
                 parameters.insert(
-                    "process_noise".to_owned(),
-                    ParameterValue::Float(process_noise),
+                    "acceleration_variance_m2_s4".to_owned(),
+                    ParameterValue::Float(acceleration_variance_m2_s4),
                 );
                 parameters.insert(
-                    "measurement_noise".to_owned(),
-                    ParameterValue::Float(measurement_noise),
+                    "measurement_variance_m2".to_owned(),
+                    ParameterValue::Float(measurement_variance_m2),
                 );
                 parameters.insert(
-                    "initial_velocity_variance".to_owned(),
-                    ParameterValue::Float(initial_velocity_variance),
+                    "initial_velocity_variance_m2_s2".to_owned(),
+                    ParameterValue::Float(initial_velocity_variance_m2_s2),
+                );
+                parameters.insert(
+                    "confidence_window_samples".to_owned(),
+                    ParameterValue::Integer(
+                        i64::try_from(confidence_window_samples).unwrap_or(i64::MAX),
+                    ),
                 );
                 parameters.insert("max_gap_s".to_owned(), ParameterValue::Float(max_gap_s));
                 (KALMAN_IMPLEMENTATION, FILTER_VERSION)
@@ -179,6 +195,7 @@ impl FilterConfig {
         match self {
             Self::Raw => FilterBehavior {
                 causal: true,
+                confidence_behavior: "preserves each input confidence exactly",
                 irregular_timestamp_behavior:
                     "identity; authoritative input timestamps are preserved exactly",
                 gap_behavior:
@@ -188,6 +205,8 @@ impl FilterConfig {
             },
             Self::MovingAverage { .. } => FilterBehavior {
                 causal: false,
+                confidence_behavior:
+                    "output confidence is the minimum confidence of samples contributing to the centered window",
                 irregular_timestamp_behavior:
                     "uses timestamp-ordered neighboring samples with equal sample weights; does not assume nominal FPS",
                 gap_behavior:
@@ -199,6 +218,8 @@ impl FilterConfig {
             },
             Self::SavitzkyGolay { .. } => FilterBehavior {
                 causal: false,
+                confidence_behavior:
+                    "output confidence is the minimum confidence of samples contributing to the local polynomial fit",
                 irregular_timestamp_behavior:
                     "fits local polynomials against actual timestamp offsets; no uniform resampling is performed",
                 gap_behavior:
@@ -210,6 +231,8 @@ impl FilterConfig {
             },
             Self::Kalman { .. } => FilterBehavior {
                 causal: true,
+                confidence_behavior:
+                    "output confidence is the minimum recent observed confidence over confidence_window_samples and recovers as low-confidence observations leave that window",
                 irregular_timestamp_behavior:
                     "state transition and process covariance use each measured timestamp delta",
                 gap_behavior:
@@ -259,24 +282,32 @@ impl FilterConfig {
                 validate_gap(max_gap_s)
             }
             Self::Kalman {
-                process_noise,
-                measurement_noise,
-                initial_velocity_variance,
+                acceleration_variance_m2_s4,
+                measurement_variance_m2,
+                initial_velocity_variance_m2_s2,
+                confidence_window_samples,
                 max_gap_s,
             } => {
-                if !process_noise.is_finite() || process_noise < 0.0 {
-                    return Err(FilterError::InvalidProcessNoise {
-                        value: process_noise,
+                if !acceleration_variance_m2_s4.is_finite() || acceleration_variance_m2_s4 < 0.0 {
+                    return Err(FilterError::InvalidAccelerationVariance {
+                        value: acceleration_variance_m2_s4,
                     });
                 }
-                if !measurement_noise.is_finite() || measurement_noise <= 0.0 {
-                    return Err(FilterError::InvalidMeasurementNoise {
-                        value: measurement_noise,
+                if !measurement_variance_m2.is_finite() || measurement_variance_m2 <= 0.0 {
+                    return Err(FilterError::InvalidMeasurementVariance {
+                        value: measurement_variance_m2,
                     });
                 }
-                if !initial_velocity_variance.is_finite() || initial_velocity_variance <= 0.0 {
+                if !initial_velocity_variance_m2_s2.is_finite()
+                    || initial_velocity_variance_m2_s2 <= 0.0
+                {
                     return Err(FilterError::InvalidInitialVelocityVariance {
-                        value: initial_velocity_variance,
+                        value: initial_velocity_variance_m2_s2,
+                    });
+                }
+                if confidence_window_samples == 0 {
+                    return Err(FilterError::InvalidConfidenceWindow {
+                        value: confidence_window_samples,
                     });
                 }
                 validate_gap(max_gap_s)
@@ -292,6 +323,13 @@ pub fn apply_filter(
     validate_input(samples)?;
     config.validate()?;
 
+    let segment_count = match config {
+        FilterConfig::Raw => usize::from(!samples.is_empty()),
+        FilterConfig::MovingAverage { max_gap_s, .. }
+        | FilterConfig::SavitzkyGolay { max_gap_s, .. }
+        | FilterConfig::Kalman { max_gap_s, .. } => segment_ranges(samples, max_gap_s).len(),
+    };
+
     let filtered = match config {
         FilterConfig::Raw => samples.to_vec(),
         FilterConfig::MovingAverage { window, max_gap_s } => {
@@ -303,15 +341,17 @@ pub fn apply_filter(
             max_gap_s,
         } => savitzky_golay_segmented(samples, window, polynomial_order, max_gap_s)?,
         FilterConfig::Kalman {
-            process_noise,
-            measurement_noise,
-            initial_velocity_variance,
+            acceleration_variance_m2_s4,
+            measurement_variance_m2,
+            initial_velocity_variance_m2_s2,
+            confidence_window_samples,
             max_gap_s,
         } => kalman_segmented(
             samples,
-            process_noise,
-            measurement_noise,
-            initial_velocity_variance,
+            acceleration_variance_m2_s4,
+            measurement_variance_m2,
+            initial_velocity_variance_m2_s2,
+            confidence_window_samples,
             max_gap_s,
         ),
     };
@@ -322,24 +362,8 @@ pub fn apply_filter(
             samples: filtered,
         },
         behavior: config.behavior(),
+        segment_count,
     })
-}
-
-/// Compatibility wrapper for the original M0 moving-average baseline.
-///
-/// New benchmark and production-facing code should prefer apply_filter so implementation identity,
-/// gap semantics, edge behavior, and effective parameters are always explicit.
-pub fn moving_average(
-    samples: &[MetricPositionSample],
-    window: usize,
-) -> Result<Vec<MetricPositionSample>, FilterError> {
-    validate_input(samples)?;
-    validate_centered_window(window)?;
-    if samples.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    Ok(moving_average_range(samples, window))
 }
 
 fn validate_input(samples: &[MetricPositionSample]) -> Result<(), FilterError> {
@@ -521,9 +545,20 @@ fn local_polynomial_value(
     let dimension = order + 1;
     let mut normal = vec![vec![0.0_f64; dimension]; dimension];
     let mut rhs = vec![0.0_f64; dimension];
+    let time_scale_s = samples
+        .iter()
+        .map(|sample| (sample.timestamp_s - target_timestamp).abs())
+        .fold(0.0_f64, f64::max);
+    let time_scale_s = if time_scale_s > 0.0 {
+        time_scale_s
+    } else {
+        1.0
+    };
 
     for sample in samples {
-        let dt = sample.timestamp_s - target_timestamp;
+        // Scale local time to roughly [-1, 1]. The fitted value at dt=0 is unchanged,
+        // while high-order normal equations remain well-conditioned at 120/240+ fps.
+        let dt = (sample.timestamp_s - target_timestamp) / time_scale_s;
         let mut powers = vec![1.0_f64; dimension];
         for power in 1..dimension {
             powers[power] = powers[power - 1] * dt;
@@ -597,29 +632,42 @@ struct KalmanAxis {
 }
 
 impl KalmanAxis {
-    fn new(position: f64, measurement_noise: f64, initial_velocity_variance: f64) -> Self {
+    fn new(
+        position: f64,
+        measurement_variance_m2: f64,
+        initial_velocity_variance_m2_s2: f64,
+    ) -> Self {
         Self {
             position,
             velocity: 0.0,
-            p00: measurement_noise,
+            p00: measurement_variance_m2,
             p01: 0.0,
-            p11: initial_velocity_variance,
+            p11: initial_velocity_variance_m2_s2,
         }
     }
 
-    fn update(&mut self, measurement: f64, dt: f64, process_noise: f64, measurement_noise: f64) {
+    fn update(
+        &mut self,
+        measurement: f64,
+        dt: f64,
+        acceleration_variance_m2_s4: f64,
+        measurement_variance_m2: f64,
+    ) {
         self.position += self.velocity * dt;
 
         let dt2 = dt * dt;
         let dt3 = dt2 * dt;
         let dt4 = dt2 * dt2;
-        let predicted_p00 =
-            self.p00 + 2.0 * dt * self.p01 + dt2 * self.p11 + process_noise * dt4 / 4.0;
-        let predicted_p01 = self.p01 + dt * self.p11 + process_noise * dt3 / 2.0;
-        let predicted_p11 = self.p11 + process_noise * dt2;
+        let predicted_p00 = self.p00
+            + 2.0 * dt * self.p01
+            + dt2 * self.p11
+            + acceleration_variance_m2_s4 * dt4 / 4.0;
+        let predicted_p01 =
+            self.p01 + dt * self.p11 + acceleration_variance_m2_s4 * dt3 / 2.0;
+        let predicted_p11 = self.p11 + acceleration_variance_m2_s4 * dt2;
 
         let innovation = measurement - self.position;
-        let innovation_variance = predicted_p00 + measurement_noise;
+        let innovation_variance = predicted_p00 + measurement_variance_m2;
         let k0 = predicted_p00 / innovation_variance;
         let k1 = predicted_p01 / innovation_variance;
 
@@ -631,11 +679,16 @@ impl KalmanAxis {
     }
 }
 
+fn minimum_confidence(history: &VecDeque<f32>) -> f32 {
+    history.iter().copied().fold(1.0_f32, f32::min)
+}
+
 fn kalman_segmented(
     samples: &[MetricPositionSample],
-    process_noise: f64,
-    measurement_noise: f64,
-    initial_velocity_variance: f64,
+    acceleration_variance_m2_s4: f64,
+    measurement_variance_m2: f64,
+    initial_velocity_variance_m2_s2: f64,
+    confidence_window_samples: usize,
     max_gap_s: f64,
 ) -> Vec<MetricPositionSample> {
     if samples.is_empty() {
@@ -643,30 +696,63 @@ fn kalman_segmented(
     }
 
     let mut output = Vec::with_capacity(samples.len());
-    let mut x_state = KalmanAxis::new(samples[0].x_m, measurement_noise, initial_velocity_variance);
-    let mut y_state = KalmanAxis::new(samples[0].y_m, measurement_noise, initial_velocity_variance);
-    let mut state_confidence = samples[0].confidence;
+    let mut x_state = KalmanAxis::new(
+        samples[0].x_m,
+        measurement_variance_m2,
+        initial_velocity_variance_m2_s2,
+    );
+    let mut y_state = KalmanAxis::new(
+        samples[0].y_m,
+        measurement_variance_m2,
+        initial_velocity_variance_m2_s2,
+    );
+    let mut confidence_history = VecDeque::with_capacity(confidence_window_samples);
+    confidence_history.push_back(samples[0].confidence);
     output.push(samples[0]);
 
     for index in 1..samples.len() {
         let sample = samples[index];
         let dt = sample.timestamp_s - samples[index - 1].timestamp_s;
         if dt > max_gap_s {
-            x_state = KalmanAxis::new(sample.x_m, measurement_noise, initial_velocity_variance);
-            y_state = KalmanAxis::new(sample.y_m, measurement_noise, initial_velocity_variance);
-            state_confidence = sample.confidence;
+            x_state = KalmanAxis::new(
+                sample.x_m,
+                measurement_variance_m2,
+                initial_velocity_variance_m2_s2,
+            );
+            y_state = KalmanAxis::new(
+                sample.y_m,
+                measurement_variance_m2,
+                initial_velocity_variance_m2_s2,
+            );
+            confidence_history.clear();
+            confidence_history.push_back(sample.confidence);
             output.push(sample);
             continue;
         }
 
-        x_state.update(sample.x_m, dt, process_noise, measurement_noise);
-        y_state.update(sample.y_m, dt, process_noise, measurement_noise);
-        state_confidence = state_confidence.min(sample.confidence);
+        x_state.update(
+            sample.x_m,
+            dt,
+            acceleration_variance_m2_s4,
+            measurement_variance_m2,
+        );
+        y_state.update(
+            sample.y_m,
+            dt,
+            acceleration_variance_m2_s4,
+            measurement_variance_m2,
+        );
+
+        confidence_history.push_back(sample.confidence);
+        while confidence_history.len() > confidence_window_samples {
+            confidence_history.pop_front();
+        }
+
         output.push(MetricPositionSample {
             timestamp_s: sample.timestamp_s,
             x_m: x_state.position,
             y_m: y_state.position,
-            confidence: state_confidence,
+            confidence: minimum_confidence(&confidence_history),
         });
     }
     output
@@ -701,7 +787,15 @@ mod tests {
         ];
         input[0].confidence = 0.5;
 
-        let output = moving_average(&input, 3).unwrap();
+        let run = apply_filter(
+            &input,
+            FilterConfig::MovingAverage {
+                window: 3,
+                max_gap_s: 1.0,
+            },
+        )
+        .unwrap();
+        let output = run.trajectory.samples;
         assert_eq!(output.len(), input.len());
         assert_eq!(output[1].timestamp_s, 0.5);
         assert_eq!(output[1].x_m, 3.0);
@@ -712,8 +806,16 @@ mod tests {
 
     #[test]
     fn moving_average_handles_empty_samples() {
-        let result = moving_average(&[], 3).unwrap();
-        assert!(result.is_empty());
+        let run = apply_filter(
+            &[],
+            FilterConfig::MovingAverage {
+                window: 3,
+                max_gap_s: 0.1,
+            },
+        )
+        .unwrap();
+        assert!(run.trajectory.samples.is_empty());
+        assert_eq!(run.segment_count, 0);
     }
 
     #[test]
@@ -721,11 +823,23 @@ mod tests {
         let input = [sample(0.0, 1.0, 2.0)];
 
         assert_eq!(
-            moving_average(&[], 0),
+            apply_filter(
+                &[],
+                FilterConfig::MovingAverage {
+                    window: 0,
+                    max_gap_s: 0.1,
+                },
+            ),
             Err(FilterError::InvalidWindow { window: 0 })
         );
         assert_eq!(
-            moving_average(&input, 0),
+            apply_filter(
+                &input,
+                FilterConfig::MovingAverage {
+                    window: 0,
+                    max_gap_s: 0.1,
+                },
+            ),
             Err(FilterError::InvalidWindow { window: 0 })
         );
     }
@@ -801,9 +915,10 @@ mod tests {
             sample(1.0, 10.0, 20.0),
         ];
         let config = FilterConfig::Kalman {
-            process_noise: 1.0,
-            measurement_noise: 0.01,
-            initial_velocity_variance: 1.0,
+            acceleration_variance_m2_s4: 1.0,
+            measurement_variance_m2: 0.01,
+            initial_velocity_variance_m2_s2: 1.0,
+            confidence_window_samples: 3,
             max_gap_s: 0.1,
         };
         let first = apply_filter(&input, config).unwrap();
@@ -811,6 +926,118 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first.trajectory.samples[3], input[3]);
+        assert_eq!(first.segment_count, 2);
+    }
+
+    #[test]
+    fn savitzky_golay_is_conditioned_for_high_frame_rate_high_order_windows() {
+        let input = (0..21)
+            .map(|index| {
+                let t = index as f64 / 240.0;
+                let x = 0.2 + 0.3 * t - 0.4 * t.powi(2) + 0.2 * t.powi(3)
+                    - 0.1 * t.powi(4)
+                    + 0.05 * t.powi(5);
+                sample(t, x, -0.1 + 0.8 * t)
+            })
+            .collect::<Vec<_>>();
+
+        for (window, polynomial_order) in [(9, 4), (11, 5)] {
+            let run = apply_filter(
+                &input,
+                FilterConfig::SavitzkyGolay {
+                    window,
+                    polynomial_order,
+                    max_gap_s: 0.02,
+                },
+            )
+            .unwrap();
+
+            for (actual, expected) in run.trajectory.samples.iter().zip(&input) {
+                assert!((actual.x_m - expected.x_m).abs() < 1.0e-8);
+                assert!((actual.y_m - expected.y_m).abs() < 1.0e-8);
+            }
+        }
+    }
+
+    #[test]
+    fn savitzky_golay_shifted_edge_windows_and_confidence_are_explicit() {
+        let mut input = (0..7)
+            .map(|index| {
+                let t = index as f64 * 0.02;
+                sample(t, 0.5 + 0.2 * t + 0.3 * t * t, 0.1 + t)
+            })
+            .collect::<Vec<_>>();
+        input[1].confidence = 0.3;
+
+        let run = apply_filter(
+            &input,
+            FilterConfig::SavitzkyGolay {
+                window: 5,
+                polynomial_order: 2,
+                max_gap_s: 0.1,
+            },
+        )
+        .unwrap();
+
+        assert!((run.trajectory.samples[0].x_m - input[0].x_m).abs() < 1.0e-9);
+        assert!((run.trajectory.samples[6].x_m - input[6].x_m).abs() < 1.0e-9);
+        assert_eq!(run.trajectory.samples[0].confidence, 0.3);
+        assert_eq!(run.trajectory.samples[3].confidence, 0.3);
+        assert_eq!(run.trajectory.samples[6].confidence, 1.0);
+    }
+
+    #[test]
+    fn kalman_converges_on_noiseless_constant_velocity() {
+        let input = (0..60)
+            .map(|index| {
+                let t = index as f64 / 60.0;
+                sample(t, 0.25 + 0.4 * t, -0.1 + 0.8 * t)
+            })
+            .collect::<Vec<_>>();
+        let run = apply_filter(
+            &input,
+            FilterConfig::Kalman {
+                acceleration_variance_m2_s4: 0.0,
+                measurement_variance_m2: 1.0e-12,
+                initial_velocity_variance_m2_s2: 100.0,
+                confidence_window_samples: 3,
+                max_gap_s: 0.05,
+            },
+        )
+        .unwrap();
+
+        let actual = run.trajectory.samples.last().unwrap();
+        let expected = input.last().unwrap();
+        assert!((actual.x_m - expected.x_m).abs() < 1.0e-6);
+        assert!((actual.y_m - expected.y_m).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn kalman_confidence_recovers_after_low_confidence_leaves_recent_window() {
+        let mut input = (0..6)
+            .map(|index| {
+                let t = index as f64 * 0.02;
+                sample(t, t, 2.0 * t)
+            })
+            .collect::<Vec<_>>();
+        input[1].confidence = 0.2;
+
+        let run = apply_filter(
+            &input,
+            FilterConfig::Kalman {
+                acceleration_variance_m2_s4: 1.0,
+                measurement_variance_m2: 1.0e-4,
+                initial_velocity_variance_m2_s2: 1.0,
+                confidence_window_samples: 3,
+                max_gap_s: 0.1,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(run.trajectory.samples[1].confidence, 0.2);
+        assert_eq!(run.trajectory.samples[3].confidence, 0.2);
+        assert_eq!(run.trajectory.samples[4].confidence, 1.0);
+        assert_eq!(run.trajectory.samples[5].confidence, 1.0);
     }
 
     #[test]
@@ -834,6 +1061,23 @@ mod tests {
         assert_eq!(
             provenance.parameters.get("max_gap_s"),
             Some(&ParameterValue::Float(0.05))
+        );
+
+        let kalman = FilterConfig::Kalman {
+            acceleration_variance_m2_s4: 2.0,
+            measurement_variance_m2: 4.0e-6,
+            initial_velocity_variance_m2_s2: 1.0,
+            confidence_window_samples: 3,
+            max_gap_s: 0.05,
+        }
+        .provenance();
+        assert_eq!(
+            kalman.parameters.get("measurement_variance_m2"),
+            Some(&ParameterValue::Float(4.0e-6))
+        );
+        assert_eq!(
+            kalman.parameters.get("confidence_window_samples"),
+            Some(&ParameterValue::Integer(3))
         );
     }
 
@@ -861,13 +1105,27 @@ mod tests {
             apply_filter(
                 &valid,
                 FilterConfig::Kalman {
-                    process_noise: 1.0,
-                    measurement_noise: 0.0,
-                    initial_velocity_variance: 1.0,
+                    acceleration_variance_m2_s4: 1.0,
+                    measurement_variance_m2: 0.0,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 3,
                     max_gap_s: 0.1,
                 }
             ),
-            Err(FilterError::InvalidMeasurementNoise { .. })
+            Err(FilterError::InvalidMeasurementVariance { .. })
+        ));
+        assert!(matches!(
+            apply_filter(
+                &valid,
+                FilterConfig::Kalman {
+                    acceleration_variance_m2_s4: 1.0,
+                    measurement_variance_m2: 1.0e-4,
+                    initial_velocity_variance_m2_s2: 1.0,
+                    confidence_window_samples: 0,
+                    max_gap_s: 0.1,
+                }
+            ),
+            Err(FilterError::InvalidConfidenceWindow { .. })
         ));
     }
 }
