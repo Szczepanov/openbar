@@ -35,6 +35,10 @@ fn ffmpeg_available() -> bool {
 }
 
 fn analyze_fixture(output: &Path) -> Command {
+    analyze_fixture_with_plate(output, "0.45")
+}
+
+fn analyze_fixture_with_plate(output: &Path, plate_diameter_m: &str) -> Command {
     let mut command = Command::new(binary());
     command
         .arg("analyze")
@@ -51,7 +55,7 @@ fn analyze_fixture(output: &Path) -> Command {
             "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
         ))
         .arg("--plate-diameter-m")
-        .arg("0.45")
+        .arg(plate_diameter_m)
         .arg("--tracker")
         .arg("template")
         .arg("--filter")
@@ -279,6 +283,18 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
     fs::write(&malformed_seed, "{not-json").expect("write malformed seed");
     fs::write(&malformed_benchmark, "{not-json").expect("write malformed benchmark");
 
+    let fixture_plate_mismatch = analyze_fixture_with_plate(&output_path, "0.50")
+        .output()
+        .expect("run fixture plate mismatch");
+    assert_exit(
+        &fixture_plate_mismatch,
+        5,
+        "status=failure error[seed-calibration]",
+    );
+    assert!(
+        String::from_utf8_lossy(&fixture_plate_mismatch.stderr).contains("load.plate_diameter_m")
+    );
+
     let invalid_plate = Command::new(binary())
         .arg("analyze")
         .arg("--video")
@@ -408,6 +424,9 @@ fn assert_runtime_media_failures(output_path: &Path) {
                 "width_px": 999,
                 "height_px": 96,
                 "rotation_deg": 0
+            },
+            "load": {
+                "plate_diameter_m": 0.45
             }
         }]
     });
