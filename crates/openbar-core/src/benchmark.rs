@@ -12,10 +12,7 @@ pub struct GroundTruthSample {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TrackerPredictionState {
-    Tracked {
-        center: PixelPoint,
-        confidence: f32,
-    },
+    Tracked { center: PixelPoint, confidence: f32 },
     Lost,
 }
 
@@ -55,14 +52,8 @@ pub enum BenchmarkError {
     InvalidMinimumConfidence { value: f32 },
     InvalidGroundTruthTimestamp { index: usize, value: f64 },
     InvalidPredictionTimestamp { index: usize, value: f64 },
-    NonIncreasingGroundTruthTimestamps {
-        previous_index: usize,
-        index: usize,
-    },
-    NonIncreasingPredictionTimestamps {
-        previous_index: usize,
-        index: usize,
-    },
+    NonIncreasingGroundTruthTimestamps { previous_index: usize, index: usize },
+    NonIncreasingPredictionTimestamps { previous_index: usize, index: usize },
     NonFiniteGroundTruthCoordinate { index: usize },
     NonFinitePredictionCoordinate { index: usize },
     InvalidPredictionConfidence { index: usize, value: f32 },
@@ -295,10 +286,10 @@ pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
         .filter_map(|value| value.max_consecutive_tracking_loss_duration_s)
         .reduce(f64::max);
 
-    let tracking_availability = (comparable_samples > 0)
-        .then_some(tracked_samples as f64 / comparable_samples as f64);
-    let lost_frame_percentage = (comparable_samples > 0)
-        .then_some(100.0 * lost_samples as f64 / comparable_samples as f64);
+    let tracking_availability =
+        (comparable_samples > 0).then_some(tracked_samples as f64 / comparable_samples as f64);
+    let lost_frame_percentage =
+        (comparable_samples > 0).then_some(100.0 * lost_samples as f64 / comparable_samples as f64);
 
     TrackerMetrics {
         comparable_samples,
@@ -328,9 +319,7 @@ fn validate_inputs(
             value: parameters.timestamp_tolerance_s,
         });
     }
-    if !parameters.min_confidence.is_finite()
-        || !(0.0..=1.0).contains(&parameters.min_confidence)
-    {
+    if !parameters.min_confidence.is_finite() || !(0.0..=1.0).contains(&parameters.min_confidence) {
         return Err(BenchmarkError::InvalidMinimumConfidence {
             value: parameters.min_confidence,
         });
@@ -497,12 +486,7 @@ mod tests {
         }
     }
 
-    fn tracked(
-        timestamp_s: f64,
-        x_px: f64,
-        y_px: f64,
-        confidence: f32,
-    ) -> TrackerPrediction {
+    fn tracked(timestamp_s: f64, x_px: f64, y_px: f64, confidence: f32) -> TrackerPrediction {
         TrackerPrediction {
             timestamp_s,
             state: TrackerPredictionState::Tracked {
@@ -529,10 +513,7 @@ mod tests {
     #[test]
     fn perfect_tracking_has_zero_error_and_full_availability() {
         let ground_truth = [truth(0.0, 10.0, 20.0), truth(0.1, 11.0, 21.0)];
-        let predictions = [
-            tracked(0.0, 10.0, 20.0, 1.0),
-            tracked(0.1, 11.0, 21.0, 1.0),
-        ];
+        let predictions = [tracked(0.0, 10.0, 20.0, 1.0), tracked(0.1, 11.0, 21.0, 1.0)];
 
         let metrics = evaluate_tracker_case(&ground_truth, &predictions, parameters()).unwrap();
 
@@ -552,10 +533,7 @@ mod tests {
     #[test]
     fn constant_offset_produces_hand_checkable_error_and_bias() {
         let ground_truth = [truth(0.0, 10.0, 20.0), truth(0.1, 11.0, 21.0)];
-        let predictions = [
-            tracked(0.0, 13.0, 24.0, 1.0),
-            tracked(0.1, 14.0, 25.0, 1.0),
-        ];
+        let predictions = [tracked(0.0, 13.0, 24.0, 1.0), tracked(0.1, 14.0, 25.0, 1.0)];
 
         let metrics = evaluate_tracker_case(&ground_truth, &predictions, parameters()).unwrap();
 
@@ -657,10 +635,7 @@ mod tests {
     #[test]
     fn rejects_non_increasing_prediction_timestamps() {
         let ground_truth = [truth(0.0, 0.0, 0.0)];
-        let predictions = [
-            tracked(0.0, 0.0, 0.0, 1.0),
-            tracked(0.0, 0.0, 0.0, 1.0),
-        ];
+        let predictions = [tracked(0.0, 0.0, 0.0, 1.0), tracked(0.0, 0.0, 0.0, 1.0)];
 
         let error = evaluate_tracker_case(&ground_truth, &predictions, parameters()).unwrap_err();
         assert!(matches!(
