@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/tracker-prediction-v1.schema.json",
+  "title": "OpenBar M0 tracker prediction stream",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "coordinate_space",
+    "implementation",
+    "samples"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "fixture_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "source_video_sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "coordinate_space": {"const": "decoded_display_pixels"},
+    "implementation": {"$ref": "#/$defs/implementation"},
+    "runtime": {"$ref": "#/$defs/runtime"},
+    "samples": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/sample"}
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x_px", "y_px"],
+      "properties": {
+        "x_px": {"type": "number", "minimum": 0},
+        "y_px": {"type": "number", "minimum": 0}
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "config": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["processing_wall_s"],
+      "properties": {
+        "processing_wall_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Measured wall-clock processing time supplied by the tracker run. It is provenance/performance metadata, not a deterministic accuracy metric."
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "state"],
+      "properties": {
+        "timestamp_s": {"type": "number", "minimum": 0},
+        "state": {"enum": ["tracked", "lost"]},
+        "center_px": {"$ref": "#/$defs/point"},
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"state": {"const": "tracked"}},
+            "required": ["state"]
+          },
+          "then": {
+            "required": ["center_px", "confidence"]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {"required": ["center_px"]},
+                {"required": ["confidence"]}
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}
