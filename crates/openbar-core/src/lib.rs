@@ -8,4 +8,9 @@ pub mod calibration;
 pub mod filtering;
 pub mod kinematics;
 pub mod manual_seed;
+pub mod math;
+#[cfg(test)]
+pub mod test_utils;
 pub mod trajectory;
+
+pub use manual_seed::SpatialFrameReference;

@@ -1,5 +1,6 @@
 use crate::calibration::{CalibrationProvenance, PlateDiameterCalibration};
 use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
+use crate::math::approximately_equal;
 use crate::trajectory::{
     KinematicSample, MetricPositionSample, PixelObservation, TrajectoryValidationError,
 };
@@ -902,17 +903,6 @@ fn trajectory_error(prefix: String, error: TrajectoryValidationError) -> Analysi
     invalid(format!("{prefix}: {error}"))
 }
 
-fn approximately_equal(left: f64, right: f64) -> bool {
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-    let scale = left.abs().max(right.abs()).max(1.0);
-    (left - right).abs() <= f64::EPSILON * 16.0 * scale
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1276,6 +1266,31 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_video_metadata_and_trim_range() {
+        let mut invalid_trim = analysis();
+        invalid_trim.video.trim.start_s = 5.0;
+        invalid_trim.video.trim.end_s = 2.0;
+        let error = invalid_trim.validate().unwrap_err();
+        assert_eq!(
+            error.message(),
+            "video trim range must be non-negative and ordered"
+        );
+
+        let mut invalid_dim = analysis();
+        invalid_dim.video.display_width_px = 0;
+        let error = invalid_dim.validate().unwrap_err();
+        assert_eq!(error.message(), "video dimensions must be positive");
+
+        let mut invalid_rotation = analysis();
+        invalid_rotation.video.source_rotation_deg = 45;
+        let error = invalid_rotation.validate().unwrap_err();
+        assert_eq!(
+            error.message(),
+            "video source rotation must be 0, 90, 180, or 270 degrees"
+        );
+    }
+
+    #[test]
     fn golden_json_is_stable() {
         let golden = include_str!("../tests/fixtures/analysis-v1.golden.json");
         let expected = analysis();
@@ -1284,5 +1299,23 @@ mod tests {
 
         let decoded = Analysis::from_json(golden).unwrap();
         assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn time_range_contains_checks_inclusive_bounds() {
+        let range = TimeRange {
+            start_s: 1.0,
+            end_s: 5.0,
+        };
+
+        assert!(range.contains(1.0));
+        assert!(range.contains(3.0));
+        assert!(range.contains(5.0));
+
+        assert!(!range.contains(0.999));
+        assert!(!range.contains(5.001));
+        assert!(!range.contains(f64::NAN));
+        assert!(!range.contains(f64::INFINITY));
+        assert!(!range.contains(f64::NEG_INFINITY));
     }
 }

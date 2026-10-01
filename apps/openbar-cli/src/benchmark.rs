@@ -321,7 +321,7 @@ fn run_suite(suite_path: &Path) -> AnyResult<BenchmarkArtifact> {
         if spec.id.trim().is_empty() {
             return Err(data_error("benchmark case id must not be blank"));
         }
-        if !seen_case_ids.insert(spec.id.clone()) {
+        if !seen_case_ids.insert(spec.id.as_str()) {
             return Err(data_error(format!(
                 "duplicate benchmark case id '{}'",
                 spec.id
@@ -355,6 +355,49 @@ fn run_suite(suite_path: &Path) -> AnyResult<BenchmarkArtifact> {
 fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult> {
     validate_selected_range(spec.selected_range_s)?;
 
+    let fixture = load_fixture(spec, suite_dir)?;
+    validate_manual_seed(spec, suite_dir, &fixture)?;
+
+    let ground_truth = load_ground_truth(spec, suite_dir, &fixture)?;
+    let (predictions, tracker_predictions) = load_predictions(spec, suite_dir, &fixture)?;
+
+    let metrics = evaluate_tracker_case(
+        &ground_truth,
+        &tracker_predictions,
+        BenchmarkParameters {
+            timestamp_tolerance_s: spec.timestamp_tolerance_s,
+            min_confidence: spec.min_confidence,
+        },
+    )
+    .map_err(|error| {
+        data_error(format!(
+            "benchmark case '{}' failed metric evaluation: {error}",
+            spec.id
+        ))
+    })?;
+
+    let warnings = collect_case_warnings(spec, &metrics);
+    let runtime = build_runtime_report(&predictions, spec, suite_dir)?;
+
+    Ok(CaseResult {
+        case_id: spec.id.clone(),
+        fixture_id: fixture.id.clone(),
+        exercise: fixture.exercise.clone(),
+        camera_view: fixture.camera.view.clone(),
+        conditions: condition_labels(&fixture),
+        implementation: predictions.implementation,
+        selected_range_s: spec.selected_range_s,
+        alignment: AlignmentPolicy {
+            timestamp_tolerance_s: spec.timestamp_tolerance_s,
+            min_confidence: spec.min_confidence,
+        },
+        metrics,
+        runtime,
+        warnings,
+    })
+}
+
+fn load_fixture(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<FixtureEntry> {
     let manifest_path = resolve_path(suite_dir, &spec.fixture_manifest);
     let manifest: FixtureManifestDocument = read_json(&manifest_path)?;
     if manifest.schema_version != 1 {
@@ -384,44 +427,58 @@ fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult>
         )));
     }
 
+    Ok(fixture)
+}
+
+fn validate_manual_seed(
+    spec: &BenchmarkCaseSpec,
+    suite_dir: &Path,
+    fixture: &FixtureEntry,
+) -> AnyResult<()> {
+    let Some(seed_path) = spec.manual_seed.as_deref() else {
+        return Ok(());
+    };
+
+    let path = resolve_path(suite_dir, seed_path);
+    let seed: ManualTargetSeedDocument = read_json(&path)?;
+    if let Some(seed_fixture_id) = seed.fixture_id() {
+        if seed_fixture_id != fixture.id {
+            return Err(data_error(format!(
+                "manual seed '{}' references fixture '{}' instead of '{}'",
+                path.display(),
+                seed_fixture_id,
+                fixture.id
+            )));
+        }
+    }
+    seed.validate(SeedValidationContext {
+        frame_width_px: fixture.video.width_px,
+        frame_height_px: fixture.video.height_px,
+        selected_range_start_s: spec.selected_range_s.start_s,
+        selected_range_end_s: spec.selected_range_s.end_s,
+        source_rotation_deg: fixture.video.rotation_deg,
+    })
+    .map_err(|error| {
+        data_error(format!(
+            "manual seed '{}' is invalid for benchmark case '{}': {error}",
+            path.display(),
+            spec.id
+        ))
+    })?;
+
+    Ok(())
+}
+
+fn load_ground_truth(
+    spec: &BenchmarkCaseSpec,
+    suite_dir: &Path,
+    fixture: &FixtureEntry,
+) -> AnyResult<Vec<GroundTruthSample>> {
     let annotation_path = resolve_path(suite_dir, &spec.annotations);
     let annotations: AnnotationDocument = read_json(&annotation_path)?;
-    validate_annotations(&annotations, &fixture, &annotation_path)?;
+    validate_annotations(&annotations, fixture, &annotation_path)?;
 
-    if let Some(seed_path) = spec.manual_seed.as_deref() {
-        let path = resolve_path(suite_dir, seed_path);
-        let seed: ManualTargetSeedDocument = read_json(&path)?;
-        if let Some(seed_fixture_id) = seed.fixture_id() {
-            if seed_fixture_id != fixture.id {
-                return Err(data_error(format!(
-                    "manual seed '{}' references fixture '{}' instead of '{}'",
-                    path.display(),
-                    seed_fixture_id,
-                    fixture.id
-                )));
-            }
-        }
-        seed.validate(SeedValidationContext {
-            frame_width_px: fixture.video.width_px,
-            frame_height_px: fixture.video.height_px,
-            selected_range_start_s: spec.selected_range_s.start_s,
-            selected_range_end_s: spec.selected_range_s.end_s,
-            source_rotation_deg: fixture.video.rotation_deg,
-        })
-        .map_err(|error| {
-            data_error(format!(
-                "manual seed '{}' is invalid for benchmark case '{}': {error}",
-                path.display(),
-                spec.id
-            ))
-        })?;
-    }
-
-    let prediction_path = resolve_path(suite_dir, &spec.predictions);
-    let predictions: PredictionDocument = read_json(&prediction_path)?;
-    validate_prediction_document(&predictions, &fixture, &prediction_path)?;
-
-    let ground_truth = annotations
+    annotations
         .samples
         .iter()
         .filter(|sample| {
@@ -443,7 +500,17 @@ fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult>
                 center: PixelPoint::new(center.x_px, center.y_px),
             })
         })
-        .collect::<AnyResult<Vec<_>>>()?;
+        .collect()
+}
+
+fn load_predictions(
+    spec: &BenchmarkCaseSpec,
+    suite_dir: &Path,
+    fixture: &FixtureEntry,
+) -> AnyResult<(PredictionDocument, Vec<TrackerPrediction>)> {
+    let prediction_path = resolve_path(suite_dir, &spec.predictions);
+    let predictions: PredictionDocument = read_json(&prediction_path)?;
+    validate_prediction_document(&predictions, fixture, &prediction_path)?;
 
     let tracker_predictions = predictions
         .samples
@@ -452,24 +519,13 @@ fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult>
             sample.timestamp_s >= spec.selected_range_s.start_s
                 && sample.timestamp_s <= spec.selected_range_s.end_s
         })
-        .map(|sample| convert_prediction_sample(sample, &fixture, &prediction_path))
+        .map(|sample| convert_prediction_sample(sample, fixture, &prediction_path))
         .collect::<AnyResult<Vec<_>>>()?;
 
-    let metrics = evaluate_tracker_case(
-        &ground_truth,
-        &tracker_predictions,
-        BenchmarkParameters {
-            timestamp_tolerance_s: spec.timestamp_tolerance_s,
-            min_confidence: spec.min_confidence,
-        },
-    )
-    .map_err(|error| {
-        data_error(format!(
-            "benchmark case '{}' failed metric evaluation: {error}",
-            spec.id
-        ))
-    })?;
+    Ok((predictions, tracker_predictions))
+}
 
+fn collect_case_warnings(spec: &BenchmarkCaseSpec, metrics: &TrackerMetrics) -> Vec<String> {
     let mut warnings = Vec::new();
     if metrics.comparable_samples == 0 {
         warnings.push("no valid comparable annotation samples in selected range".to_owned());
@@ -485,13 +541,21 @@ fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult>
                 .to_owned(),
         );
     }
+    warnings
+}
 
+fn build_runtime_report(
+    predictions: &PredictionDocument,
+    spec: &BenchmarkCaseSpec,
+    suite_dir: &Path,
+) -> AnyResult<Option<RuntimeReport>> {
     let selected_media_duration_s = spec.selected_range_s.end_s - spec.selected_range_s.start_s;
-    let runtime = predictions
+    predictions
         .runtime
         .as_ref()
         .map(|runtime| {
             if !runtime.processing_wall_s.is_finite() || runtime.processing_wall_s <= 0.0 {
+                let prediction_path = resolve_path(suite_dir, &spec.predictions);
                 return Err(data_error(format!(
                     "prediction runtime in '{}' must be finite and positive",
                     prediction_path.display()
@@ -504,24 +568,7 @@ fn run_case(spec: &BenchmarkCaseSpec, suite_dir: &Path) -> AnyResult<CaseResult>
                     / runtime.processing_wall_s,
             })
         })
-        .transpose()?;
-
-    Ok(CaseResult {
-        case_id: spec.id.clone(),
-        fixture_id: fixture.id.clone(),
-        exercise: fixture.exercise.clone(),
-        camera_view: fixture.camera.view.clone(),
-        conditions: condition_labels(&fixture),
-        implementation: predictions.implementation,
-        selected_range_s: spec.selected_range_s,
-        alignment: AlignmentPolicy {
-            timestamp_tolerance_s: spec.timestamp_tolerance_s,
-            min_confidence: spec.min_confidence,
-        },
-        metrics,
-        runtime,
-        warnings,
-    })
+        .transpose()
 }
 
 fn validate_selected_range(range: SelectedRange) -> AnyResult<()> {
@@ -717,23 +764,26 @@ fn condition_labels(fixture: &FixtureEntry) -> Vec<String> {
 }
 
 fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
-    let mut groups: BTreeMap<(String, String), (ImplementationIdentity, Vec<TrackerMetrics>)> =
+    let mut groups: BTreeMap<(&str, &str), (ImplementationIdentity, Vec<TrackerMetrics>)> =
         BTreeMap::new();
-
+    let mut implementation_keys = Vec::with_capacity(cases.len());
     for case in cases {
-        let implementation_key = serde_json::to_string(&case.implementation)?;
+        implementation_keys.push(serde_json::to_string(&case.implementation)?);
+    }
+
+    for (case, implementation_key) in cases.iter().zip(&implementation_keys) {
         push_aggregate_group(
             &mut groups,
-            implementation_key.clone(),
-            "overall".to_owned(),
+            implementation_key,
+            "overall",
             &case.implementation,
             &case.metrics,
         );
         for condition in &case.conditions {
             push_aggregate_group(
                 &mut groups,
-                implementation_key.clone(),
-                condition.clone(),
+                implementation_key,
+                condition,
                 &case.implementation,
                 &case.metrics,
             );
@@ -745,7 +795,7 @@ fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
         .map(
             |((_implementation_key, group), (implementation, metrics))| AggregateResult {
                 implementation,
-                group,
+                group: group.to_owned(),
                 case_count: metrics.len(),
                 metrics: aggregate_metrics(&metrics),
             },
@@ -753,10 +803,10 @@ fn build_aggregates(cases: &[CaseResult]) -> AnyResult<Vec<AggregateResult>> {
         .collect())
 }
 
-fn push_aggregate_group(
-    groups: &mut BTreeMap<(String, String), (ImplementationIdentity, Vec<TrackerMetrics>)>,
-    implementation_key: String,
-    group: String,
+fn push_aggregate_group<'a>(
+    groups: &mut BTreeMap<(&'a str, &'a str), (ImplementationIdentity, Vec<TrackerMetrics>)>,
+    implementation_key: &'a str,
+    group: &'a str,
     implementation: &ImplementationIdentity,
     metrics: &TrackerMetrics,
 ) {
@@ -917,5 +967,26 @@ mod tests {
         assert_eq!(perfect.metrics.tracking_availability, Some(1.0));
         assert_eq!(perfect.metrics.plate_center_mae_px, Some(0.0));
         assert_eq!(perfect.metrics.plate_center_rmse_px, Some(0.0));
+    }
+
+    #[test]
+    fn benchmark_build_aggregates_performance() {
+        let suite = run_suite(&synthetic_suite_path()).unwrap();
+        let mut cases = Vec::new();
+        // Repeat cases to create a non-trivial dataset for aggregation
+        for _ in 0..5000 {
+            cases.extend(suite.cases.clone());
+        }
+
+        let start = std::time::Instant::now();
+        let aggregates = build_aggregates(&cases).unwrap();
+        let duration = start.elapsed();
+
+        assert!(!aggregates.is_empty());
+        println!(
+            "build_aggregates for {} cases took {:?}",
+            cases.len(),
+            duration
+        );
     }
 }

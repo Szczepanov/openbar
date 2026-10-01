@@ -1,4 +1,7 @@
-use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint};
+use crate::manual_seed::{
+    ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint, SpatialFrameReference,
+};
+use crate::math::approximately_equal;
 use crate::trajectory::PixelObservation;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -230,6 +233,20 @@ impl CalibrationReference {
 
     pub const fn provenance(&self) -> &CalibrationProvenance {
         &self.provenance
+    }
+}
+
+impl SpatialFrameReference for CalibrationReference {
+    fn timestamp_s(&self) -> f64 {
+        self.timestamp_s
+    }
+
+    fn frame_index(&self) -> Option<u64> {
+        self.frame_index
+    }
+
+    fn coordinate_space(&self) -> PixelCoordinateSpace {
+        self.coordinate_space
     }
 }
 
@@ -583,22 +600,6 @@ fn validate_quality(quality: &CalibrationQuality) -> Result<(), CalibrationError
     Ok(())
 }
 
-fn approximately_equal(left: f64, right: f64) -> bool {
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-
-    let scale = left.abs().max(right.abs());
-    if scale == 0.0 {
-        return false;
-    }
-
-    (left - right).abs() <= f64::EPSILON * 8.0 * scale
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,6 +838,28 @@ mod tests {
     }
 
     #[test]
+    fn spatial_frame_reference_trait_is_implemented_identically() {
+        let seed = seed();
+        let reference = CalibrationReference::from_manual_seed(&seed);
+
+        fn check_spatial_ref<T: SpatialFrameReference>(
+            item: &T,
+            expected_ts: f64,
+            expected_frame: Option<u64>,
+        ) {
+            assert_eq!(item.timestamp_s(), expected_ts);
+            assert_eq!(item.frame_index(), expected_frame);
+            assert_eq!(
+                item.coordinate_space(),
+                PixelCoordinateSpace::DisplayTopLeft
+            );
+        }
+
+        check_spatial_ref(&seed, 1.25, Some(75));
+        check_spatial_ref(&reference, 1.25, Some(75));
+    }
+
+    #[test]
     fn warning_and_unsupported_quality_require_a_reason() {
         for status in [
             CalibrationQualityStatus::Warning,
@@ -850,5 +873,45 @@ mod tests {
             .unwrap_err();
             assert_eq!(error, CalibrationError::MissingQualityWarning);
         }
+    }
+
+    #[test]
+    fn rejects_invalid_selection_confidence_in_reference() {
+        let mut calibration = PlateDiameterCalibration::try_from_manual_seed(
+            0.45,
+            &seed(),
+            CalibrationQuality::unassessed(),
+        )
+        .unwrap();
+
+        // Non-finite selection confidence
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(f32::NAN),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::NonFiniteSelectionConfidence)
+        );
+
+        // Selection confidence below range
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(-0.1),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::SelectionConfidenceOutOfRange)
+        );
+
+        // Selection confidence above range
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(1.1),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::SelectionConfidenceOutOfRange)
+        );
     }
 }
