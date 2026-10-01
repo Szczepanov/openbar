@@ -41,7 +41,7 @@ class CatalogueTests(unittest.TestCase):
                 self.assertEqual(schema["$schema"], schema_check.DRAFT_2020_12)
 
     def test_every_schema_is_exercised_by_the_catalogue_or_ci(self):
-        exercised = set(schema_check.CATALOGUE) | {"benchmark-result-v1.schema.json"}
+        exercised = set(schema_check.CATALOGUE) | {"benchmark-result-v1.schema.json", "m0-evidence-v1.schema.json"}
         self.assertEqual({path.name for path in SCHEMA_DIR.glob("*.schema.json")}, exercised)
 
 
