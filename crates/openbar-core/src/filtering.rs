@@ -675,14 +675,10 @@ fn kalman_segmented(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::sample_metric_position;
 
     fn sample(timestamp_s: f64, x_m: f64, y_m: f64) -> MetricPositionSample {
-        MetricPositionSample {
-            timestamp_s,
-            x_m,
-            y_m,
-            confidence: 1.0,
-        }
+        sample_metric_position(timestamp_s, x_m, y_m, 1.0)
     }
 
     #[test]
