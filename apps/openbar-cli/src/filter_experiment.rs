@@ -161,12 +161,12 @@ fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
 
     for (family, configs) in candidate_families() {
         let mut candidates = Vec::new();
-        for config in configs {
+        for config in &configs {
             let scenario_results = development_scenarios
                 .iter()
-                .map(|scenario| evaluate_scenario(scenario, config))
+                .map(|scenario| evaluate_scenario(scenario, *config))
                 .collect::<AnyResult<Vec<_>>>()?;
-            candidates.push(summarize_candidate(config, scenario_results)?);
+            candidates.push(summarize_candidate(*config, scenario_results)?);
         }
 
         let selected_index = select_candidate(&candidates)
@@ -518,7 +518,7 @@ fn build_gap_scenario(name: &'static str, condition: &'static str, gap_s: f64) -
     let dt = 1.0 / 60.0;
     let mut timestamps = (0..13).map(|index| index as f64 * dt).collect::<Vec<_>>();
     let resume_at = timestamps.last().copied().unwrap_or_default() + gap_s;
-    timestamps.extend((1..=13).map(|index| resume_at + index as f64 * dt));
+    timestamps.extend((0..13).map(|index| resume_at + index as f64 * dt));
     build_scenario(
         "held_out_validation",
         name,
