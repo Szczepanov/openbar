@@ -7,7 +7,6 @@ use std::fmt;
 
 pub const VELOCITY_METHOD_IMPLEMENTATION: &str = "backward-difference";
 pub const VELOCITY_METHOD_VERSION: &str = "1";
-pub const KINEMATIC_METRIC_VERSION: &str = "1";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KinematicsConfig {
