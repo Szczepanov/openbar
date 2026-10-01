@@ -327,7 +327,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "evidence_version": EVIDENCE_VERSION,
         "scope": "public_m0_preflight",
-        "overall_status": "BLOCKED_ON_REFERENCE_EVIDENCE",
+        "overall_status": "BLOCKED_ON_REFERENCE_EVIDENCE" if deterministic else "PRECHECK_FAILED",
         "dataset_coverage": coverage,
         "analysis_determinism": {
             "first_sha256": first_hash,
