@@ -34,6 +34,7 @@ impl RecordingSupportStatus {
 #[serde(rename_all = "snake_case")]
 pub enum CameraView {
     Side,
+    #[serde(rename = "oblique_45")]
     Oblique45,
     Front,
     Rear,
@@ -467,6 +468,18 @@ mod tests {
             occlusion: OcclusionCondition::None,
             motion_blur: MotionBlurCondition::None,
         }
+    }
+
+    #[test]
+    fn camera_view_wire_vocabulary_matches_fixture_schema() {
+        assert_eq!(
+            serde_json::to_string(&CameraView::Oblique45).unwrap(),
+            "\"oblique_45\""
+        );
+        assert_eq!(
+            serde_json::from_str::<CameraView>("\"oblique_45\"").unwrap(),
+            CameraView::Oblique45
+        );
     }
 
     #[test]
