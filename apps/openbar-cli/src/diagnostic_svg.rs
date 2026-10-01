@@ -396,24 +396,22 @@ fn metric_segments(
     samples: &[MetricPositionSample],
 ) -> Vec<Vec<MetricPositionSample>> {
     let mut all = Vec::new();
-    let mut cur = Vec::new();
-    let mut i = 0;
-    for r in analysis.raw_observations() {
-        if r.tracking_state == TrackingState::Lost {
-            if !cur.is_empty() {
-                all.push(std::mem::take(&mut cur));
-            }
-            continue;
+    let mut current = Vec::new();
+    let mut previous_timestamp_s = None;
+
+    for sample in samples.iter().copied() {
+        if previous_timestamp_s
+            .is_some_and(|previous| lost_between(analysis, previous, sample.timestamp_s))
+            && !current.is_empty()
+        {
+            all.push(std::mem::take(&mut current));
         }
-        if r.measurement.is_some() {
-            if let Some(s) = samples.get(i).copied() {
-                cur.push(s);
-            }
-            i += 1;
-        }
+        current.push(sample);
+        previous_timestamp_s = Some(sample.timestamp_s);
     }
-    if !cur.is_empty() {
-        all.push(cur);
+
+    if !current.is_empty() {
+        all.push(current);
     }
     all
 }
@@ -609,6 +607,31 @@ mod tests {
             vec![vec![(960.0, 700.0)], vec![(980.0, 660.0)]]
         );
     }
+    #[test]
+    fn metric_segments_use_canonical_timestamps_to_preserve_loss_gaps() {
+        let analysis = golden();
+        assert_eq!(
+            metric_segments(&analysis, &analysis.derived().calibrated.samples),
+            vec![
+                vec![analysis.derived().calibrated.samples[0]],
+                vec![analysis.derived().calibrated.samples[1]]
+            ]
+        );
+    }
+
+    #[test]
+    fn renderer_preserves_nonzero_orientation_metadata_without_reorienting_measurements() {
+        let rotated_json = include_str!(
+            "../../../crates/openbar-core/tests/fixtures/analysis-v1.golden.json"
+        )
+        .replace("\"source_rotation_deg\": 0", "\"source_rotation_deg\": 90");
+        let analysis = Analysis::from_json(&rotated_json).expect("valid rotated metadata");
+        let report = render_svg(&analysis, Path::new("rotated.json"), None);
+
+        assert!(report.contains("rotation=90°"));
+        assert!(report.contains("data-layer=\"raw-trajectory\""));
+    }
+
     #[test]
     fn metadata_escapes_xml() {
         assert_eq!(esc("a&<b>\"c'"), "a&amp;&lt;b&gt;&quot;c&apos;");
