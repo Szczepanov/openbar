@@ -136,9 +136,16 @@ Filtered samples remain timestamp-aligned with the calibrated layer. They do not
 `KinematicTrajectory` is optional and identifies whether it was derived from the calibrated
 or filtered position layer. It also records the kinematics implementation/version/parameters.
 
-Position and timestamp remain aligned with the declared input. Velocity components may be
-absent when not yet derivable/validated. Kinematic confidence may stay equal to or decrease
-from its position input; it cannot silently increase.
+Position and timestamp remain aligned with the declared input. Velocity components may be absent
+when the first sample has no backward segment, when a continuity gap exceeds the configured bound,
+or when an endpoint is below the configured confidence threshold. Kinematic confidence may stay
+equal to or decrease from its position input; it cannot silently increase.
+
+The canonical M0 constructor `derive_kinematic_trajectory` records
+`backward-difference@1` plus `max_gap_s` and `min_confidence` in the layer's
+`ImplementationProvenance`. This binds the persisted values to the method/configuration needed to
+reproduce them. Canonical metric definitions and interval semantics live in
+[`../validation/KINEMATIC_METRICS.md`](../validation/KINEMATIC_METRICS.md).
 
 ## Provenance and configuration
 

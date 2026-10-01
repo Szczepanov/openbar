@@ -57,10 +57,16 @@ reference sample count and timestamps. It reports:
 
 - position MAE/RMSE and maximum radial position error;
 - X/Y position bias;
-- downstream velocity MAE/RMSE over contiguous intervals only;
-- reference and filtered peak speed over contiguous intervals only when the scenario defines a meaningful peak;
-- peak attenuation and attenuation fraction only for those peak-bearing scenarios;
-- peak timing shift only for those peak-bearing scenarios.
+- downstream pointwise velocity MAE/RMSE over supported derivative segments;
+- horizontal and vertical ROM absolute error when the full comparison range is supported;
+- mean X/Y velocity absolute error over the exact full comparison interval when it is supported;
+- peak signed X/Y velocity absolute error only when the scenario declares peak metrics applicable;
+- reference and filtered Euclidean peak speed over supported intervals only when the scenario defines a meaningful peak;
+- peak-speed attenuation/attenuation fraction and timing shift only for those peak-bearing scenarios.
+
+The ROM/mean/axis-peak quantities use the canonical issue #11 semantics documented in
+[`KINEMATIC_METRICS.md`](KINEMATIC_METRICS.md). Euclidean `peak_speed` remains a filter
+diagnostic and must not be relabelled as signed vertical peak velocity.
 
 The CLI additionally records:
 
@@ -72,9 +78,9 @@ The CLI additionally records:
 
 A filter that changes timestamps or synthesizes samples is rejected by the filter benchmark
 contract rather than receiving deceptively favourable metrics. The benchmark also receives an
-explicit `max_velocity_gap_s` continuity threshold. Finite differences that would bridge a larger
-missing/lost interval are excluded from velocity and peak metrics rather than treating the span as
-supported motion.
+explicit `max_velocity_gap_s` continuity threshold. That threshold is passed into the authoritative
+`backward-difference@1` kinematics method itself, so a derivative across a larger missing/lost
+interval is never created and then merely hidden by reporting code.
 
 ## Development versus held-out validation
 
@@ -85,7 +91,8 @@ cargo run -p openbar-cli -- filter-experiment \
   --output target/filter-experiment.json
 ```
 
-The command uses deterministic synthetic signals in two disjoint groups. Measurement noise is generated with a small dependency-free seeded SplitMix64 + Box–Muller Gaussian generator. Development metrics are averaged across three independent seeds per signal and X/Y use independent streams. Held-out scenarios use separate seeds.
+The command emits filter evidence schema version `3` / experiment version
+`m0-filter-comparison-v3`. It uses deterministic synthetic signals in two disjoint groups. Measurement noise is generated with a small dependency-free seeded SplitMix64 + Box–Muller Gaussian generator. Development metrics are averaged across three independent seeds per signal and X/Y use independent streams. Held-out scenarios use separate seeds.
 
 Development signals cover:
 

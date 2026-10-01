@@ -778,6 +778,12 @@ pub struct FilterMetrics {
     pub y_bias_m: Option<f64>,
     pub velocity_mae_mps: Option<f64>,
     pub velocity_rmse_mps: Option<f64>,
+    pub horizontal_rom_absolute_error_m: Option<f64>,
+    pub vertical_rom_absolute_error_m: Option<f64>,
+    pub mean_vx_absolute_error_mps: Option<f64>,
+    pub mean_vy_absolute_error_mps: Option<f64>,
+    pub peak_vx_absolute_error_mps: Option<f64>,
+    pub peak_vy_absolute_error_mps: Option<f64>,
     pub ground_truth_peak_speed_mps: Option<f64>,
     pub filtered_peak_speed_mps: Option<f64>,
     pub peak_attenuation_mps: Option<f64>,
@@ -849,7 +855,7 @@ impl fmt::Display for FilterBenchmarkError {
                 formatter,
                 "filter benchmark timestamps must be strictly increasing (indices {previous_index} and {index})"
             ),
-            Self::Kinematics(reason) => write!(formatter, "velocity derivation failed: {reason}"),
+            Self::Kinematics(reason) => write!(formatter, "kinematics evaluation failed: {reason}"),
         }
     }
 }
@@ -884,6 +890,12 @@ pub fn evaluate_filter_case(
             y_bias_m: None,
             velocity_mae_mps: None,
             velocity_rmse_mps: None,
+            horizontal_rom_absolute_error_m: None,
+            vertical_rom_absolute_error_m: None,
+            mean_vx_absolute_error_mps: None,
+            mean_vy_absolute_error_mps: None,
+            peak_vx_absolute_error_mps: None,
+            peak_vy_absolute_error_mps: None,
             ground_truth_peak_speed_mps: None,
             filtered_peak_speed_mps: None,
             peak_attenuation_mps: None,
@@ -941,10 +953,13 @@ pub fn evaluate_filter_case(
         y_bias_sum += dy;
     }
 
-    let reference_velocity = crate::kinematics::derive_velocity(reference)
-        .map_err(|error| FilterBenchmarkError::Kinematics(format!("{error:?}")))?;
-    let filtered_velocity = crate::kinematics::derive_velocity(filtered)
-        .map_err(|error| FilterBenchmarkError::Kinematics(format!("{error:?}")))?;
+    let kinematics_config =
+        crate::kinematics::KinematicsConfig::try_new(parameters.max_velocity_gap_s, 0.0)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+    let reference_velocity = crate::kinematics::derive_velocity(reference, kinematics_config)
+        .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+    let filtered_velocity = crate::kinematics::derive_velocity(filtered, kinematics_config)
+        .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
 
     let mut velocity_absolute_error_sum = 0.0;
     let mut velocity_squared_error_sum = 0.0;
@@ -952,21 +967,12 @@ pub fn evaluate_filter_case(
     let mut reference_peak: Option<(f64, f64)> = None;
     let mut filtered_peak: Option<(f64, f64)> = None;
 
-    for (index, (truth, actual)) in reference_velocity
-        .iter()
-        .zip(&filtered_velocity)
-        .enumerate()
-    {
+    for (truth, actual) in reference_velocity.iter().zip(&filtered_velocity) {
         let (Some(truth_vx), Some(truth_vy), Some(actual_vx), Some(actual_vy)) =
             (truth.vx_mps, truth.vy_mps, actual.vx_mps, actual.vy_mps)
         else {
             continue;
         };
-        let dt = reference[index].timestamp_s - reference[index - 1].timestamp_s;
-        if dt > parameters.max_velocity_gap_s {
-            continue;
-        }
-
         let dvx = actual_vx - truth_vx;
         let dvy = actual_vy - truth_vy;
         let squared_error = dvx.mul_add(dvx, dvy * dvy);
@@ -991,6 +997,38 @@ pub fn evaluate_filter_case(
             }
         }
     }
+
+    use crate::kinematics::{mean_axis_velocity, peak_axis_velocity, range_of_motion};
+
+    let (horizontal_rom_absolute_error_m, vertical_rom_absolute_error_m) =
+        axis_metric_errors(reference, filtered, |samples, axis| {
+            Ok(range_of_motion(samples, axis, kinematics_config)?.map(|metric| metric.value))
+        })?;
+
+    let full_interval = crate::kinematics::MetricInterval::try_new(
+        reference[0].timestamp_s,
+        reference[reference.len() - 1].timestamp_s,
+    )
+    .ok();
+    let (mean_vx_absolute_error_mps, mean_vy_absolute_error_mps) = match full_interval {
+        Some(interval) => axis_metric_errors(reference, filtered, |samples, axis| {
+            Ok(
+                mean_axis_velocity(samples, axis, interval, kinematics_config)?
+                    .map(|metric| metric.value),
+            )
+        })?,
+        None => (None, None),
+    };
+    let peak_interval = full_interval.filter(|_| parameters.evaluate_peak_metrics);
+    let (peak_vx_absolute_error_mps, peak_vy_absolute_error_mps) = match peak_interval {
+        Some(interval) => axis_metric_errors(reference, filtered, |samples, axis| {
+            Ok(
+                peak_axis_velocity(samples, axis, interval, kinematics_config)?
+                    .map(|metric| metric.value),
+            )
+        })?,
+        None => (None, None),
+    };
 
     let position_count = reference.len() as f64;
     let velocity_denominator = velocity_count as f64;
@@ -1018,12 +1056,43 @@ pub fn evaluate_filter_case(
             .then_some(velocity_absolute_error_sum / velocity_denominator),
         velocity_rmse_mps: (velocity_count > 0)
             .then_some((velocity_squared_error_sum / velocity_denominator).sqrt()),
+        horizontal_rom_absolute_error_m,
+        vertical_rom_absolute_error_m,
+        mean_vx_absolute_error_mps,
+        mean_vy_absolute_error_mps,
+        peak_vx_absolute_error_mps,
+        peak_vy_absolute_error_mps,
         ground_truth_peak_speed_mps,
         filtered_peak_speed_mps,
         peak_attenuation_mps,
         peak_attenuation_fraction,
         peak_timing_shift_s,
     })
+}
+
+/// Absolute X and Y error of one canonical kinematic metric between the reference and filtered
+/// series. An axis is `None` when the metric is unavailable on either side.
+fn axis_metric_errors(
+    reference: &[crate::trajectory::MetricPositionSample],
+    filtered: &[crate::trajectory::MetricPositionSample],
+    metric: impl Fn(
+        &[crate::trajectory::MetricPositionSample],
+        crate::kinematics::MetricAxis,
+    ) -> Result<Option<f64>, crate::kinematics::KinematicsError>,
+) -> Result<(Option<f64>, Option<f64>), FilterBenchmarkError> {
+    let axis_error = |axis| {
+        let truth = metric(reference, axis)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        let actual = metric(filtered, axis)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        Ok(truth
+            .zip(actual)
+            .map(|(truth, actual)| (actual - truth).abs()))
+    };
+    Ok((
+        axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
+        axis_error(crate::kinematics::MetricAxis::VerticalY)?,
+    ))
 }
 
 #[cfg(test)]
@@ -1057,6 +1126,12 @@ mod filter_benchmark_tests {
         assert_eq!(metrics.comparable_velocity_samples, 2);
         assert!((metrics.position_mae_m.unwrap() - (1.0 / 3.0)).abs() < 1.0e-12);
         assert!((metrics.velocity_mae_mps.unwrap() - 0.25).abs() < 1.0e-12);
+        assert_eq!(metrics.horizontal_rom_absolute_error_m, Some(0.5));
+        assert_eq!(metrics.vertical_rom_absolute_error_m, Some(0.0));
+        assert_eq!(metrics.mean_vx_absolute_error_mps, Some(0.25));
+        assert_eq!(metrics.mean_vy_absolute_error_mps, Some(0.0));
+        assert_eq!(metrics.peak_vx_absolute_error_mps, Some(0.0));
+        assert_eq!(metrics.peak_vy_absolute_error_mps, Some(0.0));
         assert_eq!(metrics.ground_truth_peak_speed_mps, Some(1.0));
         assert_eq!(metrics.filtered_peak_speed_mps, Some(1.0));
         assert_eq!(metrics.peak_attenuation_mps, Some(0.0));
@@ -1086,6 +1161,9 @@ mod filter_benchmark_tests {
         assert_eq!(metrics.comparable_position_samples, 4);
         assert_eq!(metrics.comparable_velocity_samples, 2);
         assert_eq!(metrics.velocity_mae_mps, Some(0.0));
+        assert_eq!(metrics.horizontal_rom_absolute_error_m, None);
+        assert_eq!(metrics.mean_vx_absolute_error_mps, None);
+        assert_eq!(metrics.peak_vx_absolute_error_mps, None);
         assert_eq!(metrics.ground_truth_peak_speed_mps, Some(1.0));
     }
 
@@ -1110,6 +1188,8 @@ mod filter_benchmark_tests {
         assert_eq!(metrics.peak_attenuation_mps, None);
         assert_eq!(metrics.peak_attenuation_fraction, None);
         assert_eq!(metrics.peak_timing_shift_s, None);
+        assert_eq!(metrics.peak_vx_absolute_error_mps, None);
+        assert_eq!(metrics.peak_vy_absolute_error_mps, None);
     }
 
     #[test]
