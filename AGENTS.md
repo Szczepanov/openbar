@@ -15,7 +15,7 @@ uncertainty explicit. Measurement correctness and reproducibility outrank featur
 
 | Path | What lives there |
 |------|------------------|
-| `crates/openbar-core` | Authoritative deterministic domain logic: `analysis` (canonical versioned `Analysis` aggregate), `calibration`, `manual_seed`, `trajectory`, `filtering`, `kinematics`, `benchmark` (metric semantics), `math`. No UI/media/ML deps. |
+| `crates/openbar-core` | Authoritative deterministic domain logic: `analysis` (canonical versioned `Analysis` aggregate), `calibration`, `recording_support` (evidence-bounded recording envelope), `manual_seed`, `trajectory`, `filtering`, `kinematics`, `benchmark` (metric semantics), `math`. No UI/media/ML deps. |
 | `crates/openbar-tracking` | Decoder-agnostic M0 tracker experiments (`template`, `contrast`) behind the `GrayscaleImage` / `FrameSample` boundary. Depends only on `openbar-core`. |
 | `apps/openbar-cli` | Headless CLI + validation harness: `analyze` (canonical M0 pipeline), `benchmark`, deterministic diagnostic `render`, `tracker-experiment`, `filter-experiment`, and `tracker-run` (real video through ADR-0006 FFmpeg in `src/media/`). Hand-rolled arg parsing, no clap. |
 | `validation/` | JSON schemas, public fixtures (manifest, annotations, seeds, predictions), benchmark suites, and the stdlib-only Python annotation tool + tests. `validation/private/` is git-ignored. |
