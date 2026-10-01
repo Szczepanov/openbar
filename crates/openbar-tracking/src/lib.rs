@@ -217,8 +217,42 @@ pub(crate) fn validate_sequence_and_seed(
     if frames.is_empty() {
         return Err(TrackerError::EmptySequence);
     }
+    let expected_width_px = frames[0].image.width_px();
+    let expected_height_px = frames[0].image.height_px();
+    if expected_width_px == 0
+        || expected_height_px == 0
+        || expected_width_px > i32::MAX as u32
+        || expected_height_px > i32::MAX as u32
+    {
+        return Err(TrackerError::InvalidFrameDimensions {
+            width_px: expected_width_px,
+            height_px: expected_height_px,
+        });
+    }
+
     let mut best: Option<(usize, f64)> = None;
     for (index, frame) in frames.iter().enumerate() {
+        let width_px = frame.image.width_px();
+        let height_px = frame.image.height_px();
+        if width_px == 0
+            || height_px == 0
+            || width_px > i32::MAX as u32
+            || height_px > i32::MAX as u32
+        {
+            return Err(TrackerError::InvalidFrameDimensions {
+                width_px,
+                height_px,
+            });
+        }
+        if width_px != expected_width_px || height_px != expected_height_px {
+            return Err(TrackerError::FrameDimensionsChanged {
+                index,
+                expected_width_px,
+                expected_height_px,
+                actual_width_px: width_px,
+                actual_height_px: height_px,
+            });
+        }
         if !frame.timestamp_s.is_finite() || frame.timestamp_s < 0.0 {
             return Err(TrackerError::InvalidTimestamp {
                 index,
