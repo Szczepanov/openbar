@@ -42,7 +42,10 @@ pub fn run_cli() -> CliResult<()> {
 }
 
 fn parse_args(args: Vec<String>) -> CliResult<Option<(PathBuf, PathBuf)>> {
-    if args.iter().any(|value| matches!(value.as_str(), "--help" | "-h")) {
+    if args
+        .iter()
+        .any(|value| matches!(value.as_str(), "--help" | "-h"))
+    {
         return Ok(None);
     }
     let mut values = BTreeMap::new();
