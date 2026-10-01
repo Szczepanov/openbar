@@ -1024,6 +1024,21 @@ mod tests {
     }
 
     #[test]
+    fn velocity_provenance_accepts_legacy_widened_confidence() {
+        let cfg = config(0.05, 0.4);
+        let mut provenance = cfg.velocity_provenance();
+        provenance.parameters.insert(
+            "min_confidence".to_owned(),
+            ParameterValue::Float(f64::from(0.4_f32)),
+        );
+
+        assert_eq!(
+            KinematicsConfig::from_velocity_provenance(&provenance),
+            Ok(cfg)
+        );
+    }
+
+    #[test]
     fn velocity_provenance_accepts_integer_parameters() {
         let mut provenance = config(1.0, 1.0).velocity_provenance();
         provenance
