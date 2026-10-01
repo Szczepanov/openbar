@@ -8,4 +8,5 @@ pub mod calibration;
 pub mod filtering;
 pub mod kinematics;
 pub mod manual_seed;
+pub mod math;
 pub mod trajectory;
