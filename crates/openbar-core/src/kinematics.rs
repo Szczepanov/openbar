@@ -51,8 +51,18 @@ mod tests {
     #[test]
     fn derives_velocity_from_timestamps_not_nominal_fps() {
         let samples = [
-            MetricPositionSample { timestamp_s: 0.0, x_m: 0.0, y_m: 0.0, confidence: 1.0 },
-            MetricPositionSample { timestamp_s: 0.5, x_m: 1.0, y_m: 2.0, confidence: 0.9 },
+            MetricPositionSample {
+                timestamp_s: 0.0,
+                x_m: 0.0,
+                y_m: 0.0,
+                confidence: 1.0,
+            },
+            MetricPositionSample {
+                timestamp_s: 0.5,
+                x_m: 1.0,
+                y_m: 2.0,
+                confidence: 0.9,
+            },
         ];
 
         let result = derive_velocity(&samples).unwrap();
@@ -65,8 +75,18 @@ mod tests {
     #[test]
     fn rejects_non_increasing_time() {
         let samples = [
-            MetricPositionSample { timestamp_s: 1.0, x_m: 0.0, y_m: 0.0, confidence: 1.0 },
-            MetricPositionSample { timestamp_s: 1.0, x_m: 1.0, y_m: 1.0, confidence: 1.0 },
+            MetricPositionSample {
+                timestamp_s: 1.0,
+                x_m: 0.0,
+                y_m: 0.0,
+                confidence: 1.0,
+            },
+            MetricPositionSample {
+                timestamp_s: 1.0,
+                x_m: 1.0,
+                y_m: 1.0,
+                confidence: 1.0,
+            },
         ];
 
         assert_eq!(

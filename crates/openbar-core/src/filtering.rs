@@ -31,8 +31,11 @@ pub fn moving_average(
 
         let x_m = slice.iter().map(|value| value.x_m).sum::<f64>() / count;
         let y_m = slice.iter().map(|value| value.y_m).sum::<f64>() / count;
-        let confidence =
-            slice.iter().map(|value| f64::from(value.confidence)).sum::<f64>() / count;
+        let confidence = slice
+            .iter()
+            .map(|value| f64::from(value.confidence))
+            .sum::<f64>()
+            / count;
 
         output.push(MetricPositionSample {
             timestamp_s: sample.timestamp_s,
@@ -52,9 +55,24 @@ mod tests {
     #[test]
     fn moving_average_preserves_timestamps() {
         let input = [
-            MetricPositionSample { timestamp_s: 0.0, x_m: 0.0, y_m: 0.0, confidence: 1.0 },
-            MetricPositionSample { timestamp_s: 1.0, x_m: 3.0, y_m: 6.0, confidence: 1.0 },
-            MetricPositionSample { timestamp_s: 2.0, x_m: 6.0, y_m: 12.0, confidence: 1.0 },
+            MetricPositionSample {
+                timestamp_s: 0.0,
+                x_m: 0.0,
+                y_m: 0.0,
+                confidence: 1.0,
+            },
+            MetricPositionSample {
+                timestamp_s: 1.0,
+                x_m: 3.0,
+                y_m: 6.0,
+                confidence: 1.0,
+            },
+            MetricPositionSample {
+                timestamp_s: 2.0,
+                x_m: 6.0,
+                y_m: 12.0,
+                confidence: 1.0,
+            },
         ];
 
         let output = moving_average(&input, 3).unwrap();
