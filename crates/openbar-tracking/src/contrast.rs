@@ -15,6 +15,7 @@ pub struct LocalContrastConfig {
     pub search_radius_px: u32,
     pub min_seed_contrast: f64,
     pub min_mass_ratio: f64,
+    pub low_confidence_mass_ratio: f64,
     pub seed_timestamp_tolerance_s: f64,
 }
 
@@ -24,6 +25,7 @@ impl Default for LocalContrastConfig {
             search_radius_px: 12,
             min_seed_contrast: 12.0,
             min_mass_ratio: 0.30,
+            low_confidence_mass_ratio: 0.60,
             seed_timestamp_tolerance_s: 1e-6,
         }
     }
@@ -45,6 +47,14 @@ impl LocalContrastTracker {
         if !config.min_mass_ratio.is_finite() || !(0.0..=1.0).contains(&config.min_mass_ratio) {
             return Err(TrackerError::InvalidConfiguration {
                 field: "min_mass_ratio",
+            });
+        }
+        if !config.low_confidence_mass_ratio.is_finite()
+            || !(0.0..=1.0).contains(&config.low_confidence_mass_ratio)
+            || config.low_confidence_mass_ratio < config.min_mass_ratio
+        {
+            return Err(TrackerError::InvalidConfiguration {
+                field: "low_confidence_mass_ratio",
             });
         }
         validate_seed_tolerance(config.seed_timestamp_tolerance_s)?;
@@ -72,6 +82,10 @@ impl ManualSeedTracker for LocalContrastTracker {
         config.insert(
             "min_mass_ratio".to_owned(),
             self.config.min_mass_ratio.to_string(),
+        );
+        config.insert(
+            "low_confidence_mass_ratio".to_owned(),
+            self.config.low_confidence_mass_ratio.to_string(),
         );
         config.insert(
             "seed_timestamp_tolerance_s".to_owned(),
@@ -204,13 +218,16 @@ impl ManualSeedTracker for LocalContrastTracker {
                 continue;
             }
 
+            let confidence = mass_ratio.clamp(0.0, 1.0) as f32;
+            let state = if mass_ratio < self.config.low_confidence_mass_ratio {
+                TrackerObservationState::LowConfidence { center, confidence }
+            } else {
+                TrackerObservationState::Tracked { center, confidence }
+            };
             observations.push(TrackerObservation {
                 timestamp_s: frame.timestamp_s,
                 frame_index: frame.frame_index,
-                state: TrackerObservationState::Tracked {
-                    center,
-                    confidence: mass_ratio.clamp(0.0, 1.0) as f32,
-                },
+                state,
                 visibility: TrackerVisibilityState::Unknown,
                 target_bounds_px: Some(bounds),
                 diagnostics: TrackerDiagnostics {
