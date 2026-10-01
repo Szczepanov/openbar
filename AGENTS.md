@@ -39,6 +39,8 @@ cargo run --locked -p openbar-cli -- filter-experiment --output target/filter-ex
 cargo run --locked -p openbar-cli -- tracker-run --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json --output-dir target/tracker-run-smoke
 cargo run --locked -p openbar-cli -- analyze --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json --plate-diameter-m 0.45 --tracker template --filter raw --kinematics-max-gap-s 0.2 --kinematics-min-confidence 0 --output target/analyze-smoke.json
 cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json --output target/benchmark-smoke.json
+cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-decoded-trackers.benchmark-v1.json --output target/tracker-decoded-benchmark.json
+python validation/tools/m0_evidence.py --manifest validation/fixtures/public/manifest.json --annotation validation/fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json --decoded-tracker-benchmark target/tracker-decoded-benchmark.json --tracker-experiment target/tracker-experiment.json --filter-experiment target/filter-experiment.json --analysis target/analyze-smoke.json --analysis-repeat target/analyze-smoke-repeat.json --output-json target/m0-evidence.json --output-markdown target/m0-evidence.md
 ```
 
 `tracker-run` and the `media::` tests need `ffmpeg` and `ffprobe` on `PATH`. Decoding is an
