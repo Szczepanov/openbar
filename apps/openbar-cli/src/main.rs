@@ -1,6 +1,7 @@
 mod analyze;
 mod benchmark;
 mod cli_error;
+mod diagnostic_svg;
 mod filter_experiment;
 mod media;
 mod render;
@@ -16,7 +17,7 @@ Usage: openbar-cli <command> [options]\n\
 Commands:\n\
   analyze             Decode, track, calibrate, filter and derive canonical analysis JSON\n\
   benchmark           Run the common benchmark harness\n\
-  render              Validate canonical analysis and enter the #13 renderer boundary\n\
+  render              Render deterministic diagnostic SVG from canonical analysis\n\
   tracker-run         Decode a fixture and emit tracker prediction artifacts\n\
   tracker-experiment  Run deterministic tracker experiments\n\
   filter-experiment   Run deterministic filter experiments\n\
