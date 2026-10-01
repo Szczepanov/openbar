@@ -1,0 +1,16 @@
+# Keep measurement artefacts byte-stable (LF) across Windows/macOS/Linux checkouts.
+# CI runs Ubuntu; primary dev is Windows with core.autocrlf=true.
+*.json text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+
+# Media/model artefacts must never undergo line-ending conversion.
+*.mp4 binary
+*.mov binary
+*.avi binary
+*.mkv binary
+*.onnx binary

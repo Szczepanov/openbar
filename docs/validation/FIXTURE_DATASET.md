@@ -83,6 +83,22 @@ Private manifests use the same schema. They should set redistribution status to
 contract identical lets private footage participate in local experiments without creating
 a second validation model.
 
+Private layout (everything below `validation/private/` is git-ignored):
+
+```text
+validation/private/
+  manifest.json                         # fixture-manifest-v1, same schema as public
+  media/<fixture-id>.<original-ext>     # original bytes, never re-encoded
+  seeds/<fixture-id>.manual-target-seed-v1.json
+  annotations/<fixture-id>.annotation-v1.json
+```
+
+Store the original container exactly as recorded (`.mov`/`.mp4`). Do not transcode, trim,
+rotate, or re-export it. Each of those steps can change timestamps, rotation metadata,
+resolution, or pixels. If a clip has to be shortened, record a time range in the seed or
+analysis instead. Set `media.repository_path` to the repository-relative path and
+`media.sha256` to the hash of the original file, so a re-downloaded or edited copy is detected.
+
 ## Adding a fixture
 
 1. Assign a stable lowercase fixture ID.

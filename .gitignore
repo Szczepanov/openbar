@@ -34,7 +34,6 @@ Thumbs.db
 *.mov
 *.avi
 *.mkv
-validation/private/
 ml/data/
 ml/runs/
 ml/checkpoints/
