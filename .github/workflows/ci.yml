@@ -22,6 +22,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Benchmark regression smoke
+        run: >-
+          cargo run -p openbar-cli -- benchmark
+          --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json
+          --output target/benchmark-smoke.json
 
   validation:
     runs-on: ubuntu-latest

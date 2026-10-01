@@ -1,4 +1,8 @@
+mod benchmark;
+
 fn main() {
-    println!("OpenBar M0 foundation");
-    println!("Next executable milestone: manual-seed video tracking -> calibrated trajectory -> validation.");
+    if let Err(error) = benchmark::run_cli() {
+        eprintln!("error: {error}");
+        std::process::exit(2);
+    }
 }
