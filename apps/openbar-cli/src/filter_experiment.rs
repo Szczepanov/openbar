@@ -1,7 +1,5 @@
 use openbar_core::analysis::ImplementationProvenance;
-use openbar_core::benchmark::{
-    evaluate_filter_case, FilterBenchmarkParameters, FilterMetrics,
-};
+use openbar_core::benchmark::{evaluate_filter_case, FilterBenchmarkParameters, FilterMetrics};
 use openbar_core::filtering::{apply_filter, FilterBehavior, FilterConfig};
 use openbar_core::trajectory::MetricPositionSample;
 use serde::Serialize;
