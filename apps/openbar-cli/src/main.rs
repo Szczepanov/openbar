@@ -25,7 +25,7 @@ Use 'openbar-cli <command> --help' for command-specific options.";
 
 fn main() {
     if let Err(error) = dispatch() {
-        eprintln!("error[{}]: {error}", error.kind().label());
+        eprintln!("status=failure error[{}]: {error}", error.kind().label());
         std::process::exit(error.exit_code());
     }
 }
