@@ -61,9 +61,18 @@ impl Default for LocalContrastTracker {
 impl ManualSeedTracker for LocalContrastTracker {
     fn identity(&self) -> TrackerIdentity {
         let mut config = BTreeMap::new();
-        config.insert("search_radius_px".to_owned(), self.config.search_radius_px.to_string());
-        config.insert("min_seed_contrast".to_owned(), self.config.min_seed_contrast.to_string());
-        config.insert("min_mass_ratio".to_owned(), self.config.min_mass_ratio.to_string());
+        config.insert(
+            "search_radius_px".to_owned(),
+            self.config.search_radius_px.to_string(),
+        );
+        config.insert(
+            "min_seed_contrast".to_owned(),
+            self.config.min_seed_contrast.to_string(),
+        );
+        config.insert(
+            "min_mass_ratio".to_owned(),
+            self.config.min_mass_ratio.to_string(),
+        );
         config.insert(
             "seed_timestamp_tolerance_s".to_owned(),
             self.config.seed_timestamp_tolerance_s.to_string(),
@@ -132,8 +141,11 @@ impl ManualSeedTracker for LocalContrastTracker {
         let mut was_lost = false;
         for frame in frames.iter().skip(seed_index + 1) {
             let search_center = rounded_point(last_center);
-            let search_radius = i32::try_from(self.config.search_radius_px)
-                .map_err(|_| TrackerError::InvalidConfiguration { field: "search_radius_px" })?;
+            let search_radius = i32::try_from(self.config.search_radius_px).map_err(|_| {
+                TrackerError::InvalidConfiguration {
+                    field: "search_radius_px",
+                }
+            })?;
             let half_window = radius + search_radius;
             let mut mass = 0.0;
             let mut weighted_x = 0.0;
