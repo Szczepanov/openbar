@@ -103,6 +103,12 @@ low-confidence/lost samples, decoder diagnostics, or calibration-quality warning
 
 ## Exit-code policy
 
+The typed policy below applies to the #12 integration commands `analyze`, `benchmark`, and
+`render`. The pre-existing `tracker-run`, `tracker-experiment`, and `filter-experiment`
+validation harnesses retain their legacy generic `error:` + exit-code-2 behavior; reclassifying
+their internal error surfaces is separate work and is not required to make the canonical analysis
+pipeline reliable.
+
 | Code | Category | Examples |
 | ---: | --- | --- |
 | 1 | `internal` | pipeline constructed an invalid canonical aggregate |
