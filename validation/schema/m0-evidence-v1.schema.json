@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/m0-evidence-v1.schema.json",
+  "title": "OpenBar M0 evidence preflight",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_version",
+    "scope",
+    "overall_status",
+    "dataset_coverage",
+    "analysis_determinism",
+    "synthetic_tracker_diagnostics",
+    "gate_statuses",
+    "blockers",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "evidence_version": {"const": "m0-evidence-preflight-v1"},
+    "scope": {"const": "public_m0_preflight"},
+    "overall_status": {"const": "BLOCKED_ON_REFERENCE_EVIDENCE"},
+    "evaluated_commit": {"type": "string", "minLength": 1},
+    "dataset_coverage": {"$ref": "#/$defs/dataset_coverage"},
+    "analysis_determinism": {"$ref": "#/$defs/determinism"},
+    "synthetic_tracker_diagnostics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/tracker_diagnostic"}
+    },
+    "gate_statuses": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {"$ref": "#/$defs/gate"}
+    },
+    "blockers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/blocker"}
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/artifact"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "dataset_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_count",
+        "synthetic_fixture_count",
+        "non_synthetic_fixture_count",
+        "annotated_fixture_count",
+        "held_out_real_validation_fixture_count",
+        "held_out_real_annotated_fixture_count",
+        "exercises",
+        "camera_views",
+        "fps_values",
+        "purposes"
+      ],
+      "properties": {
+        "fixture_count": {"type": "integer", "minimum": 0},
+        "synthetic_fixture_count": {"type": "integer", "minimum": 0},
+        "non_synthetic_fixture_count": {"type": "integer", "minimum": 0},
+        "annotated_fixture_count": {"type": "integer", "minimum": 0},
+        "held_out_real_validation_fixture_count": {"type": "integer", "minimum": 0},
+        "held_out_real_annotated_fixture_count": {"type": "integer", "minimum": 0},
+        "exercises": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "camera_views": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "fps_values": {
+          "type": "array",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "uniqueItems": true
+        },
+        "purposes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "determinism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["first_sha256", "repeat_sha256", "byte_identical"],
+      "properties": {
+        "first_sha256": {"$ref": "#/$defs/sha256"},
+        "repeat_sha256": {"$ref": "#/$defs/sha256"},
+        "byte_identical": {"type": "boolean"}
+      }
+    },
+    "tracker_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "fixture_id",
+        "implementation",
+        "plate_center_mae_px",
+        "plate_center_rmse_px",
+        "tracking_availability",
+        "lost_frame_percentage",
+        "max_consecutive_tracking_loss_samples",
+        "media_seconds_per_wall_second"
+      ],
+      "properties": {
+        "case_id": {"type": "string"},
+        "fixture_id": {"type": "string"},
+        "implementation": {"type": "string"},
+        "plate_center_mae_px": {"type": ["number", "null"]},
+        "plate_center_rmse_px": {"type": ["number", "null"]},
+        "tracking_availability": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "lost_frame_percentage": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "max_consecutive_tracking_loss_samples": {"type": ["integer", "null"], "minimum": 0},
+        "media_seconds_per_wall_second": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "status", "rationale", "evidence"],
+      "properties": {
+        "id": {
+          "enum": [
+            "plate_center_tracking_mae",
+            "tracking_availability",
+            "range_of_motion_mae",
+            "mean_velocity_mae",
+            "peak_velocity_mae",
+            "repeat_analysis_determinism",
+            "offline_processing"
+          ]
+        },
+        "target": {"type": "string", "minLength": 1},
+        "status": {"enum": ["PASS", "FAIL", "NOT_MEASURABLE_YET", "REVISED"]},
+        "rationale": {"type": "string", "minLength": 1},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "blocks"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256", "scope"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "scope": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
