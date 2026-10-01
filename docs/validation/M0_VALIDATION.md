@@ -84,8 +84,8 @@ Record:
 - explicit gap/reset behaviour;
 - edge behaviour;
 - position MAE/RMSE/bias;
-- downstream velocity MAE/RMSE;
-- peak attenuation;
+- downstream velocity MAE/RMSE with an explicit maximum continuity gap;
+- peak attenuation on supported contiguous intervals;
 - peak timing shift;
 - runtime and condition/failure notes.
 
