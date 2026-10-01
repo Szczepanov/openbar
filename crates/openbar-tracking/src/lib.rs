@@ -152,9 +152,15 @@ pub trait ManualSeedTracker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackerError {
-    InvalidFrameDimensions { width_px: u32, height_px: u32 },
+    InvalidFrameDimensions {
+        width_px: u32,
+        height_px: u32,
+    },
     FrameBufferSizeOverflow,
-    InvalidFrameBufferLength { expected: usize, actual: usize },
+    InvalidFrameBufferLength {
+        expected: usize,
+        actual: usize,
+    },
     FrameDimensionsChanged {
         index: usize,
         expected_width_px: u32,
@@ -162,14 +168,26 @@ pub enum TrackerError {
         actual_width_px: u32,
         actual_height_px: u32,
     },
-    InvalidConfiguration { field: &'static str },
+    InvalidConfiguration {
+        field: &'static str,
+    },
     EmptySequence,
-    InvalidTimestamp { index: usize, value: f64 },
-    NonIncreasingTimestamps { previous_index: usize, index: usize },
+    InvalidTimestamp {
+        index: usize,
+        value: f64,
+    },
+    NonIncreasingTimestamps {
+        previous_index: usize,
+        index: usize,
+    },
     SeedFrameNotFound,
     SeedTargetOutsideFrame,
-    InvalidSeedRadius { value: f64 },
-    InsufficientSeedContrast { contrast: f64 },
+    InvalidSeedRadius {
+        value: f64,
+    },
+    InsufficientSeedContrast {
+        contrast: f64,
+    },
 }
 
 impl fmt::Display for TrackerError {
