@@ -22,12 +22,22 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `tests/` — annotation contract/tooling tests.
 - `private/` — local-only research material; ignored by Git.
 
+The first tracker comparison is generated headlessly with:
+
+```bash
+cargo run -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
+```
+
+That artifact is procedural regression evidence and is intentionally separate from real-video M0
+validation results.
+
 Detailed policies and workflows:
 
 - [`docs/validation/FIXTURE_DATASET.md`](../docs/validation/FIXTURE_DATASET.md)
 - [`docs/validation/MANUAL_TARGET_SEED.md`](../docs/validation/MANUAL_TARGET_SEED.md)
 - [`docs/validation/ANNOTATION.md`](../docs/validation/ANNOTATION.md)
 - [`docs/validation/BENCHMARK.md`](../docs/validation/BENCHMARK.md)
+- [`docs/validation/TRACKER_EXPERIMENTS.md`](../docs/validation/TRACKER_EXPERIMENTS.md)
 
 Do not add public media merely because it is technically accessible. Every committed media
 fixture must have affirmative redistribution rights documented in its manifest metadata.
