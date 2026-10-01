@@ -144,7 +144,12 @@ equal to or decrease from its position input; it cannot silently increase.
 The canonical M0 constructor `derive_kinematic_trajectory` records
 `backward-difference@1` plus `max_gap_s` and `min_confidence` in the layer's
 `ImplementationProvenance`. This binds the persisted values to the method/configuration needed to
-reproduce them. Canonical metric definitions and interval semantics live in
+reproduce them. When canonical analysis validation encounters `backward-difference@1`, it requires
+those two parameters and re-derives velocity/confidence from the declared input layer. Persisted
+values that would cross an unsupported gap, ignore the confidence threshold, alter endpoint
+confidence propagation, or otherwise disagree with the recorded method/configuration are rejected.
+This is semantic integrity checking for the existing v1 contract, not a schema-shape change.
+Canonical metric definitions and interval semantics live in
 [`../validation/KINEMATIC_METRICS.md`](../validation/KINEMATIC_METRICS.md).
 
 ## Provenance and configuration
