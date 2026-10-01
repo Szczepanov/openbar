@@ -1198,6 +1198,102 @@ mod tests {
     }
 
     #[test]
+    fn missing_video_is_classified_as_media_failure() {
+        let output = scratch_file("missing-video.json");
+        let mut values = base_args(&output.display().to_string());
+        values[1] = scratch_file("definitely-missing.mp4").display().to_string();
+        let args = parse_args(values)
+            .expect("arguments parse")
+            .expect("not help");
+
+        let error = run(&args).expect_err("missing video must fail");
+        assert_eq!(error.kind(), CliErrorKind::Media);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn malformed_seed_is_classified_before_media_execution() {
+        let seed = scratch_file("malformed-seed.json");
+        let output = scratch_file("malformed-seed-output.json");
+        fs::write(&seed, "{not-json").expect("write malformed seed");
+
+        let mut values = base_args(&output.display().to_string());
+        let seed_index = values
+            .iter()
+            .position(|arg| arg == "--seed")
+            .expect("seed flag");
+        values[seed_index + 1] = seed.display().to_string();
+        let args = parse_args(values)
+            .expect("arguments parse")
+            .expect("not help");
+
+        let error = run(&args).expect_err("malformed seed must fail");
+        assert_eq!(error.kind(), CliErrorKind::SeedCalibration);
+        let _ = fs::remove_file(seed);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn invalid_filter_configuration_is_rejected_before_media_io() {
+        let mut values = base_args("analysis.json");
+        let filter_index = values
+            .iter()
+            .position(|arg| arg == "--filter")
+            .expect("filter flag");
+        values[filter_index + 1] = "moving-average".to_owned();
+        values.extend(strings(&[
+            "--filter-window",
+            "4",
+            "--filter-max-gap-s",
+            "0.2",
+        ]));
+
+        let error = parse_args(values).expect_err("even moving-average window must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("window"));
+    }
+
+    #[test]
+    fn unsupported_fixture_geometry_and_tracking_failure_are_explicit() {
+        if !ffmpeg_available() {
+            return;
+        }
+
+        let output = scratch_file("failure-categories-output.json");
+        let manifest = scratch_file("wrong-geometry-manifest.json");
+        let wrong_manifest = serde_json::json!({
+            "schema_version": 1,
+            "fixtures": [{
+                "id": "synthetic-clean-side-12",
+                "video": {
+                    "width_px": 999,
+                    "height_px": 96,
+                    "rotation_deg": 0
+                }
+            }]
+        });
+        fs::write(
+            &manifest,
+            format!("{}\n", serde_json::to_string_pretty(&wrong_manifest).unwrap()),
+        )
+        .expect("write manifest");
+
+        let mut unsupported = fixture_args(&output);
+        unsupported.manifest = Some(manifest.clone());
+        let error = run(&unsupported).expect_err("fixture geometry mismatch must fail");
+        assert_eq!(error.kind(), CliErrorKind::Unsupported);
+
+        let mut tracking = fixture_args(&output);
+        tracking.tracker = TrackerChoice::Contrast;
+        tracking.contrast_min_seed_contrast = Some(1.0e9);
+        let error = run(&tracking).expect_err("impossible seed contrast must fail tracking");
+        assert_eq!(error.kind(), CliErrorKind::Tracking);
+
+        let _ = fs::remove_file(manifest);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
     fn end_to_end_public_fixture_is_deterministic_and_refuses_overwrite() {
         if !ffmpeg_available() {
             return;
