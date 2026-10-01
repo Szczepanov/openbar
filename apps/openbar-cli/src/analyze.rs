@@ -1274,7 +1274,10 @@ mod tests {
         });
         fs::write(
             &manifest,
-            format!("{}\n", serde_json::to_string_pretty(&wrong_manifest).unwrap()),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&wrong_manifest).unwrap()
+            ),
         )
         .expect("write manifest");
 
