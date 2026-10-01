@@ -668,6 +668,26 @@ mod tests {
     }
 
     #[test]
+    fn peak_velocity_can_select_an_interior_segment() {
+        let samples = [
+            sample_metric_position(0.0, 0.0, 0.0, 1.0),
+            sample_metric_position(1.0, 1.0, 0.0, 1.0),
+            sample_metric_position(2.0, 6.0, 0.0, 0.9),
+            sample_metric_position(3.0, 8.0, 0.0, 0.8),
+        ];
+        let interval = MetricInterval::try_new(0.0, 3.0).unwrap();
+
+        let peak =
+            peak_axis_velocity(&samples, MetricAxis::HorizontalX, interval, config(1.1, 0.0))
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(peak.value, 5.0);
+        assert_eq!(peak.timestamp_s, 2.0);
+        assert!((peak.confidence - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn exact_interval_boundaries_are_required() {
         let samples = [
             sample_metric_position(0.0, 0.0, 0.0, 1.0),
