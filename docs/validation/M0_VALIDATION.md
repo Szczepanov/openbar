@@ -116,6 +116,12 @@ Synthetic analytic tests verify implementation semantics. Real/reference evidenc
 before the provisional ROM/mean/peak engineering gates can be treated as satisfied for the supported
 recording envelope.
 
+## Evidence preflight
+
+The reproducible #14 preflight is documented in [M0_EVIDENCE.md](M0_EVIDENCE.md). It benchmarks predictions emitted by the decoded-video tracker path, proves canonical-analysis determinism by comparing two independent output files byte-for-byte, inventories the tracker/filter experiment artifacts, and emits a schema-validated status for every provisional gate.
+
+Synthetic smoke evidence is never promoted to a real-world accuracy claim. Until annotated non-synthetic held-out fixtures, matched calibrated/velocity references, and documented reference-hardware runtime exist, the affected gates must remain `NOT_MEASURABLE_YET` rather than implicitly passing.
+
 ## Failure policy
 
 - Never silently fill long tracking gaps.
