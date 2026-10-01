@@ -778,6 +778,12 @@ pub struct FilterMetrics {
     pub y_bias_m: Option<f64>,
     pub velocity_mae_mps: Option<f64>,
     pub velocity_rmse_mps: Option<f64>,
+    pub horizontal_rom_absolute_error_m: Option<f64>,
+    pub vertical_rom_absolute_error_m: Option<f64>,
+    pub mean_vx_absolute_error_mps: Option<f64>,
+    pub mean_vy_absolute_error_mps: Option<f64>,
+    pub peak_vx_absolute_error_mps: Option<f64>,
+    pub peak_vy_absolute_error_mps: Option<f64>,
     pub ground_truth_peak_speed_mps: Option<f64>,
     pub filtered_peak_speed_mps: Option<f64>,
     pub peak_attenuation_mps: Option<f64>,
@@ -884,6 +890,12 @@ pub fn evaluate_filter_case(
             y_bias_m: None,
             velocity_mae_mps: None,
             velocity_rmse_mps: None,
+            horizontal_rom_absolute_error_m: None,
+            vertical_rom_absolute_error_m: None,
+            mean_vx_absolute_error_mps: None,
+            mean_vy_absolute_error_mps: None,
+            peak_vx_absolute_error_mps: None,
+            peak_vy_absolute_error_mps: None,
             ground_truth_peak_speed_mps: None,
             filtered_peak_speed_mps: None,
             peak_attenuation_mps: None,
@@ -941,10 +953,13 @@ pub fn evaluate_filter_case(
         y_bias_sum += dy;
     }
 
-    let reference_velocity = crate::kinematics::derive_velocity(reference)
-        .map_err(|error| FilterBenchmarkError::Kinematics(format!("{error:?}")))?;
-    let filtered_velocity = crate::kinematics::derive_velocity(filtered)
-        .map_err(|error| FilterBenchmarkError::Kinematics(format!("{error:?}")))?;
+    let kinematics_config =
+        crate::kinematics::KinematicsConfig::try_new(parameters.max_velocity_gap_s, 0.0)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+    let reference_velocity = crate::kinematics::derive_velocity(reference, kinematics_config)
+        .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+    let filtered_velocity = crate::kinematics::derive_velocity(filtered, kinematics_config)
+        .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
 
     let mut velocity_absolute_error_sum = 0.0;
     let mut velocity_squared_error_sum = 0.0;
@@ -962,11 +977,6 @@ pub fn evaluate_filter_case(
         else {
             continue;
         };
-        let dt = reference[index].timestamp_s - reference[index - 1].timestamp_s;
-        if dt > parameters.max_velocity_gap_s {
-            continue;
-        }
-
         let dvx = actual_vx - truth_vx;
         let dvy = actual_vy - truth_vy;
         let squared_error = dvx.mul_add(dvx, dvy * dvy);
@@ -991,6 +1001,93 @@ pub fn evaluate_filter_case(
             }
         }
     }
+
+    let metric_error = |axis: crate::kinematics::MetricAxis| {
+        let truth = crate::kinematics::range_of_motion(reference, axis, kinematics_config)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        let actual = crate::kinematics::range_of_motion(filtered, axis, kinematics_config)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        Ok::<_, FilterBenchmarkError>(
+            truth
+                .zip(actual)
+                .map(|(truth, actual)| (actual.value - truth.value).abs()),
+        )
+    };
+    let horizontal_rom_absolute_error_m =
+        metric_error(crate::kinematics::MetricAxis::HorizontalX)?;
+    let vertical_rom_absolute_error_m =
+        metric_error(crate::kinematics::MetricAxis::VerticalY)?;
+
+    let full_interval = crate::kinematics::MetricInterval::try_new(
+        reference[0].timestamp_s,
+        reference[reference.len() - 1].timestamp_s,
+    )
+    .ok();
+    let (mean_vx_absolute_error_mps, mean_vy_absolute_error_mps) =
+        if let Some(interval) = full_interval {
+            let axis_error = |axis: crate::kinematics::MetricAxis| {
+                let truth = crate::kinematics::mean_axis_velocity(
+                    reference,
+                    axis,
+                    interval,
+                    kinematics_config,
+                )
+                .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+                let actual = crate::kinematics::mean_axis_velocity(
+                    filtered,
+                    axis,
+                    interval,
+                    kinematics_config,
+                )
+                .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+                Ok::<_, FilterBenchmarkError>(
+                    truth
+                        .zip(actual)
+                        .map(|(truth, actual)| (actual.value - truth.value).abs()),
+                )
+            };
+            (
+                axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
+                axis_error(crate::kinematics::MetricAxis::VerticalY)?,
+            )
+        } else {
+            (None, None)
+        };
+
+    let (peak_vx_absolute_error_mps, peak_vy_absolute_error_mps) =
+        if parameters.evaluate_peak_metrics {
+            if let Some(interval) = full_interval {
+                let axis_error = |axis: crate::kinematics::MetricAxis| {
+                    let truth = crate::kinematics::peak_axis_velocity(
+                        reference,
+                        axis,
+                        interval,
+                        kinematics_config,
+                    )
+                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+                    let actual = crate::kinematics::peak_axis_velocity(
+                        filtered,
+                        axis,
+                        interval,
+                        kinematics_config,
+                    )
+                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+                    Ok::<_, FilterBenchmarkError>(
+                        truth
+                            .zip(actual)
+                            .map(|(truth, actual)| (actual.value - truth.value).abs()),
+                    )
+                };
+                (
+                    axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
+                    axis_error(crate::kinematics::MetricAxis::VerticalY)?,
+                )
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
 
     let position_count = reference.len() as f64;
     let velocity_denominator = velocity_count as f64;
@@ -1018,6 +1115,12 @@ pub fn evaluate_filter_case(
             .then_some(velocity_absolute_error_sum / velocity_denominator),
         velocity_rmse_mps: (velocity_count > 0)
             .then_some((velocity_squared_error_sum / velocity_denominator).sqrt()),
+        horizontal_rom_absolute_error_m,
+        vertical_rom_absolute_error_m,
+        mean_vx_absolute_error_mps,
+        mean_vy_absolute_error_mps,
+        peak_vx_absolute_error_mps,
+        peak_vy_absolute_error_mps,
         ground_truth_peak_speed_mps,
         filtered_peak_speed_mps,
         peak_attenuation_mps,
