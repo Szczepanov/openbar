@@ -106,6 +106,31 @@ struct Scenario {
     observed: Vec<MetricPositionSample>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ScenarioDefinition {
+    split: &'static str,
+    name: &'static str,
+    condition: &'static str,
+    noise_seed: u64,
+    peak_metrics_applicable: bool,
+}
+
+const fn scenario_definition(
+    split: &'static str,
+    name: &'static str,
+    condition: &'static str,
+    noise_seed: u64,
+    peak_metrics_applicable: bool,
+) -> ScenarioDefinition {
+    ScenarioDefinition {
+        split,
+        name,
+        condition,
+        noise_seed,
+        peak_metrics_applicable,
+    }
+}
+
 pub fn run_cli() -> AnyResult<()> {
     let args = env::args().skip(2).collect::<Vec<_>>();
     let mut output_path: Option<PathBuf> = None;
@@ -443,31 +468,39 @@ fn scenarios() -> Vec<Scenario> {
     let mut scenarios = Vec::new();
     for seed in DEVELOPMENT_NOISE_SEEDS {
         scenarios.push(build_regular_scenario(
-            "development",
-            "constant-position-noise",
-            "constant position + seeded Gaussian measurement noise",
+            scenario_definition(
+                "development",
+                "constant-position-noise",
+                "constant position + seeded Gaussian measurement noise",
+                seed,
+                false,
+            ),
             61,
             1.0 / 60.0,
             |_, _| (0.15, 0.55),
             0.003,
-            seed,
-            false,
         ));
         scenarios.push(build_regular_scenario(
-            "development",
-            "constant-velocity-noise",
-            "constant velocity + seeded Gaussian measurement noise",
+            scenario_definition(
+                "development",
+                "constant-velocity-noise",
+                "constant velocity + seeded Gaussian measurement noise",
+                seed,
+                false,
+            ),
             61,
             1.0 / 60.0,
             |time, _| (0.10 + 0.08 * time, 0.20 + 0.55 * time),
             0.003,
-            seed,
-            false,
         ));
         scenarios.push(build_regular_scenario(
-            "development",
-            "smooth-trajectory",
-            "smooth curved trajectory + seeded Gaussian measurement noise",
+            scenario_definition(
+                "development",
+                "smooth-trajectory",
+                "smooth curved trajectory + seeded Gaussian measurement noise",
+                seed,
+                false,
+            ),
             61,
             1.0 / 60.0,
             |time, _| {
@@ -477,16 +510,18 @@ fn scenarios() -> Vec<Scenario> {
                 )
             },
             0.003,
-            seed,
-            false,
         ));
         scenarios.push(build_irregular_scenario(seed));
     }
 
     scenarios.push(build_regular_scenario(
-        "held_out_validation",
-        "sharp-peak",
-        "sharp velocity feature to expose peak attenuation and phase shift",
+        scenario_definition(
+            "held_out_validation",
+            "sharp-peak",
+            "sharp velocity feature to expose peak attenuation and phase shift",
+            HELD_OUT_NOISE_SEED,
+            true,
+        ),
         61,
         1.0 / 60.0,
         |time, _| {
@@ -497,19 +532,19 @@ fn scenarios() -> Vec<Scenario> {
             )
         },
         0.003,
-        HELD_OUT_NOISE_SEED,
-        true,
     ));
     scenarios.push(build_regular_scenario(
-        "held_out_validation",
-        "clip-boundaries",
-        "short sequence and boundary behavior",
+        scenario_definition(
+            "held_out_validation",
+            "clip-boundaries",
+            "short sequence and boundary behavior",
+            HELD_OUT_NOISE_SEED ^ 0x11,
+            false,
+        ),
         7,
         1.0 / 60.0,
         |time, _| (0.01 + 0.02 * time, 0.30 + 0.45 * time),
         0.003,
-        HELD_OUT_NOISE_SEED ^ 0x11,
-        false,
     ));
     scenarios.push(build_gap_scenario(
         "short-missing-span",
@@ -528,29 +563,16 @@ fn scenarios() -> Vec<Scenario> {
 }
 
 fn build_regular_scenario(
-    split: &'static str,
-    name: &'static str,
-    condition: &'static str,
+    definition: ScenarioDefinition,
     count: usize,
     dt: f64,
     truth_fn: impl Fn(f64, usize) -> (f64, f64),
     noise_sigma_m: f64,
-    noise_seed: u64,
-    peak_metrics_applicable: bool,
 ) -> Scenario {
     let timestamps = (0..count)
         .map(|index| index as f64 * dt)
         .collect::<Vec<_>>();
-    build_scenario(
-        split,
-        name,
-        condition,
-        timestamps,
-        truth_fn,
-        noise_sigma_m,
-        noise_seed,
-        peak_metrics_applicable,
-    )
+    build_scenario(definition, timestamps, truth_fn, noise_sigma_m)
 }
 
 fn build_irregular_scenario(noise_seed: u64) -> Scenario {
@@ -567,14 +589,16 @@ fn build_irregular_scenario(noise_seed: u64) -> Scenario {
         time += dt;
     }
     build_scenario(
-        "development",
-        "irregular-timestamps",
-        "VFR-style irregular timestamp spacing",
+        scenario_definition(
+            "development",
+            "irregular-timestamps",
+            "VFR-style irregular timestamp spacing",
+            noise_seed,
+            false,
+        ),
         timestamps,
         |time, _| (0.04 * time, 0.25 + 0.42 * time - 0.08 * time * time),
         0.003,
-        noise_seed,
-        false,
     )
 }
 
@@ -589,26 +613,24 @@ fn build_gap_scenario(
     let resume_at = timestamps.last().copied().unwrap_or_default() + gap_s;
     timestamps.extend((0..13).map(|index| resume_at + index as f64 * dt));
     build_scenario(
-        "held_out_validation",
-        name,
-        condition,
+        scenario_definition(
+            "held_out_validation",
+            name,
+            condition,
+            noise_seed,
+            false,
+        ),
         timestamps,
         |time, _| (0.025 * time, 0.18 + 0.48 * time),
         0.003,
-        noise_seed,
-        false,
     )
 }
 
 fn build_scenario(
-    split: &'static str,
-    name: &'static str,
-    condition: &'static str,
+    definition: ScenarioDefinition,
     timestamps: Vec<f64>,
     truth_fn: impl Fn(f64, usize) -> (f64, f64),
     noise_sigma_m: f64,
-    noise_seed: u64,
-    peak_metrics_applicable: bool,
 ) -> Scenario {
     let truth = timestamps
         .iter()
@@ -628,18 +650,20 @@ fn build_scenario(
         .enumerate()
         .map(|(index, sample)| MetricPositionSample {
             timestamp_s: sample.timestamp_s,
-            x_m: sample.x_m + deterministic_gaussian(noise_seed, index, 0) * noise_sigma_m,
-            y_m: sample.y_m + deterministic_gaussian(noise_seed, index, 1) * noise_sigma_m,
+            x_m: sample.x_m
+                + deterministic_gaussian(definition.noise_seed, index, 0) * noise_sigma_m,
+            y_m: sample.y_m
+                + deterministic_gaussian(definition.noise_seed, index, 1) * noise_sigma_m,
             confidence: 1.0,
         })
         .collect();
 
     Scenario {
-        split,
-        name,
-        condition,
-        noise_seed,
-        peak_metrics_applicable,
+        split: definition.split,
+        name: definition.name,
+        condition: definition.condition,
+        noise_seed: definition.noise_seed,
+        peak_metrics_applicable: definition.peak_metrics_applicable,
         truth,
         observed,
     }
