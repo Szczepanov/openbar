@@ -1,5 +1,7 @@
 use openbar_core::analysis::ImplementationProvenance;
-use openbar_core::benchmark::{evaluate_filter_case, FilterMetrics};
+use openbar_core::benchmark::{
+    evaluate_filter_case, FilterBenchmarkParameters, FilterMetrics,
+};
 use openbar_core::filtering::{apply_filter, FilterBehavior, FilterConfig};
 use openbar_core::trajectory::MetricPositionSample;
 use serde::Serialize;
@@ -343,7 +345,13 @@ fn evaluate_scenario(scenario: &Scenario, config: FilterConfig) -> AnyResult<Sce
     let started = Instant::now();
     let run = apply_filter(&scenario.observed, config)?;
     let runtime_ms = started.elapsed().as_secs_f64() * 1_000.0;
-    let metrics = evaluate_filter_case(&scenario.truth, &run.trajectory.samples)?;
+    let metrics = evaluate_filter_case(
+        &scenario.truth,
+        &run.trajectory.samples,
+        FilterBenchmarkParameters {
+            max_velocity_gap_s: 0.05,
+        },
+    )?;
     let edge_position_mae_m = edge_position_mae(&scenario.truth, &run.trajectory.samples, 2);
 
     Ok(ScenarioResult {
