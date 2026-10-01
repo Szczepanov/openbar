@@ -1293,11 +1293,14 @@ mod tests {
     #[test]
     fn golden_json_is_stable() {
         let golden = include_str!("../tests/fixtures/analysis-v1.golden.json");
+        // Normalise CRLF checkouts (Windows `core.autocrlf=true`) to the LF
+        // emitted by `serde_json::to_string_pretty`; the repo blob stays LF.
+        let normalized = golden.replace("\r\n", "\n");
         let expected = analysis();
         let serialized = expected.to_json_pretty().unwrap();
-        assert_eq!(serialized, golden.trim_end());
+        assert_eq!(serialized, normalized.trim_end());
 
-        let decoded = Analysis::from_json(golden).unwrap();
+        let decoded = Analysis::from_json(&normalized).unwrap();
         assert_eq!(decoded, expected);
     }
 
