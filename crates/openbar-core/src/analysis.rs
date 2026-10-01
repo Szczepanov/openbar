@@ -998,3 +998,213 @@ mod tests {
                 timestamp_s: raw_a.timestamp_s,
                 x_m: calibrated_a.x_m,
                 y_m: calibrated_a.y_m,
+                confidence: raw_a.confidence,
+            },
+            MetricPositionSample {
+                timestamp_s: raw_b.timestamp_s,
+                x_m: calibrated_b.x_m,
+                y_m: calibrated_b.y_m,
+                confidence: raw_b.confidence,
+            },
+        ];
+
+        Analysis::try_new(
+            AnalysisIdentity {
+                source_id: "synthetic-clean-side-12".to_owned(),
+                fixture_id: Some("synthetic-clean-side-12".to_owned()),
+                source_sha256: Some("a".repeat(64)),
+            },
+            video,
+            seed,
+            calibration,
+            vec![
+                RawObservation {
+                    timestamp_s: 1.0,
+                    frame_index: Some(60),
+                    tracking_state: TrackingState::Tracked,
+                    visibility: VisibilityState::Visible,
+                    measurement: Some(raw_a),
+                    target_bounds_px: Some(PixelBoundingBox {
+                        left_px: 860.0,
+                        top_px: 600.0,
+                        width_px: 200.0,
+                        height_px: 200.0,
+                    }),
+                    tracker_id: "tracker-primary".to_owned(),
+                },
+                RawObservation {
+                    timestamp_s: 1.1,
+                    frame_index: Some(66),
+                    tracking_state: TrackingState::Lost,
+                    visibility: VisibilityState::Occluded,
+                    measurement: None,
+                    target_bounds_px: None,
+                    tracker_id: "tracker-primary".to_owned(),
+                },
+                RawObservation {
+                    timestamp_s: 1.2,
+                    frame_index: Some(72),
+                    tracking_state: TrackingState::LowConfidence,
+                    visibility: VisibilityState::PartiallyOccluded,
+                    measurement: Some(raw_b),
+                    target_bounds_px: Some(PixelBoundingBox {
+                        left_px: 880.0,
+                        top_px: 560.0,
+                        width_px: 200.0,
+                        height_px: 200.0,
+                    }),
+                    tracker_id: "tracker-primary".to_owned(),
+                },
+            ],
+            DerivedData {
+                calibrated: CalibratedTrajectory {
+                    samples: metric.clone(),
+                },
+                filtered: None,
+                kinematics: None,
+            },
+            provenance(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn canonical_analysis_round_trips_and_serializes_deterministically() {
+        let analysis = analysis();
+        let first = analysis.to_json_pretty().unwrap();
+        let second = analysis.to_json_pretty().unwrap();
+        assert_eq!(first, second);
+
+        let decoded = Analysis::from_json(&first).unwrap();
+        assert_eq!(decoded, analysis);
+    }
+
+    #[test]
+    fn lost_tracking_requires_no_fake_coordinate() {
+        let analysis = analysis();
+        let lost = &analysis.raw_observations()[1];
+        assert_eq!(lost.tracking_state, TrackingState::Lost);
+        assert!(lost.measurement.is_none());
+    }
+
+    #[test]
+    fn supports_irregular_timestamps_and_no_velocity_layer() {
+        let analysis = analysis();
+        assert_eq!(analysis.raw_observations()[1].timestamp_s, 1.1);
+        assert_eq!(analysis.raw_observations()[2].timestamp_s, 1.2);
+        assert!(analysis.derived().kinematics.is_none());
+    }
+
+    #[test]
+    fn rejects_non_finite_and_impossible_values() {
+        let mut value = serde_json::to_value(analysis()).unwrap();
+        value["derived"]["calibrated"]["samples"][0]["confidence"] = serde_json::json!(1.5);
+        assert!(serde_json::from_value::<Analysis>(value).is_err());
+
+        let mut lost_with_measurement = serde_json::to_value(analysis()).unwrap();
+        lost_with_measurement["raw_observations"][1]["measurement"] =
+            serde_json::to_value(PixelObservation {
+                timestamp_s: 1.1,
+                x_px: 970.0,
+                y_px: 680.0,
+                confidence: 0.1,
+            })
+            .unwrap();
+        assert!(serde_json::from_value::<Analysis>(lost_with_measurement).is_err());
+    }
+
+    #[test]
+    fn rejects_non_finite_config_before_json_export() {
+        let mut analysis = analysis();
+        analysis.provenance.tracker.implementation.parameters.insert(
+            "bad".to_owned(),
+            ParameterValue::Float(f64::NAN),
+        );
+        assert!(matches!(
+            analysis.to_json_pretty(),
+            Err(AnalysisJsonError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn complete_analysis_retains_filter_kinematics_and_config_provenance() {
+        let mut analysis = analysis();
+        let filtered_samples = analysis.derived.calibrated.samples.clone();
+        analysis.derived.filtered = Some(FilteredTrajectory {
+            filter: ImplementationProvenance {
+                implementation: "moving-average".to_owned(),
+                version: "baseline-1".to_owned(),
+                parameters: BTreeMap::from([(
+                    "window".to_owned(),
+                    ParameterValue::Integer(3),
+                )]),
+            },
+            samples: filtered_samples.clone(),
+        });
+        analysis.derived.kinematics = Some(KinematicTrajectory {
+            input: KinematicsInput::Filtered,
+            method: ImplementationProvenance {
+                implementation: "backward-difference".to_owned(),
+                version: "1".to_owned(),
+                parameters: BTreeMap::new(),
+            },
+            samples: vec![
+                KinematicSample {
+                    timestamp_s: filtered_samples[0].timestamp_s,
+                    x_m: filtered_samples[0].x_m,
+                    y_m: filtered_samples[0].y_m,
+                    vx_mps: None,
+                    vy_mps: None,
+                    confidence: filtered_samples[0].confidence,
+                },
+                KinematicSample {
+                    timestamp_s: filtered_samples[1].timestamp_s,
+                    x_m: filtered_samples[1].x_m,
+                    y_m: filtered_samples[1].y_m,
+                    vx_mps: Some(0.225),
+                    vy_mps: Some(0.45),
+                    confidence: filtered_samples[1].confidence,
+                },
+            ],
+        });
+        analysis.validate().unwrap();
+
+        let json = analysis.to_json_pretty().unwrap();
+        let decoded = Analysis::from_json(&json).unwrap();
+        assert_eq!(decoded, analysis);
+        assert_eq!(
+            decoded
+                .derived
+                .filtered
+                .as_ref()
+                .unwrap()
+                .filter
+                .parameters
+                .get("window"),
+            Some(&ParameterValue::Integer(3))
+        );
+    }
+
+    #[test]
+    fn rejects_non_finite_derived_values_before_export() {
+        let mut analysis = analysis();
+        analysis.derived.calibrated.samples[0].x_m = f64::NAN;
+        assert!(analysis.validate().is_err());
+        assert!(matches!(
+            analysis.to_json_pretty(),
+            Err(AnalysisJsonError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn golden_json_is_stable() {
+        let golden = include_str!("../tests/fixtures/analysis-v1.golden.json");
+        let decoded = Analysis::from_json(golden).unwrap();
+        let expected = analysis();
+        assert_eq!(decoded, expected);
+        assert_eq!(
+            decoded.to_json_pretty().unwrap(),
+            expected.to_json_pretty().unwrap()
+        );
+    }
+}
