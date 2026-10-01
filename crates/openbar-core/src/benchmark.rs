@@ -680,6 +680,14 @@ mod tests {
         assert_eq!(metrics.lost_samples, 0);
         assert_eq!(metrics.plate_center_mae_px, Some(0.0));
         assert_eq!(metrics.plate_center_rmse_px, Some(0.0));
+        assert_eq!(metrics.x_mae_px, Some(0.0));
+        assert_eq!(metrics.x_rmse_px, Some(0.0));
+        assert_eq!(metrics.y_mae_px, Some(0.0));
+        assert_eq!(metrics.y_rmse_px, Some(0.0));
+        assert_eq!(metrics.plate_center_p50_px, Some(0.0));
+        assert_eq!(metrics.plate_center_p90_px, Some(0.0));
+        assert_eq!(metrics.plate_center_p95_px, Some(0.0));
+        assert_eq!(metrics.plate_center_max_px, Some(0.0));
         assert_eq!(metrics.x_bias_px, Some(0.0));
         assert_eq!(metrics.y_bias_px, Some(0.0));
         assert_eq!(metrics.tracking_availability, Some(1.0));
@@ -697,6 +705,14 @@ mod tests {
 
         assert_eq!(metrics.plate_center_mae_px, Some(5.0));
         assert_eq!(metrics.plate_center_rmse_px, Some(5.0));
+        assert_eq!(metrics.x_mae_px, Some(3.0));
+        assert_eq!(metrics.x_rmse_px, Some(3.0));
+        assert_eq!(metrics.y_mae_px, Some(4.0));
+        assert_eq!(metrics.y_rmse_px, Some(4.0));
+        assert_eq!(metrics.plate_center_p50_px, Some(5.0));
+        assert_eq!(metrics.plate_center_p90_px, Some(5.0));
+        assert_eq!(metrics.plate_center_p95_px, Some(5.0));
+        assert_eq!(metrics.plate_center_max_px, Some(5.0));
         assert_eq!(metrics.x_bias_px, Some(3.0));
         assert_eq!(metrics.y_bias_px, Some(4.0));
     }
@@ -813,6 +829,14 @@ mod tests {
             timestamp_unmatched_samples: 0,
             plate_center_mae_px: Some(2.0),
             plate_center_rmse_px: Some(2.0),
+            x_mae_px: Some(1.0),
+            x_rmse_px: Some(1.0),
+            y_mae_px: Some(0.0),
+            y_rmse_px: Some(0.0),
+            plate_center_p50_px: Some(2.0),
+            plate_center_p90_px: Some(2.0),
+            plate_center_p95_px: Some(2.0),
+            plate_center_max_px: Some(2.0),
             x_bias_px: Some(1.0),
             y_bias_px: Some(0.0),
             tracking_availability: Some(1.0),
@@ -829,6 +853,14 @@ mod tests {
             timestamp_unmatched_samples: 0,
             plate_center_mae_px: Some(5.0),
             plate_center_rmse_px: Some(5.0),
+            x_mae_px: Some(4.0),
+            x_rmse_px: Some(4.0),
+            y_mae_px: Some(0.0),
+            y_rmse_px: Some(0.0),
+            plate_center_p50_px: Some(5.0),
+            plate_center_p90_px: Some(5.0),
+            plate_center_p95_px: Some(5.0),
+            plate_center_max_px: Some(5.0),
             x_bias_px: Some(4.0),
             y_bias_px: Some(0.0),
             tracking_availability: Some(0.5),
@@ -843,6 +875,12 @@ mod tests {
         assert_eq!(aggregate.tracked_samples, 3);
         assert!((aggregate.plate_center_mae_px.unwrap() - 3.0).abs() < 1e-12);
         assert!((aggregate.plate_center_rmse_px.unwrap() - 3.3166247903554).abs() < 1e-12);
+        assert!((aggregate.x_mae_px.unwrap() - 2.0).abs() < 1e-12);
+        assert!((aggregate.x_rmse_px.unwrap() - 6.0_f64.sqrt()).abs() < 1e-12);
+        assert_eq!(aggregate.plate_center_p50_px, None);
+        assert_eq!(aggregate.plate_center_p90_px, None);
+        assert_eq!(aggregate.plate_center_p95_px, None);
+        assert_eq!(aggregate.plate_center_max_px, Some(5.0));
         assert_eq!(aggregate.tracking_availability, Some(0.75));
         assert_eq!(aggregate.lost_frame_percentage, Some(25.0));
     }
