@@ -47,22 +47,13 @@ pub fn derive_velocity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::sample_metric_position;
 
     #[test]
     fn derives_velocity_from_timestamps_not_nominal_fps() {
         let samples = [
-            MetricPositionSample {
-                timestamp_s: 0.0,
-                x_m: 0.0,
-                y_m: 0.0,
-                confidence: 1.0,
-            },
-            MetricPositionSample {
-                timestamp_s: 0.5,
-                x_m: 1.0,
-                y_m: 2.0,
-                confidence: 0.9,
-            },
+            sample_metric_position(0.0, 0.0, 0.0, 1.0),
+            sample_metric_position(0.5, 1.0, 2.0, 0.9),
         ];
 
         let result = derive_velocity(&samples).unwrap();
@@ -75,18 +66,8 @@ mod tests {
     #[test]
     fn rejects_non_increasing_time() {
         let samples = [
-            MetricPositionSample {
-                timestamp_s: 1.0,
-                x_m: 0.0,
-                y_m: 0.0,
-                confidence: 1.0,
-            },
-            MetricPositionSample {
-                timestamp_s: 1.0,
-                x_m: 1.0,
-                y_m: 1.0,
-                confidence: 1.0,
-            },
+            sample_metric_position(1.0, 0.0, 0.0, 1.0),
+            sample_metric_position(1.0, 1.0, 1.0, 1.0),
         ];
 
         assert_eq!(
