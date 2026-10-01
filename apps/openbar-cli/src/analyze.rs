@@ -1681,12 +1681,23 @@ mod tests {
             "fixtures": [{
                 "id": "synthetic-clean-side-12",
                 "video": {
+                    "nominal_fps": 12.0,
                     "width_px": 999,
                     "height_px": 96,
                     "rotation_deg": 0
                 },
+                "camera": {
+                    "view": "side",
+                    "movement": "fixed"
+                },
                 "load": {
                     "plate_diameter_m": 0.45
+                },
+                "conditions": {
+                    "lighting": "good",
+                    "plate_visibility": "clear",
+                    "occlusion": "none",
+                    "motion_blur": "none"
                 }
             }]
         });
