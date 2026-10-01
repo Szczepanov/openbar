@@ -621,10 +621,9 @@ mod tests {
 
     #[test]
     fn renderer_preserves_nonzero_orientation_metadata_without_reorienting_measurements() {
-        let rotated_json = include_str!(
-            "../../../crates/openbar-core/tests/fixtures/analysis-v1.golden.json"
-        )
-        .replace("\"source_rotation_deg\": 0", "\"source_rotation_deg\": 90");
+        let rotated_json =
+            include_str!("../../../crates/openbar-core/tests/fixtures/analysis-v1.golden.json")
+                .replace("\"source_rotation_deg\": 0", "\"source_rotation_deg\": 90");
         let analysis = Analysis::from_json(&rotated_json).expect("valid rotated metadata");
         let report = render_svg(&analysis, Path::new("rotated.json"), None);
 

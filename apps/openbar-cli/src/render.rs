@@ -482,8 +482,8 @@ mod tests {
             .as_object_mut()
             .expect("identity object")
             .remove("source_sha256");
-        let analysis =
-            Analysis::from_json(&serde_json::to_string(&value).unwrap()).expect("hashless analysis");
+        let analysis = Analysis::from_json(&serde_json::to_string(&value).unwrap())
+            .expect("hashless analysis");
         let error = source_hash_for_overlay(&analysis).expect_err("source hash must be required");
         assert!(error.to_string().contains("identity.source_sha256"));
     }
