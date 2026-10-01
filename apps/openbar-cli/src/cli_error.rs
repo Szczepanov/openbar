@@ -129,7 +129,11 @@ mod tests {
             CliErrorKind::Benchmark,
             CliErrorKind::RenderUnavailable,
         ];
-        let mut codes = kinds.map(CliErrorKind::exit_code);
+        let mut codes = kinds
+            .iter()
+            .copied()
+            .map(CliErrorKind::exit_code)
+            .collect::<Vec<_>>();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), kinds.len());
