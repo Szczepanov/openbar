@@ -102,6 +102,20 @@ across the supported recording envelope.
 
 See [`FILTER_EXPERIMENTS.md`](FILTER_EXPERIMENTS.md).
 
+## Kinematic metric contract
+
+Issue #11 defines the canonical M0 kinematic semantics in
+[`KINEMATIC_METRICS.md`](KINEMATIC_METRICS.md).
+
+Velocity uses the versioned `backward-difference@1` method with actual timestamps, an explicit
+maximum continuity gap, and an explicit minimum confidence threshold. Mean and peak axis velocity
+require exact, explicit timestamp intervals; phase-specific labels such as mean concentric velocity
+remain unavailable until phase boundaries are separately defined and validated.
+
+Synthetic analytic tests verify implementation semantics. Real/reference evidence is still required
+before the provisional ROM/mean/peak engineering gates can be treated as satisfied for the supported
+recording envelope.
+
 ## Failure policy
 
 - Never silently fill long tracking gaps.
