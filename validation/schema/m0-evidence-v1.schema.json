@@ -20,7 +20,7 @@
     "schema_version": {"const": 1},
     "evidence_version": {"const": "m0-evidence-preflight-v1"},
     "scope": {"const": "public_m0_preflight"},
-    "overall_status": {"const": "BLOCKED_ON_REFERENCE_EVIDENCE"},
+    "overall_status": {"enum": ["BLOCKED_ON_REFERENCE_EVIDENCE", "PRECHECK_FAILED"]},
     "evaluated_commit": {"type": "string", "minLength": 1},
     "dataset_coverage": {"$ref": "#/$defs/dataset_coverage"},
     "analysis_determinism": {"$ref": "#/$defs/determinism"},
