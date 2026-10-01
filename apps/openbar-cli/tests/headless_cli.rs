@@ -90,7 +90,7 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
 
     let output_a = scratch("deterministic-a.json");
     let output_b = scratch("deterministic-b.json");
-    let render_output = scratch("render-diagnostic.txt");
+    let render_output = scratch("render-diagnostic.svg");
     let _ = fs::remove_file(&output_a);
     let _ = fs::remove_file(&output_b);
     let _ = fs::remove_file(&render_output);
@@ -136,23 +136,105 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
         bytes_a
     );
 
+    let analysis_before_render = fs::read(&output_a).expect("read analysis before render");
     let render = Command::new(binary())
+        .arg("render")
+        .arg("--analysis")
+        .arg(&output_a)
+        .arg("--video")
+        .arg(repo_path(
+            "validation/fixtures/public/synthetic-clean-side-12.mp4",
+        ))
+        .arg("--output")
+        .arg(&render_output)
+        .output()
+        .expect("run diagnostic renderer");
+    assert!(
+        render.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&render.stdout),
+        String::from_utf8_lossy(&render.stderr)
+    );
+    assert_eq!(
+        fs::read(&output_a).expect("read analysis after render"),
+        analysis_before_render,
+        "rendering must not modify canonical analysis"
+    );
+    let svg = fs::read_to_string(&render_output).expect("read render artifact");
+    assert!(svg.contains("renderer=diagnostic-svg@1"));
+    assert!(svg.contains("data-layer=\"source-frame\""));
+    assert!(svg.contains("data-layer=\"raw-trajectory\""));
+    assert!(svg.contains("data-layer=\"filtered-trajectory\""));
+    assert!(svg.contains("data-layer=\"velocity\""));
+
+    let overwrite = Command::new(binary())
         .arg("render")
         .arg("--analysis")
         .arg(&output_a)
         .arg("--output")
         .arg(&render_output)
         .output()
-        .expect("run render boundary");
-    assert_exit(&render, 9, "status=failure error[render-unavailable]");
-    assert!(
-        !render_output.exists(),
-        "render boundary must not fabricate a placeholder artifact"
-    );
+        .expect("run render overwrite rejection");
+    assert_exit(&overwrite, 7, "status=failure error[output]");
+
+    let out_of_range = Command::new(binary())
+        .arg("render")
+        .arg("--analysis")
+        .arg(&output_a)
+        .arg("--video")
+        .arg(repo_path(
+            "validation/fixtures/public/synthetic-clean-side-12.mp4",
+        ))
+        .arg("--frame-timestamp-s")
+        .arg("999")
+        .arg("--output")
+        .arg(scratch("render-out-of-range.svg"))
+        .output()
+        .expect("run out-of-range render");
+    assert_exit(&out_of_range, 2, "status=failure error[invalid-input]");
 
     let _ = fs::remove_file(output_a);
     let _ = fs::remove_file(output_b);
     let _ = fs::remove_file(render_output);
+}
+
+#[test]
+fn render_failure_fixture_is_deterministic_and_keeps_uncertainty_visible() {
+    let analysis = repo_path("crates/openbar-core/tests/fixtures/analysis-v1.golden.json");
+    let output_a = scratch("render-failure-a.svg");
+    let output_b = scratch("render-failure-b.svg");
+    let _ = fs::remove_file(&output_a);
+    let _ = fs::remove_file(&output_b);
+
+    for output in [&output_a, &output_b] {
+        let render = Command::new(binary())
+            .arg("render")
+            .arg("--analysis")
+            .arg(&analysis)
+            .arg("--output")
+            .arg(output)
+            .output()
+            .expect("render failure diagnostic");
+        assert!(
+            render.status.success(),
+            "stdout={}\nstderr={}",
+            String::from_utf8_lossy(&render.stdout),
+            String::from_utf8_lossy(&render.stderr)
+        );
+        assert!(String::from_utf8_lossy(&render.stderr).contains("status=warning"));
+    }
+
+    let first = fs::read(&output_a).expect("read first failure report");
+    let second = fs::read(&output_b).expect("read second failure report");
+    assert_eq!(first, second, "same canonical input must render byte-identically");
+    let svg = String::from_utf8(first).expect("SVG must be UTF-8");
+    assert!(svg.contains("data-state=\"lost\""));
+    assert!(svg.contains("data-state=\"low_confidence\""));
+    assert!(svg.contains("No filtered trajectory in canonical analysis."));
+    assert!(svg.contains("No kinematic trajectory in canonical analysis."));
+
+    let _ = fs::remove_file(output_a);
+    let _ = fs::remove_file(output_b);
 }
 
 #[test]
