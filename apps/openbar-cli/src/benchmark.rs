@@ -88,6 +88,13 @@ struct FixtureVideo {
     rotation_deg: u16,
 }
 
+fn fixture_display_dimensions(fixture: &FixtureEntry) -> (u32, u32) {
+    match fixture.video.rotation_deg {
+        90 | 270 => (fixture.video.height_px, fixture.video.width_px),
+        _ => (fixture.video.width_px, fixture.video.height_px),
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct FixtureCamera {
     view: String,
@@ -451,9 +458,10 @@ fn validate_manual_seed(
             )));
         }
     }
+    let (frame_width_px, frame_height_px) = fixture_display_dimensions(fixture);
     seed.validate(SeedValidationContext {
-        frame_width_px: fixture.video.width_px,
-        frame_height_px: fixture.video.height_px,
+        frame_width_px,
+        frame_height_px,
         selected_range_start_s: spec.selected_range_s.start_s,
         selected_range_end_s: spec.selected_range_s.end_s,
         source_rotation_deg: fixture.video.rotation_deg,
@@ -605,16 +613,17 @@ fn validate_annotations(
             fixture.id
         )));
     }
-    if annotations.coordinate_system.width_px != fixture.video.width_px
-        || annotations.coordinate_system.height_px != fixture.video.height_px
+    let (display_width_px, display_height_px) = fixture_display_dimensions(fixture);
+    if annotations.coordinate_system.width_px != display_width_px
+        || annotations.coordinate_system.height_px != display_height_px
     {
         return Err(data_error(format!(
-            "annotation '{}' dimensions {}x{} do not match fixture {}x{}",
+            "annotation '{}' dimensions {}x{} do not match fixture display dimensions {}x{}",
             path.display(),
             annotations.coordinate_system.width_px,
             annotations.coordinate_system.height_px,
-            fixture.video.width_px,
-            fixture.video.height_px
+            display_width_px,
+            display_height_px
         )));
     }
     verify_source_hash(
@@ -706,12 +715,13 @@ fn convert_prediction_sample(
                     path.display()
                 ))
             })?;
+            let (display_width_px, display_height_px) = fixture_display_dimensions(fixture);
             if !center.x_px.is_finite()
                 || !center.y_px.is_finite()
                 || center.x_px < 0.0
                 || center.y_px < 0.0
-                || center.x_px >= f64::from(fixture.video.width_px)
-                || center.y_px >= f64::from(fixture.video.height_px)
+                || center.x_px >= f64::from(display_width_px)
+                || center.y_px >= f64::from(display_height_px)
             {
                 return Err(data_error(format!(
                     "tracked prediction at {}s in '{}' has a non-finite or out-of-frame center",
@@ -967,6 +977,150 @@ mod tests {
         assert_eq!(perfect.metrics.tracking_availability, Some(1.0));
         assert_eq!(perfect.metrics.plate_center_mae_px, Some(0.0));
         assert_eq!(perfect.metrics.plate_center_rmse_px, Some(0.0));
+    }
+
+
+    fn rotated_fixture() -> FixtureEntry {
+        FixtureEntry {
+            id: "rotated-fixture".to_owned(),
+            exercise: "snatch".to_owned(),
+            media: FixtureMedia { sha256: None },
+            video: FixtureVideo {
+                width_px: 1280,
+                height_px: 720,
+                duration_s: 2.0,
+                rotation_deg: 90,
+            },
+            camera: FixtureCamera {
+                view: "side".to_owned(),
+            },
+            conditions: FixtureConditions {
+                lighting: "controlled".to_owned(),
+                plate_visibility: "clear".to_owned(),
+                occlusion: "none".to_owned(),
+                motion_blur: "none".to_owned(),
+                challenge_tags: Vec::new(),
+            },
+        }
+    }
+
+    fn rotated_seed_spec(manual_seed: &str) -> BenchmarkCaseSpec {
+        BenchmarkCaseSpec {
+            id: "rotated-seed".to_owned(),
+            fixture_manifest: "unused-manifest.json".to_owned(),
+            fixture_id: "rotated-fixture".to_owned(),
+            annotations: "unused-annotations.json".to_owned(),
+            manual_seed: Some(manual_seed.to_owned()),
+            predictions: "unused-predictions.json".to_owned(),
+            selected_range_s: SelectedRange {
+                start_s: 0.0,
+                end_s: 1.0,
+            },
+            timestamp_tolerance_s: 0.01,
+            min_confidence: 0.0,
+        }
+    }
+
+    fn seed_json(x_px: f64, y_px: f64) -> String {
+        serde_json::json!({
+            "schema_version": 1,
+            "fixture_id": "rotated-fixture",
+            "seed": {
+                "timestamp_s": 0.5,
+                "target": {
+                    "center": {
+                        "x_px": x_px,
+                        "y_px": y_px
+                    },
+                    "radius_px": 1.0
+                },
+                "coordinate_space": "display_top_left",
+                "source_rotation_deg": 90
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn rotated_fixture_seed_validation_uses_display_dimensions() {
+        let fixture = rotated_fixture();
+        assert_eq!(fixture_display_dimensions(&fixture), (720, 1280));
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("openbar-rotated-seed-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        fs::write(temp_dir.join("valid.json"), seed_json(700.0, 1000.0)).unwrap();
+        let valid_spec = rotated_seed_spec("valid.json");
+        assert!(validate_manual_seed(&valid_spec, &temp_dir, &fixture).is_ok());
+
+        fs::write(temp_dir.join("invalid.json"), seed_json(721.0, 500.0)).unwrap();
+        let invalid_spec = rotated_seed_spec("invalid.json");
+        assert!(validate_manual_seed(&invalid_spec, &temp_dir, &fixture).is_err());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn rotated_fixture_annotation_dimensions_use_display_space() {
+        let fixture = rotated_fixture();
+        let path = Path::new("rotated.annotation-v1.json");
+
+        let valid = AnnotationDocument {
+            schema_version: 1,
+            fixture_id: fixture.id.clone(),
+            source_video_sha256: None,
+            coordinate_system: AnnotationCoordinateSystem {
+                width_px: 720,
+                height_px: 1280,
+            },
+            samples: vec![AnnotationSample {
+                timestamp_s: 0.5,
+                annotation_state: "labelled".to_owned(),
+                quality: "high".to_owned(),
+                center_px: Some(JsonPoint {
+                    x_px: 700.0,
+                    y_px: 1000.0,
+                }),
+            }],
+        };
+        assert!(validate_annotations(&valid, &fixture, path).is_ok());
+
+        let invalid = AnnotationDocument {
+            coordinate_system: AnnotationCoordinateSystem {
+                width_px: 1280,
+                height_px: 720,
+            },
+            ..valid
+        };
+        assert!(validate_annotations(&invalid, &fixture, path).is_err());
+    }
+
+    #[test]
+    fn rotated_fixture_prediction_bounds_use_display_dimensions() {
+        let fixture = rotated_fixture();
+        let path = Path::new("rotated.prediction-v1.json");
+
+        let valid = PredictionSample {
+            timestamp_s: 0.5,
+            state: PredictionState::Tracked,
+            center_px: Some(JsonPoint {
+                x_px: 700.0,
+                y_px: 1000.0,
+            }),
+            confidence: Some(1.0),
+        };
+        assert!(convert_prediction_sample(&valid, &fixture, path).is_ok());
+
+        let invalid = PredictionSample {
+            center_px: Some(JsonPoint {
+                x_px: 721.0,
+                y_px: 500.0,
+            }),
+            ..valid
+        };
+        assert!(convert_prediction_sample(&invalid, &fixture, path).is_err());
     }
 
     #[test]
