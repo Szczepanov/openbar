@@ -690,7 +690,6 @@ mod tests {
     }
 }
 
-
 // Filter/kinematic evaluation extends the tracker benchmark contract without changing
 // tracker metric semantics. Filter outputs are expected to preserve the reference
 // timestamps one-for-one; filters must not manufacture samples to improve metrics.
@@ -714,15 +713,27 @@ pub struct FilterMetrics {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterBenchmarkError {
-    LengthMismatch { reference: usize, filtered: usize },
-    InvalidReferenceSample { index: usize, reason: String },
-    InvalidFilteredSample { index: usize, reason: String },
+    LengthMismatch {
+        reference: usize,
+        filtered: usize,
+    },
+    InvalidReferenceSample {
+        index: usize,
+        reason: String,
+    },
+    InvalidFilteredSample {
+        index: usize,
+        reason: String,
+    },
     TimestampMismatch {
         index: usize,
         reference_s: f64,
         filtered_s: f64,
     },
-    NonIncreasingTimestamp { previous_index: usize, index: usize },
+    NonIncreasingTimestamp {
+        previous_index: usize,
+        index: usize,
+    },
     Kinematics(String),
 }
 
@@ -888,11 +899,12 @@ pub fn evaluate_filter_case(
     let velocity_denominator = velocity_count as f64;
     let ground_truth_peak_speed_mps = reference_peak.map(|value| value.0);
     let filtered_peak_speed_mps = filtered_peak.map(|value| value.0);
-    let peak_attenuation_mps =
-        ground_truth_peak_speed_mps.zip(filtered_peak_speed_mps).map(|(truth, actual)| truth - actual);
-    let peak_attenuation_fraction = peak_attenuation_mps.zip(ground_truth_peak_speed_mps).and_then(
-        |(attenuation, truth)| (truth > f64::EPSILON).then_some(attenuation / truth),
-    );
+    let peak_attenuation_mps = ground_truth_peak_speed_mps
+        .zip(filtered_peak_speed_mps)
+        .map(|(truth, actual)| truth - actual);
+    let peak_attenuation_fraction = peak_attenuation_mps
+        .zip(ground_truth_peak_speed_mps)
+        .and_then(|(attenuation, truth)| (truth > f64::EPSILON).then_some(attenuation / truth));
     let peak_timing_shift_s = reference_peak
         .zip(filtered_peak)
         .map(|(truth, actual)| actual.1 - truth.1);
@@ -932,16 +944,8 @@ mod filter_benchmark_tests {
 
     #[test]
     fn filter_metrics_measure_position_velocity_peak_and_shift() {
-        let reference = vec![
-            sample(0.0, 0.0),
-            sample(1.0, 1.0),
-            sample(2.0, 2.0),
-        ];
-        let filtered = vec![
-            sample(0.0, 0.0),
-            sample(1.0, 0.5),
-            sample(2.0, 1.5),
-        ];
+        let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0), sample(2.0, 2.0)];
+        let filtered = vec![sample(0.0, 0.0), sample(1.0, 0.5), sample(2.0, 1.5)];
 
         let metrics = evaluate_filter_case(&reference, &filtered).unwrap();
         assert_eq!(metrics.comparable_position_samples, 3);
@@ -957,11 +961,7 @@ mod filter_benchmark_tests {
     #[test]
     fn filter_metrics_reject_timestamp_changes_or_synthesized_samples() {
         let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0)];
-        let too_many = vec![
-            sample(0.0, 0.0),
-            sample(0.5, 0.5),
-            sample(1.0, 1.0),
-        ];
+        let too_many = vec![sample(0.0, 0.0), sample(0.5, 0.5), sample(1.0, 1.0)];
         assert!(matches!(
             evaluate_filter_case(&reference, &too_many),
             Err(FilterBenchmarkError::LengthMismatch { .. })
