@@ -226,7 +226,7 @@ fn render_failure_fixture_is_deterministic_and_keeps_uncertainty_visible() {
 
     let first = fs::read(&output_a).expect("read first failure report");
     let second = fs::read(&output_b).expect("read second failure report");
-    assert_eq!(first, second, "same canonical input must render byte-identically");
+    assert_eq!(\n        first, second,\n        "same canonical input must render byte-identically"\n    );
     let svg = String::from_utf8(first).expect("SVG must be UTF-8");
     assert!(svg.contains("data-state=\"lost\""));
     assert!(svg.contains("data-state=\"low_confidence\""));
