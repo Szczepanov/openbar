@@ -27,12 +27,15 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust 1.98.1
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
-        with:
-          toolchain: 1.98.1
-          components: rustfmt, clippy
+        run: >-
+          rustup toolchain install 1.98.1
+          --profile minimal
+          --component rustfmt
+          --component clippy
+          --no-self-update
       - name: Toolchain versions
         run: |
+          rustup --version
           rustc --version --verbose
           cargo --version
       - name: Verify dependency lock
@@ -55,7 +58,7 @@ jobs:
       - name: Upload M0 smoke evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: m0-smoke-${{ github.sha }}
+          name: m0-smoke-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             target/tracker-experiment.json
             target/benchmark-smoke.json
