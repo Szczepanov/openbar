@@ -44,6 +44,22 @@ Authoritative deterministic domain logic:
 
 It should not depend on Flutter or a specific mobile platform.
 
+### openbar-tracking
+
+M0 Rust tracking experiments behind a decoder-agnostic boundary.
+
+The crate accepts display-oriented grayscale image access, authoritative timestamps, and the
+canonical manual seed from `openbar-core`. It owns experimental tracker implementations,
+explicit tracked/low-confidence/lost state, and adapters into the common benchmark prediction contract.
+
+It deliberately does **not** own codecs, media paths, camera APIs, Flutter types, or nominal-FPS
+measurement logic. A future media layer may adapt decoded buffers into this boundary without
+moving domain logic into UI/media code. Tracker confidence semantics remain implementation-specific
+rather than being treated as calibrated across algorithms.
+
+ADR-0005 records this M0 boundary. The first implementations are experimental baselines, not a
+production tracker selection.
+
 ### openbar-inference (future crate)
 
 Production preprocessing/inference orchestration. Intended to load exported ONNX models. Model training does not live here.
@@ -94,6 +110,10 @@ Avoid passing full decoded frames repeatedly across FFI boundaries. The eventual
 ## Dependency policy
 
 Prefer small, explicit dependencies. OpenCV may be used where it clearly saves substantial CV implementation effort, but it should not become an unquestioned dependency for the whole system. Model inference should be abstracted so ONNX Runtime can be evaluated without coupling domain logic to it.
+
+The first M0 tracker baselines intentionally add no production CV dependency. A future external CV
+dependency must record source, licence, purpose, distribution compatibility, and native/system
+implications before adoption.
 
 ## Reproducibility
 

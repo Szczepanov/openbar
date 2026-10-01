@@ -2,5 +2,6 @@
 resolver = "2"
 members = [
     "crates/openbar-core",
+    "crates/openbar-tracking",
     "apps/openbar-cli",
 ]
