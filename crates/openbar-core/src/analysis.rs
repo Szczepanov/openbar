@@ -1,7 +1,5 @@
 use crate::calibration::{CalibrationProvenance, PlateDiameterCalibration};
-use crate::manual_seed::{
-    ManualTargetSeed, PixelBoundingBox, SeedValidationContext,
-};
+use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
 use crate::trajectory::{
     KinematicSample, MetricPositionSample, PixelObservation, TrajectoryValidationError,
 };
@@ -133,8 +131,8 @@ impl Analysis {
     }
 
     pub fn from_json(input: &str) -> Result<Self, AnalysisJsonError> {
-        let representation: AnalysisRepr =
-            serde_json::from_str(input).map_err(|error| AnalysisJsonError::Json(error.to_string()))?;
+        let representation: AnalysisRepr = serde_json::from_str(input)
+            .map_err(|error| AnalysisJsonError::Json(error.to_string()))?;
         Self::try_from(representation).map_err(AnalysisJsonError::Validation)
     }
 
@@ -151,7 +149,10 @@ impl Analysis {
             ));
         }
 
-        if matches!(reference.provenance(), CalibrationProvenance::ManualTargetSeed { .. }) {
+        if matches!(
+            reference.provenance(),
+            CalibrationProvenance::ManualTargetSeed { .. }
+        ) {
             let seed = &self.manual_seed;
             if reference.timestamp_s() != seed.timestamp_s()
                 || reference.frame_index() != seed.frame_index()
@@ -383,9 +384,7 @@ impl TimeRange {
             return Err(invalid("video trim range must be finite"));
         }
         if self.start_s < 0.0 || self.end_s < self.start_s {
-            return Err(invalid(
-                "video trim range must be non-negative and ordered",
-            ));
+            return Err(invalid("video trim range must be non-negative and ordered"));
         }
         Ok(())
     }
@@ -557,9 +556,9 @@ pub enum ParameterValue {
 impl ParameterValue {
     fn validate(&self, path: &str) -> Result<(), AnalysisValidationError> {
         match self {
-            Self::Float(value) if !value.is_finite() => {
-                Err(invalid(format!("{path} must not contain non-finite floats")))
-            }
+            Self::Float(value) if !value.is_finite() => Err(invalid(format!(
+                "{path} must not contain non-finite floats"
+            ))),
             _ => Ok(()),
         }
     }
@@ -610,7 +609,10 @@ impl PipelineProvenance {
     fn validate(&self) -> Result<(), AnalysisValidationError> {
         validate_non_blank("provenance.pipeline.openbar_version", &self.openbar_version)?;
         if let Some(commit) = self.git_commit.as_deref() {
-            if commit.len() < 7 || commit.len() > 64 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            if commit.len() < 7
+                || commit.len() > 64
+                || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
                 return Err(invalid(
                     "provenance.pipeline.git_commit must be a 7-64 character hexadecimal commit id",
                 ));
@@ -794,9 +796,7 @@ fn validate_identifier(path: &str, value: &str) -> Result<(), AnalysisValidation
         )));
     }
     if !bytes.all(|byte| {
-        byte.is_ascii_lowercase()
-            || byte.is_ascii_digit()
-            || matches!(byte, b'.' | b'_' | b'-')
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
     }) {
         return Err(invalid(format!(
             "{path} may contain only lowercase ASCII letters, digits, '.', '_' or '-'"
@@ -845,9 +845,9 @@ fn validate_metric_series(
 ) -> Result<(), AnalysisValidationError> {
     let mut previous_timestamp = None;
     for (index, sample) in samples.iter().copied().enumerate() {
-        sample.validate().map_err(|error| {
-            trajectory_error(format!("{name} sample {index}"), error)
-        })?;
+        sample
+            .validate()
+            .map_err(|error| trajectory_error(format!("{name} sample {index}"), error))?;
         if let Some(previous) = previous_timestamp {
             if sample.timestamp_s <= previous {
                 return Err(invalid(format!(
@@ -883,9 +883,9 @@ fn validate_aligned_metric_series(
 fn validate_kinematic_series(samples: &[KinematicSample]) -> Result<(), AnalysisValidationError> {
     let mut previous_timestamp = None;
     for (index, sample) in samples.iter().copied().enumerate() {
-        sample.validate().map_err(|error| {
-            trajectory_error(format!("kinematic sample {index}"), error)
-        })?;
+        sample
+            .validate()
+            .map_err(|error| trajectory_error(format!("kinematic sample {index}"), error))?;
         if let Some(previous) = previous_timestamp {
             if sample.timestamp_s <= previous {
                 return Err(invalid(
@@ -1129,10 +1129,12 @@ mod tests {
     #[test]
     fn rejects_non_finite_config_before_json_export() {
         let mut analysis = analysis();
-        analysis.provenance.tracker.implementation.parameters.insert(
-            "bad".to_owned(),
-            ParameterValue::Float(f64::NAN),
-        );
+        analysis
+            .provenance
+            .tracker
+            .implementation
+            .parameters
+            .insert("bad".to_owned(), ParameterValue::Float(f64::NAN));
         assert!(matches!(
             analysis.to_json_pretty(),
             Err(AnalysisJsonError::Validation(_))
@@ -1147,10 +1149,7 @@ mod tests {
             filter: ImplementationProvenance {
                 implementation: "moving-average".to_owned(),
                 version: "baseline-1".to_owned(),
-                parameters: BTreeMap::from([(
-                    "window".to_owned(),
-                    ParameterValue::Integer(3),
-                )]),
+                parameters: BTreeMap::from([("window".to_owned(), ParameterValue::Integer(3))]),
             },
             samples: filtered_samples.clone(),
         });
@@ -1214,7 +1213,9 @@ mod tests {
         let mut wrong_version = serde_json::to_value(analysis()).unwrap();
         wrong_version["schema_version"] = serde_json::json!(2);
         let error = serde_json::from_value::<Analysis>(wrong_version).unwrap_err();
-        assert!(error.to_string().contains("schema version 2 is unsupported"));
+        assert!(error
+            .to_string()
+            .contains("schema version 2 is unsupported"));
 
         let mut unknown_field = serde_json::to_value(analysis()).unwrap();
         unknown_field["unexpected"] = serde_json::json!(true);
