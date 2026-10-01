@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-clean-side-12",
+  "source_video_sha256": "a175d350c96db3df1771c1eb141a017eaed012ae6bbd6cda739510b244113096",
+  "coordinate_system": {
+    "space": "decoded_display_pixels",
+    "origin": "top_left",
+    "x_direction": "right",
+    "y_direction": "down",
+    "rotation_applied": true,
+    "width_px": 320,
+    "height_px": 240
+  },
+  "timebase": {
+    "unit": "seconds",
+    "origin": "media_start",
+    "decoder_match_tolerance_s": 0.0005
+  },
+  "provenance": {
+    "annotator_id": "example-pass-b",
+    "annotated_at": "2026-10-01T10:25:00Z",
+    "method": "manual_plate_centre",
+    "tool": {"name": "manual-example", "version": "1"},
+    "notes": "Second demonstration pass with small coordinate disagreement. Not an independent human precision study."
+  },
+  "samples": [
+    {"timestamp_s": 0.0, "frame_index": 0, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 100, "y_px": 190}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.083333, "frame_index": 1, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 102, "y_px": 182}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.166667, "frame_index": 2, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 102, "y_px": 169}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.25, "frame_index": 3, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 104, "y_px": 154}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.333333, "frame_index": 4, "annotation_state": "labelled", "visibility": "partially_occluded", "quality": "medium", "center_px": {"x_px": 104, "y_px": 136}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.416667, "frame_index": 5, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 106, "y_px": 115}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.5, "frame_index": 6, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 106, "y_px": 95}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.583333, "frame_index": 7, "annotation_state": "unlabelable", "visibility": "fully_occluded", "quality": "unusable", "notes": "centre intentionally absent"},
+    {"timestamp_s": 0.666667, "frame_index": 8, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 109, "y_px": 76}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.75, "frame_index": 9, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 109, "y_px": 85}, "target_size_px": {"radius_px": 24}},
+    {"timestamp_s": 0.833333, "frame_index": 10, "annotation_state": "not_annotated", "visibility": "visible", "quality": "not_assessed", "notes": "demonstrates deliberate annotation gap"},
+    {"timestamp_s": 0.916667, "frame_index": 11, "annotation_state": "labelled", "visibility": "visible", "quality": "high", "center_px": {"x_px": 110, "y_px": 114}, "target_size_px": {"radius_px": 24}}
+  ]
+}

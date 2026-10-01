@@ -1,0 +1,14 @@
+{
+  "fixture_id": "synthetic-clean-side-12",
+  "left_annotator_id": "example-pass-a",
+  "left_only_labelled_timestamps": 0,
+  "matching_labelled_samples": 10,
+  "max_euclidean_disagreement_px": 1.0,
+  "mean_abs_dx_px": 0.5,
+  "mean_abs_dy_px": 0.4,
+  "mean_euclidean_disagreement_px": 0.9,
+  "right_annotator_id": "example-pass-b",
+  "right_only_labelled_timestamps": 0,
+  "rmse_euclidean_disagreement_px": 0.948683,
+  "schema_version": 1
+}

@@ -1,4 +1,50 @@
 {
   "schema_version": 1,
-  "fixtures": []
+  "fixtures": [
+    {
+      "id": "synthetic-clean-side-12",
+      "exercise": "clean",
+      "purpose": "development",
+      "media": {
+        "repository_path": "validation/fixtures/public/synthetic-clean-side-12.mp4",
+        "sha256": "a175d350c96db3df1771c1eb141a017eaed012ae6bbd6cda739510b244113096"
+      },
+      "video": {
+        "nominal_fps": 12,
+        "measured_fps": 12,
+        "width_px": 320,
+        "height_px": 240,
+        "duration_s": 1.0,
+        "rotation_deg": 0
+      },
+      "camera": {
+        "view": "side",
+        "movement": "fixed"
+      },
+      "load": {
+        "plate_diameter_m": 0.45
+      },
+      "conditions": {
+        "lighting": "good",
+        "plate_visibility": "intermittent",
+        "occlusion": "moderate",
+        "motion_blur": "none",
+        "challenge_tags": [
+          "synthetic",
+          "annotation-workflow",
+          "partial-occlusion",
+          "full-occlusion"
+        ]
+      },
+      "source": {
+        "kind": "synthetic",
+        "reference": "Generated from first principles for the OpenBar annotation workflow; no external media or dataset was used.",
+        "rights_holder": "OpenBar project",
+        "license": "PolyForm Shield License 1.0.0",
+        "redistribution_status": "allowed",
+        "redistribution_evidence": "Repository-generated synthetic fixture committed with issue #4 implementation."
+      },
+      "notes": "Small deterministic workflow fixture. It exercises visible, partially occluded, fully occluded, and intentionally unannotated states; it is not a tracker-accuracy benchmark substitute for real lifting footage."
+    }
+  ]
 }
