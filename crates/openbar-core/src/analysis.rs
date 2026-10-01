@@ -1,7 +1,5 @@
 use crate::calibration::{CalibrationProvenance, PlateDiameterCalibration};
-use crate::kinematics::{
-    derive_velocity, KinematicsConfig, VELOCITY_METHOD_IMPLEMENTATION, VELOCITY_METHOD_VERSION,
-};
+use crate::kinematics::{verify_kinematic_trajectory, VELOCITY_METHOD_IMPLEMENTATION};
 use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
 use crate::math::approximately_equal;
 use crate::trajectory::{
@@ -308,7 +306,15 @@ impl Analysis {
                     )));
                 }
             }
-            validate_canonical_kinematics(input, kinematics)?;
+            // A layer that claims the canonical method must be exactly what that method and its
+            // recorded parameters produce; other implementations get the structural checks only.
+            if kinematics.method.implementation == VELOCITY_METHOD_IMPLEMENTATION {
+                verify_kinematic_trajectory(input, kinematics).map_err(|error| {
+                    invalid(format!(
+                        "kinematics does not match its recorded method: {error}"
+                    ))
+                })?;
+            }
         }
 
         Ok(())
@@ -903,84 +909,6 @@ fn validate_kinematic_series(samples: &[KinematicSample]) -> Result<(), Analysis
     Ok(())
 }
 
-fn validate_canonical_kinematics(
-    input: &[MetricPositionSample],
-    kinematics: &KinematicTrajectory,
-) -> Result<(), AnalysisValidationError> {
-    if kinematics.method.implementation != VELOCITY_METHOD_IMPLEMENTATION
-        || kinematics.method.version != VELOCITY_METHOD_VERSION
-    {
-        return Ok(());
-    }
-
-    if kinematics.method.parameters.len() != 2 {
-        return Err(invalid(format!(
-            "kinematics method {}@{} must persist exactly max_gap_s and min_confidence parameters",
-            VELOCITY_METHOD_IMPLEMENTATION, VELOCITY_METHOD_VERSION
-        )));
-    }
-
-    let max_gap_s = required_kinematics_numeric_parameter(&kinematics.method, "max_gap_s")?;
-    let min_confidence =
-        required_kinematics_numeric_parameter(&kinematics.method, "min_confidence")? as f32;
-
-    let config = KinematicsConfig::try_new(max_gap_s, min_confidence).map_err(|error| {
-        invalid(format!(
-            "invalid persisted kinematics configuration: {error}"
-        ))
-    })?;
-    let expected = derive_velocity(input, config)
-        .map_err(|error| invalid(format!("cannot reproduce persisted kinematics: {error}")))?;
-
-    if expected.len() != kinematics.samples.len() {
-        return Err(invalid(
-            "persisted kinematic sample count does not match reproduced backward-difference@1 output",
-        ));
-    }
-
-    for (index, (expected, actual)) in expected.iter().zip(&kinematics.samples).enumerate() {
-        if !optional_f64_approximately_equal(actual.vx_mps, expected.vx_mps)
-            || !optional_f64_approximately_equal(actual.vy_mps, expected.vy_mps)
-        {
-            return Err(invalid(format!(
-                "kinematic sample {index} velocity does not match backward-difference@1 with its persisted configuration"
-            )));
-        }
-        if actual.confidence != expected.confidence {
-            return Err(invalid(format!(
-                "kinematic sample {index} confidence does not match backward-difference@1 endpoint confidence propagation"
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-fn optional_f64_approximately_equal(left: Option<f64>, right: Option<f64>) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some(left), Some(right)) => approximately_equal(left, right),
-        _ => false,
-    }
-}
-
-fn required_kinematics_numeric_parameter(
-    method: &ImplementationProvenance,
-    name: &str,
-) -> Result<f64, AnalysisValidationError> {
-    match method.parameters.get(name) {
-        Some(ParameterValue::Float(value)) => Ok(*value),
-        Some(ParameterValue::Integer(value)) => Ok(*value as f64),
-        Some(_) => Err(invalid(format!(
-            "kinematics.method.parameters.{name} must be numeric"
-        ))),
-        None => Err(invalid(format!(
-            "kinematics method {}@{} is missing required parameter {name}",
-            VELOCITY_METHOD_IMPLEMENTATION, VELOCITY_METHOD_VERSION
-        ))),
-    }
-}
-
 fn trajectory_error(prefix: String, error: TrajectoryValidationError) -> AnalysisValidationError {
     invalid(format!("{prefix}: {error}"))
 }
@@ -989,6 +917,7 @@ fn trajectory_error(prefix: String, error: TrajectoryValidationError) -> Analysi
 mod tests {
     use super::*;
     use crate::calibration::{CalibrationQuality, PlateDiameterCalibration};
+    use crate::kinematics::{derive_kinematic_trajectory, KinematicsConfig};
     use crate::manual_seed::{PixelPoint, PlateTarget};
 
     fn seed(video: &VideoMetadata) -> ManualTargetSeed {
@@ -1226,10 +1155,10 @@ mod tests {
             samples: filtered_samples.clone(),
         });
         analysis.derived.kinematics = Some(
-            crate::kinematics::derive_kinematic_trajectory(
+            derive_kinematic_trajectory(
                 &filtered_samples,
                 KinematicsInput::Filtered,
-                crate::kinematics::KinematicsConfig::try_new(0.5, 0.0).unwrap(),
+                KinematicsConfig::try_new(0.5, 0.4).unwrap(),
             )
             .unwrap(),
         );
@@ -1249,83 +1178,98 @@ mod tests {
                 .get("window"),
             Some(&ParameterValue::Integer(3))
         );
-        assert_eq!(
-            decoded
-                .derived
-                .kinematics
-                .as_ref()
-                .unwrap()
-                .method
-                .parameters
-                .get("max_gap_s"),
-            Some(&ParameterValue::Float(0.5))
+    }
+
+    fn analysis_with_kinematics(config: KinematicsConfig) -> Analysis {
+        let mut analysis = analysis();
+        let calibrated = analysis.derived.calibrated.samples.clone();
+        analysis.derived.kinematics = Some(
+            derive_kinematic_trajectory(&calibrated, KinematicsInput::Calibrated, config).unwrap(),
         );
+        analysis
+    }
+
+    fn kinematics_mut(analysis: &mut Analysis) -> &mut KinematicTrajectory {
+        analysis.derived.kinematics.as_mut().unwrap()
     }
 
     #[test]
-    fn rejects_persisted_backward_difference_velocity_across_unsupported_gap() {
-        let mut analysis = analysis();
-        let input = analysis.derived.calibrated.samples.clone();
-        let config = crate::kinematics::KinematicsConfig::try_new(0.1, 0.0).unwrap();
-        let mut kinematics = crate::kinematics::derive_kinematic_trajectory(
-            &input,
-            KinematicsInput::Calibrated,
-            config,
-        )
-        .unwrap();
+    fn canonical_kinematics_persist_round_trippable_method_parameters() {
+        let analysis = analysis_with_kinematics(KinematicsConfig::try_new(0.5, 0.4).unwrap());
+        analysis.validate().unwrap();
 
-        assert_eq!(kinematics.samples[1].vx_mps, None);
-        assert_eq!(kinematics.samples[1].vy_mps, None);
-        kinematics.samples[1].vx_mps = Some(0.225);
-        kinematics.samples[1].vy_mps = Some(0.45);
-        analysis.derived.kinematics = Some(kinematics);
-
-        let error = analysis.validate().unwrap_err();
-        assert!(error
-            .message()
-            .contains("velocity does not match backward-difference@1"));
+        let json = analysis.to_json_pretty().unwrap();
+        assert!(json.contains(
+            "\"min_confidence\": 0.4
+"
+        ));
+        assert_eq!(Analysis::from_json(&json).unwrap(), analysis);
     }
 
     #[test]
-    fn rejects_persisted_backward_difference_confidence_mismatch() {
-        let mut analysis = analysis();
-        let input = analysis.derived.calibrated.samples.clone();
-        let config = crate::kinematics::KinematicsConfig::try_new(0.5, 0.0).unwrap();
-        let mut kinematics = crate::kinematics::derive_kinematic_trajectory(
-            &input,
-            KinematicsInput::Calibrated,
-            config,
-        )
-        .unwrap();
+    fn rejects_canonical_kinematics_that_do_not_match_the_recorded_method() {
+        let config = KinematicsConfig::try_new(0.5, 0.0).unwrap();
 
-        kinematics.samples[1].confidence -= 0.1;
-        analysis.derived.kinematics = Some(kinematics);
+        let mut first_sample_velocity = analysis_with_kinematics(config);
+        kinematics_mut(&mut first_sample_velocity).samples[0].vx_mps = Some(0.0);
+        assert!(first_sample_velocity.validate().is_err());
 
-        let error = analysis.validate().unwrap_err();
-        assert!(error
-            .message()
-            .contains("confidence does not match backward-difference@1"));
+        let mut altered_velocity = analysis_with_kinematics(config);
+        let sample = &mut kinematics_mut(&mut altered_velocity).samples[1];
+        sample.vy_mps = sample.vy_mps.map(|value| value + 0.01);
+        assert!(altered_velocity.validate().is_err());
+
+        let mut lowered_confidence = analysis_with_kinematics(config);
+        kinematics_mut(&mut lowered_confidence).samples[1].confidence = 0.5;
+        assert!(lowered_confidence.validate().is_err());
     }
 
     #[test]
-    fn rejects_incomplete_backward_difference_provenance() {
-        let mut analysis = analysis();
-        let input = analysis.derived.calibrated.samples.clone();
-        let config = crate::kinematics::KinematicsConfig::try_new(0.5, 0.0).unwrap();
-        let mut kinematics = crate::kinematics::derive_kinematic_trajectory(
-            &input,
-            KinematicsInput::Calibrated,
-            config,
-        )
-        .unwrap();
+    fn rejects_persisted_velocity_across_the_recorded_continuity_gap() {
+        // The two fixture samples are 0.2 s apart, so a 0.1 s gap rule leaves sample 1 without
+        // velocity. Persisting a cross-gap value under that provenance must fail validation.
+        let mut analysis = analysis_with_kinematics(KinematicsConfig::try_new(0.1, 0.0).unwrap());
+        assert_eq!(kinematics_mut(&mut analysis).samples[1].vx_mps, None);
+        analysis.validate().unwrap();
 
-        kinematics.method.parameters.remove("max_gap_s");
-        analysis.derived.kinematics = Some(kinematics);
+        let sample = &mut kinematics_mut(&mut analysis).samples[1];
+        sample.vx_mps = Some(0.45);
+        sample.vy_mps = Some(0.9);
+        assert!(analysis.validate().is_err());
+    }
 
-        let error = analysis.validate().unwrap_err();
-        assert!(error
-            .message()
-            .contains("must persist exactly max_gap_s and min_confidence parameters"));
+    #[test]
+    fn rejects_canonical_kinematics_with_missing_unknown_or_unsupported_method_identity() {
+        let config = KinematicsConfig::try_new(0.5, 0.0).unwrap();
+
+        let mut missing = analysis_with_kinematics(config);
+        kinematics_mut(&mut missing)
+            .method
+            .parameters
+            .remove("max_gap_s");
+        assert!(missing.validate().is_err());
+
+        let mut unknown = analysis_with_kinematics(config);
+        kinematics_mut(&mut unknown)
+            .method
+            .parameters
+            .insert("window".to_owned(), ParameterValue::Integer(3));
+        assert!(unknown.validate().is_err());
+
+        let mut future_version = analysis_with_kinematics(config);
+        kinematics_mut(&mut future_version).method.version = "2".to_owned();
+        assert!(future_version.validate().is_err());
+    }
+
+    #[test]
+    fn other_kinematics_implementations_keep_structural_validation_only() {
+        let mut analysis = analysis_with_kinematics(KinematicsConfig::try_new(0.5, 0.0).unwrap());
+        let kinematics = kinematics_mut(&mut analysis);
+        kinematics.method.implementation = "central-difference".to_owned();
+        kinematics.method.parameters.clear();
+        kinematics.samples[1].vx_mps = Some(1.0);
+
+        analysis.validate().unwrap();
     }
 
     #[test]

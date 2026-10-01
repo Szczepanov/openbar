@@ -144,13 +144,26 @@ equal to or decrease from its position input; it cannot silently increase.
 The canonical M0 constructor `derive_kinematic_trajectory` records
 `backward-difference@1` plus `max_gap_s` and `min_confidence` in the layer's
 `ImplementationProvenance`. This binds the persisted values to the method/configuration needed to
-reproduce them. When canonical analysis validation encounters `backward-difference@1`, it requires
-those two parameters and re-derives velocity/confidence from the declared input layer. Persisted
-values that would cross an unsupported gap, ignore the confidence threshold, alter endpoint
-confidence propagation, or otherwise disagree with the recorded method/configuration are rejected.
-This is semantic integrity checking for the existing v1 contract, not a schema-shape change.
-Canonical metric definitions and interval semantics live in
+reproduce them. Canonical metric definitions and interval semantics live in
 [`../validation/KINEMATIC_METRICS.md`](../validation/KINEMATIC_METRICS.md).
+
+Validation enforces that binding. A kinematics layer whose implementation is
+`backward-difference` must be version `1` with exactly the numeric parameters `max_gap_s` and
+`min_confidence`. Its samples must equal a re-derivation from the declared input layer with those
+parameters: no velocity at the first sample, across a gap longer than `max_gap_s`, or from an
+endpoint below `min_confidence`, and confidence equal to the pair minimum. Any other version, a
+missing or unknown parameter, or a mismatched sample makes the analysis invalid. Layers from other
+implementations keep only the structural checks above. Canonical JSON parsing enables serde_json's `float_roundtrip` mode so fixed-precision
+floating-point values written by OpenBar are recovered exactly on read. Re-derived finite velocity
+then uses only the repository's existing narrow canonical floating-point comparison; validation does
+not widen its acceptance tolerance as timestamp spacing becomes numerically ill-conditioned.
+
+This tightens what a version `1` reader accepts without changing the serialized shape, so
+`ANALYSIS_SCHEMA_VERSION` stays `1`. Layers written by `derive_kinematic_trajectory` are
+unaffected.
+
+`min_confidence` is applied as an `f32` and persisted as the shortest decimal that round-trips it
+(`0.4`, not `0.4000000059604645`).
 
 ## Provenance and configuration
 
