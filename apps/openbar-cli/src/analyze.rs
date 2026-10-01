@@ -17,14 +17,14 @@ use openbar_core::analysis::{
 use openbar_core::calibration::{
     CalibrationQuality, CalibrationQualityStatus, CalibrationWarning, PlateDiameterCalibration,
 };
+use openbar_core::filtering::{apply_filter, FilterConfig};
+use openbar_core::kinematics::{derive_kinematic_trajectory, KinematicsConfig};
+use openbar_core::manual_seed::{ManualTargetSeedDocument, SeedValidationContext};
 use openbar_core::recording_support::{
     assess_recording_support, CameraMovement, CameraView, LightingCondition, MotionBlurCondition,
     OcclusionCondition, PlateVisibilityCondition, RecordingConditions, RecordingSupportAssessment,
     RecordingSupportStatus,
 };
-use openbar_core::filtering::{apply_filter, FilterConfig};
-use openbar_core::kinematics::{derive_kinematic_trajectory, KinematicsConfig};
-use openbar_core::manual_seed::{ManualTargetSeedDocument, SeedValidationContext};
 use openbar_core::trajectory::{MetricPositionSample, PixelObservation};
 use openbar_tracking::{
     LocalContrastConfig, LocalContrastTracker, ManualSeedTracker, TemplateMatchConfig,
@@ -214,9 +214,8 @@ fn run(args: &Args) -> CliResult<()> {
         &clip,
         seed.seed().target().diameter_px(),
     );
-    let recording_support = assess_recording_support(&recording_conditions).map_err(|error| {
-        CliError::invalid_input(format!("invalid recording metadata: {error}"))
-    })?;
+    let recording_support = assess_recording_support(&recording_conditions)
+        .map_err(|error| CliError::invalid_input(format!("invalid recording metadata: {error}")))?;
     if let Some(path) = args.recording_support_output.as_deref() {
         write_recording_support(path, &recording_support, args.force)?;
     }
@@ -326,7 +325,10 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     let seed = PathBuf::from(required(&mut values, "--seed")?);
     let output = PathBuf::from(required(&mut values, "--output")?);
     let recording_support_output = take_path(&mut values, "--recording-support-output");
-    if recording_support_output.as_ref().is_some_and(|path| path == &output) {
+    if recording_support_output
+        .as_ref()
+        .is_some_and(|path| path == &output)
+    {
         return Err(CliError::invalid_input(
             "--recording-support-output must differ from --output",
         ));
