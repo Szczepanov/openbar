@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-clean-side-12",
+  "source_video_sha256": "a175d350c96db3df1771c1eb141a017eaed012ae6bbd6cda739510b244113096",
+  "coordinate_space": "decoded_display_pixels",
+  "implementation": {
+    "name": "synthetic-perfect",
+    "version": "1",
+    "config": {
+      "purpose": "golden-regression"
+    }
+  },
+  "runtime": {
+    "processing_wall_s": 0.08
+  },
+  "samples": [
+    {"timestamp_s": 0.0, "state": "tracked", "center_px": {"x_px": 100.0, "y_px": 190.0}, "confidence": 1.0},
+    {"timestamp_s": 0.083333, "state": "tracked", "center_px": {"x_px": 101.0, "y_px": 182.0}, "confidence": 1.0},
+    {"timestamp_s": 0.166667, "state": "tracked", "center_px": {"x_px": 102.0, "y_px": 170.0}, "confidence": 1.0},
+    {"timestamp_s": 0.25, "state": "tracked", "center_px": {"x_px": 103.0, "y_px": 154.0}, "confidence": 1.0},
+    {"timestamp_s": 0.333333, "state": "tracked", "center_px": {"x_px": 104.0, "y_px": 135.0}, "confidence": 1.0},
+    {"timestamp_s": 0.416667, "state": "tracked", "center_px": {"x_px": 105.0, "y_px": 115.0}, "confidence": 1.0},
+    {"timestamp_s": 0.5, "state": "tracked", "center_px": {"x_px": 106.0, "y_px": 96.0}, "confidence": 1.0},
+    {"timestamp_s": 0.666667, "state": "tracked", "center_px": {"x_px": 108.0, "y_px": 76.0}, "confidence": 1.0},
+    {"timestamp_s": 0.75, "state": "tracked", "center_px": {"x_px": 109.0, "y_px": 84.0}, "confidence": 1.0},
+    {"timestamp_s": 0.916667, "state": "tracked", "center_px": {"x_px": 111.0, "y_px": 114.0}, "confidence": 1.0}
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-clean-side-12",
+  "seed": {
+    "timestamp_s": 0.0,
+    "frame_index": 0,
+    "target": {
+      "center": {
+        "x_px": 100.0,
+        "y_px": 190.0
+      },
+      "radius_px": 24.0
+    },
+    "coordinate_space": "display_top_left",
+    "source_rotation_deg": 0,
+    "selection_confidence": 1.0,
+    "notes": "Synthetic benchmark seed matching the first labelled frame."
+  }
+}
