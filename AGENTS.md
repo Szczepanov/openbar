@@ -46,7 +46,19 @@ Python validation tooling (stdlib only, Python 3.14 in CI — no third-party pac
 ```bash
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/annotations.py validate --manifest validation/fixtures/public/manifest.json validation/fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json
+python validation/tools/schema_check.py
 ```
+
+`schema_check.py` validates every committed JSON fixture against its `validation/schema/` schema.
+It fails if a JSON file under `validation/fixtures/public`, `validation/examples`,
+`validation/benchmarks` or `crates/openbar-core/tests/fixtures` has no schema mapping, so a new
+fixture type means adding a schema and a `CATALOGUE` entry, or an explicit `SCHEMALESS` reason.
+It supports only the keyword subset the schemas already use and fails closed on any other keyword.
+
+CI also runs the workspace tests and both smoke commands on Windows, and runs
+`cargo deny --all-features --locked check` (config in `deny.toml`). A new dependency whose
+licence isn't on the `deny.toml` allow-list fails CI. Extend the list only alongside the
+dependency-policy justification.
 
 `annotations.py` subcommands: `validate`, `import-csv`, `repeatability`.
 
@@ -75,8 +87,9 @@ These come from VISION.md and ADR-0003/0005. Violating them is a bug even if tes
   `method_version` / `VERSION` constant), and stable `snake_case` enum strings. Readers fail
   closed on other versions.
 - Changing serialized shape or semantics means: bump the relevant version constant, update the
-  matching `validation/schema/*.schema.json`, update the doc under `docs/data/` or
-  `docs/validation/`, and update fixtures.
+  matching `validation/schema/*.schema.json` (the canonical `Analysis` is
+  `analysis-v1.schema.json`), update the doc under `docs/data/` or `docs/validation/`, and update
+  fixtures. `python validation/tools/schema_check.py` must stay green.
 - `crates/openbar-core/tests/fixtures/analysis-v1.golden.json` is compared byte-for-byte by
   `analysis::tests::golden_json_is_stable`. Only regenerate it for an intentional, documented
   change — never to make a failing test pass.

@@ -3,6 +3,7 @@ name = "openbar-tracking"
 version = "0.1.0"
 edition = "2021"
 license-file = "../../LICENSE.md"
+publish = false
 description = "Deterministic manual-seed tracking experiments for OpenBar."
 
 [dependencies]

@@ -83,14 +83,29 @@ See [docs/legal/LICENSING_STRATEGY.md](docs/legal/LICENSING_STRATEGY.md).
 
 ## Development
 
-Prerequisite: stable Rust.
+Prerequisites:
+
+- **Rust 1.98.1** with clippy and rustfmt. `rust-toolchain.toml` pins it, so `rustup` installs
+  the right toolchain on first use.
+- **Python 3.14** for the validation tooling. Standard library only; no packages to install.
+- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) will be required for video-decoding commands once
+  the frame source from issue #40 lands. Nothing in the current tree needs it yet.
+
+CI runs these on Ubuntu (tests and smoke runs also on Windows). Run them before opening a PR:
 
 ```bash
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo run -p openbar-cli
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-targets --all-features
+cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
+cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json --output target/benchmark-smoke.json
+python -m unittest discover -v -s validation/tests -p 'test_*.py'
+python validation/tools/schema_check.py
 ```
+
+CI also runs [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) against
+[`deny.toml`](deny.toml) to check dependency licences, advisories and sources. To run it locally,
+install it with `cargo install cargo-deny --locked`, then run `cargo deny --all-features --locked check`.
 
 ## Working name
 

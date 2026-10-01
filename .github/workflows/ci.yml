@@ -55,6 +55,11 @@ jobs:
           cargo run --locked -p openbar-cli -- benchmark
           --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json
           --output target/benchmark-smoke.json
+      - name: Benchmark result schema
+        run: >-
+          python3 validation/tools/schema_check.py
+          --schema validation/schema/benchmark-result-v1.schema.json
+          target/benchmark-smoke.json
       - name: Upload M0 smoke evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -64,6 +69,51 @@ jobs:
             target/benchmark-smoke.json
           if-no-files-found: error
           retention-days: 14
+
+  rust-windows:
+    # Primary development happens on Windows; this catches line-ending and path regressions.
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.98.1
+        run: >-
+          rustup toolchain install 1.98.1
+          --profile minimal
+          --no-self-update
+      - name: Toolchain versions
+        run: |
+          rustup --version
+          rustc --version --verbose
+          cargo --version
+      - name: Test
+        run: cargo test --locked --workspace --all-targets --all-features
+      - name: First tracker comparison
+        run: >-
+          cargo run --locked -p openbar-cli -- tracker-experiment
+          --output target/tracker-experiment.json
+      - name: Benchmark regression smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- benchmark
+          --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json
+          --output target/benchmark-smoke.json
+
+  dependencies:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Licences, advisories, bans and sources
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features --locked
 
   validation:
     runs-on: ubuntu-26.04
@@ -81,8 +131,10 @@ jobs:
         run: python --version
       - name: Python syntax
         run: python -m compileall -q validation/tools validation/tests
-      - name: Annotation contract tests
+      - name: Validation tooling tests
         run: python -m unittest discover -v -s validation/tests -p 'test_*.py'
+      - name: Committed fixtures match their schemas
+        run: python validation/tools/schema_check.py
       - name: Validate committed annotation fixture
         run: >-
           python validation/tools/annotations.py validate

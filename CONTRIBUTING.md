@@ -23,4 +23,10 @@ See [docs/legal/CONTRIBUTOR_LICENSING.md](docs/legal/CONTRIBUTOR_LICENSING.md).
 - Add golden fixtures for behavioural changes when redistribution rights permit.
 - Do not silently interpolate long tracking gaps.
 - Document any parameter that materially changes measurement output.
-- Run `cargo fmt`, `cargo clippy`, and `cargo test` before opening a PR.
+- Run the checks listed under [Development](README.md#development) before opening a PR. The PR
+  template repeats them.
+
+## Security issues
+
+Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a
+public issue.

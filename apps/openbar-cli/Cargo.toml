@@ -3,6 +3,7 @@ name = "openbar-cli"
 version = "0.1.0"
 edition = "2021"
 license-file = "../../LICENSE.md"
+publish = false
 description = "Headless CLI and validation harness for OpenBar."
 
 [dependencies]

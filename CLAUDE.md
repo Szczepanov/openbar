@@ -7,8 +7,9 @@
 The shared rules above are canonical. Edit `AGENTS.md`, not this file, when a rule applies to
 every agent. Keep only Claude-specific notes here.
 
-- **Environment.** The primary dev machine is Windows; CI is Ubuntu. Commands in AGENTS.md work
-  in Git Bash and PowerShell. Use forward slashes in paths passed to the CLI.
+- **Environment.** The primary dev machine is Windows; CI is Ubuntu, plus a Windows job that runs
+  the workspace tests and both smoke commands. Commands in AGENTS.md work in Git Bash and
+  PowerShell. Use forward slashes in paths passed to the CLI.
 - **Verification before "done".** Run fmt, clippy (`-D warnings`) and the scoped `cargo test -p
   <crate>` for every crate you touched. If you changed `openbar-core`, also run the full
   workspace test and both CLI smoke commands, since `openbar-tracking` and `openbar-cli` depend

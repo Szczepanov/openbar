@@ -1,0 +1,37 @@
+# cargo-deny policy, run in CI as `cargo deny --all-features --locked check`.
+# It enforces the ARCHITECTURE.md dependency policy mechanically: a new dependency must carry an
+# allowed licence, come from crates.io, and have no open RustSec advisory. Extending `allow` is a
+# dependency decision and needs the justification the policy asks for (source, licence, purpose,
+# distribution compatibility).
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Every licence currently in the dependency graph. Workspace crates are PolyForm Shield
+# (`license-file`) and `publish = false`, so they are excluded via `private.ignore`.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Unversioned `path` dependencies between workspace crates are allowed because they are private.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

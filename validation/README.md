@@ -10,6 +10,7 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `schema/benchmark-suite-v1.schema.json` — benchmark suite/case contract.
 - `schema/tracker-prediction-v1.schema.json` — tracker prediction interchange contract.
 - `schema/benchmark-result-v1.schema.json` — versioned benchmark result artifact.
+- `schema/analysis-v1.schema.json` — structural wire contract for the canonical Rust `Analysis` (see `docs/data/ANALYSIS_SCHEMA.md`).
 - `fixtures/public/manifest.json` — committed manifest for redistribution-safe fixtures.
 - `fixtures/public/annotations/` — canonical annotations/repeatability artifacts for public fixtures.
 - `fixtures/public/seeds/` — manual target seeds attached to public benchmark fixtures.
@@ -19,7 +20,8 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `examples/manual-target-seed.example.json` — a seed linked to the synthetic example fixture ID.
 - `examples/annotation-import-metadata.example.json` + `annotation.example.csv` — minimal annotation import example.
 - `tools/annotations.py` — deterministic stdlib-only importer, validator, and repeatability metric tool.
-- `tests/` — annotation contract/tooling tests.
+- `tools/schema_check.py` — stdlib-only JSON Schema checker; validates every committed fixture against its schema and fails on unmapped JSON files.
+- `tests/` — annotation and schema-check contract/tooling tests.
 - `private/` — local-only research material; ignored by Git.
 
 The first tracker comparison is generated headlessly with:

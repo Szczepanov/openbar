@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/analysis-v1.schema.json",
+  "title": "OpenBar canonical analysis v1",
+  "description": "Structural wire contract for the Rust openbar_core::analysis::Analysis aggregate. The Rust model and its validation remain authoritative; cross-field invariants (seed/calibration agreement, timestamp ordering, calibrated/raw consistency, layer alignment, tracker references) are enforced only in Rust. See docs/data/ANALYSIS_SCHEMA.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "video",
+    "manual_seed",
+    "calibration",
+    "raw_observations",
+    "derived",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "ANALYSIS_SCHEMA_VERSION. Readers fail closed on any other version."
+    },
+    "identity": { "$ref": "#/$defs/identity" },
+    "video": { "$ref": "#/$defs/video_metadata" },
+    "manual_seed": { "$ref": "#/$defs/manual_target_seed" },
+    "calibration": { "$ref": "#/$defs/plate_diameter_calibration" },
+    "raw_observations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/raw_observation" }
+    },
+    "derived": { "$ref": "#/$defs/derived_data" },
+    "provenance": { "$ref": "#/$defs/analysis_provenance" }
+  },
+  "$defs": {
+    "non_blank_string": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$"
+    },
+    "timestamp_s": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Seconds on the decoded media timeline. Authoritative; never derived from frame index or nominal FPS."
+    },
+    "frame_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Auxiliary frame lookup only."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "source_rotation_deg": {
+      "enum": [0, 90, 180, 270]
+    },
+    "positive_dimension_px": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id"],
+      "properties": {
+        "source_id": { "$ref": "#/$defs/non_blank_string" },
+        "fixture_id": { "$ref": "#/$defs/identifier" },
+        "source_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "video_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decoded_width_px",
+        "decoded_height_px",
+        "display_width_px",
+        "display_height_px",
+        "source_rotation_deg",
+        "frame_rate",
+        "trim"
+      ],
+      "properties": {
+        "decoded_width_px": { "$ref": "#/$defs/positive_dimension_px" },
+        "decoded_height_px": { "$ref": "#/$defs/positive_dimension_px" },
+        "display_width_px": { "$ref": "#/$defs/positive_dimension_px" },
+        "display_height_px": { "$ref": "#/$defs/positive_dimension_px" },
+        "source_rotation_deg": { "$ref": "#/$defs/source_rotation_deg" },
+        "frame_rate": { "$ref": "#/$defs/frame_rate_metadata" },
+        "trim": { "$ref": "#/$defs/time_range" }
+      }
+    },
+    "frame_rate_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_basis"],
+      "properties": {
+        "timestamp_basis": { "const": "decoded_presentation_timestamp" },
+        "nominal_fps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Metadata only; never the source for derivatives."
+        },
+        "measured_fps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Metadata only; never the source for derivatives."
+        }
+      }
+    },
+    "time_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_s", "end_s"],
+      "properties": {
+        "start_s": { "type": "number", "minimum": 0 },
+        "end_s": { "type": "number", "minimum": 0 }
+      }
+    },
+    "pixel_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x_px", "y_px"],
+      "properties": {
+        "x_px": { "type": "number" },
+        "y_px": { "type": "number" }
+      }
+    },
+    "pixel_bounding_box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left_px", "top_px", "width_px", "height_px"],
+      "properties": {
+        "left_px": { "type": "number" },
+        "top_px": { "type": "number" },
+        "width_px": { "type": "number", "exclusiveMinimum": 0 },
+        "height_px": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "manual_target_seed": {
+      "description": "Same shape as manual-target-seed-v1.schema.json#/$defs/manual_target_seed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestamp_s",
+        "target",
+        "coordinate_space",
+        "source_rotation_deg"
+      ],
+      "properties": {
+        "timestamp_s": { "$ref": "#/$defs/timestamp_s" },
+        "frame_index": { "$ref": "#/$defs/frame_index" },
+        "target": { "$ref": "#/$defs/plate_target" },
+        "coordinate_space": { "const": "display_top_left" },
+        "source_rotation_deg": { "$ref": "#/$defs/source_rotation_deg" },
+        "selection_confidence": { "$ref": "#/$defs/confidence" },
+        "notes": { "type": "string" }
+      }
+    },
+    "plate_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["center", "radius_px"],
+      "properties": {
+        "center": { "$ref": "#/$defs/pixel_point" },
+        "radius_px": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "plate_diameter_calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "method_version",
+        "scale",
+        "reference",
+        "coordinate_convention",
+        "quality"
+      ],
+      "properties": {
+        "method": { "const": "plate_diameter" },
+        "method_version": {
+          "const": 1,
+          "description": "PLATE_DIAMETER_CALIBRATION_METHOD_VERSION."
+        },
+        "scale": { "$ref": "#/$defs/plate_scale" },
+        "reference": { "$ref": "#/$defs/calibration_reference" },
+        "coordinate_convention": { "const": "reference_centre_x_right_y_up" },
+        "quality": { "$ref": "#/$defs/calibration_quality" }
+      }
+    },
+    "plate_scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["diameter_m", "diameter_px", "metres_per_pixel"],
+      "properties": {
+        "diameter_m": { "type": "number", "exclusiveMinimum": 0 },
+        "diameter_px": { "type": "number", "exclusiveMinimum": 0 },
+        "metres_per_pixel": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "calibration_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestamp_s",
+        "coordinate_space",
+        "source_rotation_deg",
+        "geometry",
+        "provenance"
+      ],
+      "properties": {
+        "timestamp_s": { "$ref": "#/$defs/timestamp_s" },
+        "frame_index": { "$ref": "#/$defs/frame_index" },
+        "coordinate_space": { "const": "display_top_left" },
+        "source_rotation_deg": { "$ref": "#/$defs/source_rotation_deg" },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["center_px", "bounds_px"],
+          "properties": {
+            "center_px": { "$ref": "#/$defs/pixel_point" },
+            "bounds_px": { "$ref": "#/$defs/pixel_bounding_box" }
+          }
+        },
+        "provenance": { "$ref": "#/$defs/calibration_provenance" }
+      }
+    },
+    "calibration_provenance": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "const": "manual_target_seed" },
+            "selection_confidence": { "$ref": "#/$defs/confidence" },
+            "notes": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": { "const": "manual_plate_measurement" },
+            "notes": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "calibration_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "warnings"],
+      "properties": {
+        "status": {
+          "enum": ["unassessed", "supported", "warning", "unsupported"]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "geometry_unassessed",
+              "camera_yaw",
+              "camera_pitch_or_height",
+              "perspective_or_parallax",
+              "lens_distortion",
+              "plate_foreshortening",
+              "camera_movement",
+              "zoom_changed",
+              "unsupported_geometry"
+            ]
+          }
+        }
+      },
+      "if": {
+        "properties": { "status": { "enum": ["warning", "unsupported"] } }
+      },
+      "then": {
+        "description": "Warning/unsupported quality requires at least one warning flag.",
+        "properties": { "warnings": { "minItems": 1 } }
+      }
+    },
+    "pixel_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "x_px", "y_px", "confidence"],
+      "properties": {
+        "timestamp_s": { "$ref": "#/$defs/timestamp_s" },
+        "x_px": { "type": "number" },
+        "y_px": { "type": "number" },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "raw_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "tracking_state", "visibility", "tracker_id"],
+      "properties": {
+        "timestamp_s": { "$ref": "#/$defs/timestamp_s" },
+        "frame_index": { "$ref": "#/$defs/frame_index" },
+        "tracking_state": { "enum": ["tracked", "low_confidence", "lost"] },
+        "visibility": {
+          "enum": ["visible", "partially_occluded", "occluded", "unknown"]
+        },
+        "measurement": { "$ref": "#/$defs/pixel_observation" },
+        "target_bounds_px": { "$ref": "#/$defs/pixel_bounding_box" },
+        "tracker_id": { "$ref": "#/$defs/non_blank_string" }
+      },
+      "if": {
+        "properties": { "tracking_state": { "const": "lost" } }
+      },
+      "then": {
+        "description": "Lost means no coordinate: no measurement and no target bounds.",
+        "not": {
+          "anyOf": [
+            { "required": ["measurement"] },
+            { "required": ["target_bounds_px"] }
+          ]
+        }
+      },
+      "else": {
+        "description": "Tracked and low-confidence samples require a measured coordinate.",
+        "required": ["measurement"]
+      }
+    },
+    "metric_position_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "x_m", "y_m", "confidence"],
+      "properties": {
+        "timestamp_s": { "$ref": "#/$defs/timestamp_s" },
+        "x_m": { "type": "number" },
+        "y_m": { "type": "number" },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "kinematic_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "x_m", "y_m", "confidence"],
+      "properties": {
+        "timestamp_s": { "$ref": "#/$defs/timestamp_s" },
+        "x_m": { "type": "number" },
+        "y_m": { "type": "number" },
+        "vx_mps": {
+          "type": ["number", "null"],
+          "description": "null when velocity is not derivable/validated for this sample."
+        },
+        "vy_mps": {
+          "type": ["number", "null"],
+          "description": "null when velocity is not derivable/validated for this sample."
+        },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "parameter_value": {
+      "type": ["boolean", "integer", "number", "string"]
+    },
+    "implementation_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "version"],
+      "properties": {
+        "implementation": { "$ref": "#/$defs/non_blank_string" },
+        "version": { "$ref": "#/$defs/non_blank_string" },
+        "parameters": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/non_blank_string" },
+          "additionalProperties": { "$ref": "#/$defs/parameter_value" }
+        }
+      }
+    },
+    "derived_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calibrated"],
+      "properties": {
+        "calibrated": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["samples"],
+          "properties": {
+            "samples": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/metric_position_sample" }
+            }
+          }
+        },
+        "filtered": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filter", "samples"],
+          "properties": {
+            "filter": { "$ref": "#/$defs/implementation_provenance" },
+            "samples": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/metric_position_sample" }
+            }
+          }
+        },
+        "kinematics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "method", "samples"],
+          "properties": {
+            "input": { "enum": ["calibrated", "filtered"] },
+            "method": { "$ref": "#/$defs/implementation_provenance" },
+            "samples": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/kinematic_sample" }
+            }
+          }
+        }
+      }
+    },
+    "analysis_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pipeline", "tracker"],
+      "properties": {
+        "pipeline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["openbar_version"],
+          "properties": {
+            "openbar_version": { "$ref": "#/$defs/non_blank_string" },
+            "git_commit": {
+              "type": "string",
+              "pattern": "^[0-9A-Fa-f]{7,64}$"
+            }
+          }
+        },
+        "tracker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "implementation"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "implementation": { "$ref": "#/$defs/implementation_provenance" }
+          }
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["identifier"],
+          "properties": {
+            "identifier": { "$ref": "#/$defs/non_blank_string" },
+            "checksum_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "os": { "$ref": "#/$defs/non_blank_string" },
+            "architecture": { "$ref": "#/$defs/non_blank_string" },
+            "device": { "$ref": "#/$defs/non_blank_string" },
+            "decoder": { "$ref": "#/$defs/non_blank_string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -11,6 +11,27 @@ JSON is the canonical M0 interchange format, but there is no independent JSON-on
 model beside Rust. CLI, benchmark integration, rendering, and later UI code should consume
 or construct `analysis::Analysis` and its shared nested types.
 
+`validation/schema/analysis-v1.schema.json` describes the v1 wire shape for non-Rust
+consumers and CI. It covers field names, types, enum strings, per-field bounds, the lost-sample
+rule and the calibration quality-warning rule. Rust validation alone enforces the cross-field
+invariants, including but not limited to:
+
+- seed/calibration agreement and plate-scale consistency;
+- coordinates inside the display frame;
+- ordered time ranges and strictly increasing timestamps;
+- calibrated/raw consistency and layer alignment;
+- confidence not increasing through derived layers;
+- tracker references resolving.
+
+The schema describes canonical serializer output. It is deliberately stricter than Rust in a few
+places Rust tolerates on input:
+
+- explicit `null` for an omitted optional field;
+- unknown keys inside `calibration.reference.provenance`, which has no `deny_unknown_fields`.
+
+Apart from those, where the two disagree Rust is authoritative and the schema is the bug. CI
+validates the golden fixture against it with `python validation/tools/schema_check.py`.
+
 Current version:
 
 ```text
