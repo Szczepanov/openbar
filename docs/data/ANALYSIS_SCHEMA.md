@@ -32,16 +32,29 @@ seed shape.
 
 ### Calibration
 
-- method;
-- plate diameter in metres for the initial method;
-- measured plate size in pixels;
-- reference frame/timestamp;
-- scale;
-- quality flags.
+The authoritative M0 Rust type is `calibration::PlateDiameterCalibration`. Canonical
+analysis should embed/reuse that type rather than define a second calibration shape.
 
-Where the observed plate size comes from a manual target seed, calibration should retain
-that provenance and use the seed's explicit diameter helper rather than silently duplicating
-or rewriting the manual selection.
+It retains:
+
+- method and method version;
+- known plate diameter in metres;
+- measured plate size in pixels;
+- persisted derived metres-per-pixel scale;
+- authoritative reference timestamp and optional auxiliary frame index;
+- display coordinate space/source rotation;
+- reference centre and measurement bounds;
+- provenance linking seed-derived geometry back to the manual target seed;
+- explicit metric axis/origin convention;
+- quality status and geometry warning flags.
+
+Where the observed plate size comes from a manual target seed, construction uses
+`seed.target().diameter_px()` and retains the seed reference/provenance rather than silently
+duplicating or rewriting the manual selection.
+
+Metric positions are reference-centred with +X right and +Y up. Raw observations remain in
+the display/top-left pixel convention (+Y down) and must remain available alongside derived
+metric values. See [M0 plate-diameter calibration](../validation/PLATE_CALIBRATION.md).
 
 ### Observation
 
