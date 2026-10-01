@@ -1,4 +1,6 @@
-use crate::analysis::{ImplementationProvenance, ParameterValue};
+use crate::analysis::{
+    ImplementationProvenance, KinematicTrajectory, KinematicsInput, ParameterValue,
+};
 use crate::trajectory::{KinematicSample, MetricPositionSample};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -147,6 +149,18 @@ impl fmt::Display for KinematicsError {
 }
 
 impl std::error::Error for KinematicsError {}
+
+pub fn derive_kinematic_trajectory(
+    samples: &[MetricPositionSample],
+    input: KinematicsInput,
+    config: KinematicsConfig,
+) -> Result<KinematicTrajectory, KinematicsError> {
+    Ok(KinematicTrajectory {
+        input,
+        method: config.velocity_provenance(),
+        samples: derive_velocity(samples, config)?,
+    })
+}
 
 pub fn derive_velocity(
     samples: &[MetricPositionSample],
@@ -672,6 +686,22 @@ mod tests {
             ),
             Err(KinematicsError::IntervalBoundaryNotSampled { timestamp_s: 0.05 })
         );
+    }
+
+    #[test]
+    fn canonical_trajectory_retains_method_provenance() {
+        let samples = [
+            sample_metric_position(0.0, 0.0, 0.0, 1.0),
+            sample_metric_position(0.1, 0.1, 0.2, 0.9),
+        ];
+        let cfg = config(0.2, 0.5);
+
+        let trajectory =
+            derive_kinematic_trajectory(&samples, KinematicsInput::Filtered, cfg).unwrap();
+
+        assert_eq!(trajectory.input, KinematicsInput::Filtered);
+        assert_eq!(trajectory.method, cfg.velocity_provenance());
+        assert_eq!(trajectory.samples.len(), samples.len());
     }
 
     #[test]
