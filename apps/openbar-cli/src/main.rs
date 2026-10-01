@@ -33,8 +33,7 @@ fn main() {
 fn dispatch() -> CliResult<()> {
     match std::env::args().nth(1).as_deref() {
         Some("analyze") => analyze::run_cli(),
-        Some("benchmark") => benchmark::run_cli()
-            .map_err(|error| CliError::benchmark(error.to_string())),
+        Some("benchmark") => benchmark::run_cli(),
         Some("render") => render::run_cli(),
         Some("tracker-experiment") => tracker_experiment::run_cli()
             .map_err(|error| CliError::tracking(error.to_string())),
