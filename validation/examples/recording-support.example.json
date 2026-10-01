@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "status": "warning",
+  "conditions": {
+    "camera_view": "side",
+    "camera_movement": "fixed",
+    "nominal_fps": 30,
+    "measured_fps": 29.97,
+    "width_px": 1920,
+    "height_px": 1080,
+    "plate_diameter_px": 180,
+    "lighting": "good",
+    "plate_visibility": "clear",
+    "occlusion": "none",
+    "motion_blur": "none"
+  },
+  "dimensions": [
+    {
+      "dimension": "camera_view",
+      "status": "warning",
+      "reason": "no_held_out_real_validation",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "camera_yaw",
+      "status": "unknown",
+      "reason": "yaw_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "camera_pitch_height",
+      "status": "unknown",
+      "reason": "pitch_height_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "camera_roll",
+      "status": "unknown",
+      "reason": "roll_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "camera_distance_framing",
+      "status": "unknown",
+      "reason": "distance_framing_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "frame_rate",
+      "status": "unknown",
+      "reason": "frame_rate_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "resolution_orientation",
+      "status": "unknown",
+      "reason": "resolution_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "motion_blur_shutter",
+      "status": "unknown",
+      "reason": "motion_blur_shutter_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "lighting_contrast",
+      "status": "unknown",
+      "reason": "lighting_contrast_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "compression",
+      "status": "unknown",
+      "reason": "compression_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "plate_size",
+      "status": "unknown",
+      "reason": "plate_size_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "plate_visibility_occlusion",
+      "status": "unknown",
+      "reason": "occlusion_boundary_unmeasured",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    },
+    {
+      "dimension": "camera_stability",
+      "status": "warning",
+      "reason": "no_held_out_real_validation",
+      "evidence_ref": "docs/validation/M0_EVIDENCE_REPORT.md"
+    }
+  ],
+  "metrics": {
+    "horizontal_displacement": "warning",
+    "vertical_displacement": "warning",
+    "plate_diameter_scale": "warning",
+    "velocity": "warning"
+  }
+}
