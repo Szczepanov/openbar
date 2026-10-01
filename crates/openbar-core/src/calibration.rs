@@ -1,6 +1,7 @@
 use crate::manual_seed::{
     ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint, SpatialFrameReference,
 };
+use crate::math::approximately_equal;
 use crate::trajectory::PixelObservation;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -599,22 +600,6 @@ fn validate_quality(quality: &CalibrationQuality) -> Result<(), CalibrationError
     Ok(())
 }
 
-fn approximately_equal(left: f64, right: f64) -> bool {
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-
-    let scale = left.abs().max(right.abs());
-    if scale == 0.0 {
-        return false;
-    }
-
-    (left - right).abs() <= f64::EPSILON * 8.0 * scale
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,5 +873,45 @@ mod tests {
             .unwrap_err();
             assert_eq!(error, CalibrationError::MissingQualityWarning);
         }
+    }
+
+    #[test]
+    fn rejects_invalid_selection_confidence_in_reference() {
+        let mut calibration = PlateDiameterCalibration::try_from_manual_seed(
+            0.45,
+            &seed(),
+            CalibrationQuality::unassessed(),
+        )
+        .unwrap();
+
+        // Non-finite selection confidence
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(f32::NAN),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::NonFiniteSelectionConfidence)
+        );
+
+        // Selection confidence below range
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(-0.1),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::SelectionConfidenceOutOfRange)
+        );
+
+        // Selection confidence above range
+        calibration.reference.provenance = CalibrationProvenance::ManualTargetSeed {
+            selection_confidence: Some(1.1),
+            notes: None,
+        };
+        assert_eq!(
+            calibration.validate(),
+            Err(CalibrationError::SelectionConfidenceOutOfRange)
+        );
     }
 }

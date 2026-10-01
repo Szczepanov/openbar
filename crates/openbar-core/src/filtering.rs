@@ -51,28 +51,14 @@ pub fn moving_average(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::sample_metric_position;
 
     #[test]
     fn moving_average_preserves_timestamps() {
         let input = [
-            MetricPositionSample {
-                timestamp_s: 0.0,
-                x_m: 0.0,
-                y_m: 0.0,
-                confidence: 1.0,
-            },
-            MetricPositionSample {
-                timestamp_s: 1.0,
-                x_m: 3.0,
-                y_m: 6.0,
-                confidence: 1.0,
-            },
-            MetricPositionSample {
-                timestamp_s: 2.0,
-                x_m: 6.0,
-                y_m: 12.0,
-                confidence: 1.0,
-            },
+            sample_metric_position(0.0, 0.0, 0.0, 1.0),
+            sample_metric_position(1.0, 3.0, 6.0, 1.0),
+            sample_metric_position(2.0, 6.0, 12.0, 1.0),
         ];
 
         let output = moving_average(&input, 3).unwrap();
@@ -80,5 +66,24 @@ mod tests {
         assert_eq!(output[1].timestamp_s, 1.0);
         assert_eq!(output[1].x_m, 3.0);
         assert_eq!(output[1].y_m, 6.0);
+    }
+
+    #[test]
+    fn moving_average_handles_empty_samples() {
+        let result = moving_average(&[], 3).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn moving_average_zero_window_returns_error() {
+        let input = [MetricPositionSample {
+            timestamp_s: 0.0,
+            x_m: 1.0,
+            y_m: 2.0,
+            confidence: 1.0,
+        }];
+
+        assert_eq!(moving_average(&[], 0), Err(FilterError::ZeroWindow));
+        assert_eq!(moving_average(&input, 0), Err(FilterError::ZeroWindow));
     }
 }
