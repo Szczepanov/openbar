@@ -295,8 +295,9 @@ pub fn run_cli() -> CliResult<()> {
         .map_err(|error| CliError::benchmark(format!("benchmark data/config mismatch: {error}")))?;
     eprintln!("{}", render_summary(&artifact));
 
-    let serialized = serde_json::to_string_pretty(&artifact)
-        .map_err(|error| CliError::output(format!("failed to serialize benchmark output: {error}")))?;
+    let serialized = serde_json::to_string_pretty(&artifact).map_err(|error| {
+        CliError::output(format!("failed to serialize benchmark output: {error}"))
+    })?;
     if let Some(output_path) = output_path {
         if let Some(parent) = output_path.parent() {
             if !parent.as_os_str().is_empty() {
