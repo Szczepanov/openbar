@@ -30,8 +30,16 @@ The first tracker comparison is generated headlessly with:
 cargo run -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
 ```
 
-That artifact is procedural regression evidence and is intentionally separate from real-video M0
-validation results.
+The filter comparison is generated with:
+
+```bash
+cargo run -p openbar-cli -- filter-experiment --output target/filter-experiment.json
+```
+
+CI retains the filter JSON inside the hardened `m0-smoke-<head-sha>` workflow artifact alongside
+tracker and benchmark-smoke evidence. The retained filter JSON is deterministic measurement/contract
+evidence; environment-sensitive runtime is printed to the console and intentionally excluded from
+that JSON. Both experiment artifacts remain separate from real-video M0 validation results.
 
 Detailed policies and workflows:
 
@@ -40,6 +48,7 @@ Detailed policies and workflows:
 - [`docs/validation/ANNOTATION.md`](../docs/validation/ANNOTATION.md)
 - [`docs/validation/BENCHMARK.md`](../docs/validation/BENCHMARK.md)
 - [`docs/validation/TRACKER_EXPERIMENTS.md`](../docs/validation/TRACKER_EXPERIMENTS.md)
+- [`docs/validation/FILTER_EXPERIMENTS.md`](../docs/validation/FILTER_EXPERIMENTS.md)
 
 Do not add public media merely because it is technically accessible. Every committed media
 fixture must have affirmative redistribution rights documented in its manifest metadata.
