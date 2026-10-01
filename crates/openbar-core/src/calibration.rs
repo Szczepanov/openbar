@@ -1,6 +1,4 @@
-use crate::manual_seed::{
-    ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint,
-};
+use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint};
 use crate::trajectory::PixelObservation;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -236,7 +234,10 @@ impl CalibrationReference {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "PlateDiameterCalibrationRepr", into = "PlateDiameterCalibrationRepr")]
+#[serde(
+    try_from = "PlateDiameterCalibrationRepr",
+    into = "PlateDiameterCalibrationRepr"
+)]
 pub struct PlateDiameterCalibration {
     method: CalibrationMethod,
     method_version: u32,
@@ -381,8 +382,7 @@ impl TryFrom<PlateDiameterCalibrationRepr> for PlateDiameterCalibration {
         if calibration.method != CalibrationMethod::PlateDiameter {
             return Err(CalibrationError::UnsupportedCalibrationMethod);
         }
-        if calibration.coordinate_convention
-            != MetricCoordinateConvention::ReferenceCentreXRightYUp
+        if calibration.coordinate_convention != MetricCoordinateConvention::ReferenceCentreXRightYUp
         {
             return Err(CalibrationError::UnsupportedCoordinateConvention);
         }
@@ -662,7 +662,10 @@ mod tests {
 
         assert_eq!(calibration.method(), CalibrationMethod::PlateDiameter);
         assert_eq!(calibration.method_version(), 1);
-        assert_eq!(calibration.scale().diameter_px(), seed.target().diameter_px());
+        assert_eq!(
+            calibration.scale().diameter_px(),
+            seed.target().diameter_px()
+        );
         assert_eq!(calibration.reference().timestamp_s(), seed.timestamp_s());
         assert_eq!(calibration.reference().frame_index(), seed.frame_index());
         assert_eq!(
@@ -712,7 +715,9 @@ mod tests {
         )
         .unwrap();
 
-        let (x_m, y_m) = calibration.pixel_displacement_to_metres(10.0, 10.0).unwrap();
+        let (x_m, y_m) = calibration
+            .pixel_displacement_to_metres(10.0, 10.0)
+            .unwrap();
         assert!(x_m > 0.0);
         assert!(y_m < 0.0);
     }
@@ -770,7 +775,9 @@ mod tests {
         value["metres_per_pixel"] = serde_json::json!(42.0);
 
         let error = serde_json::from_value::<PlateCalibration>(value).unwrap_err();
-        assert!(error.to_string().contains("persisted metres-per-pixel scale"));
+        assert!(error
+            .to_string()
+            .contains("persisted metres-per-pixel scale"));
     }
 
     #[test]
