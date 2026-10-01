@@ -931,6 +931,8 @@ fn recording_conditions(
         )
     };
 
+    let authored_measured_fps = fixture.and_then(|fixture| fixture.video.measured_fps);
+
     RecordingConditions {
         camera_view,
         approx_yaw_deg,
@@ -939,7 +941,7 @@ fn recording_conditions(
         distance_m,
         camera_movement,
         nominal_fps,
-        measured_fps: measured_fps(clip),
+        measured_fps: authored_measured_fps.or_else(|| measured_fps(clip)),
         width_px: stream.display_width_px,
         height_px: stream.display_height_px,
         plate_diameter_px: Some(plate_diameter_px),
@@ -1496,6 +1498,10 @@ mod tests {
         strings(&[
             "--video",
             "clip.mp4",
+            "--camera-view",
+            "side",
+            "--camera-movement",
+            "fixed",
             "--seed",
             "seed.json",
             "--plate-diameter-m",
@@ -1522,6 +1528,32 @@ mod tests {
         assert_eq!(parsed.filter, FilterConfig::Raw);
         assert_eq!(parsed.kinematics.max_gap_s, 0.2);
         assert_eq!(parsed.kinematics.min_confidence, 0.0);
+    }
+
+    #[test]
+    fn direct_video_requires_explicit_geometry_metadata() {
+        let mut args = base_args("analysis.json");
+        let view_index = args
+            .iter()
+            .position(|arg| arg == "--camera-view")
+            .expect("camera view flag");
+        args.drain(view_index..=view_index + 1);
+        let error = parse_args(args).expect_err("missing direct geometry must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--camera-view"));
+    }
+
+    #[test]
+    fn fixture_metadata_cannot_be_silently_overridden() {
+        let mut args = base_args("analysis.json");
+        args[0] = "--manifest".to_owned();
+        args[1] = "manifest.json".to_owned();
+        args.extend(strings(&["--fixture", "synthetic-clean-side-12"]));
+        let error = parse_args(args).expect_err("fixture camera override must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("cannot override fixture metadata"));
     }
 
     #[test]
