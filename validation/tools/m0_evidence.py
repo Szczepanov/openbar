@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic M0 evidence preflight from existing OpenBar validation artifacts.
+"""Build a reproducible M0 evidence preflight from existing OpenBar validation artifacts.
 
 This tool is reporting-only. It never recomputes tracker/calibration/filter/kinematic measurements;
 authoritative measurement semantics remain in Rust. It inventories evidence, checks provenance and
@@ -95,17 +95,59 @@ def fixture_summary(manifest: dict[str, Any], annotation_paths: list[Path]) -> d
             )
         }
     )
+    distance_values = sorted(
+        {
+            float(f["camera"]["distance_m"])
+            for f in fixtures
+            if isinstance(f.get("camera", {}).get("distance_m"), (int, float))
+        }
+    )
+    yaw_values = sorted(
+        {
+            float(f["camera"]["approx_yaw_deg"])
+            for f in fixtures
+            if isinstance(f.get("camera", {}).get("approx_yaw_deg"), (int, float))
+        }
+    )
+    metadata_gaps = []
+    missing_distance = sum(1 for f in fixtures if "distance_m" not in f.get("camera", {}))
+    missing_yaw = sum(1 for f in fixtures if "approx_yaw_deg" not in f.get("camera", {}))
+    if missing_distance:
+        metadata_gaps.append(f"camera.distance_m missing for {missing_distance} fixture(s)")
+    if missing_yaw:
+        metadata_gaps.append(f"camera.approx_yaw_deg missing for {missing_yaw} fixture(s)")
+    metadata_gaps.append(
+        "plate/background contrast is not a first-class fixture-manifest field; use challenge tags "
+        "or future versioned metadata rather than inferring a numeric contrast value"
+    )
+
     return {
         "fixture_count": len(fixtures),
         "synthetic_fixture_count": len(synthetic),
         "non_synthetic_fixture_count": len(non_synthetic),
         "annotated_fixture_count": len(annotated_ids),
+        "development_fixture_count": sum(1 for f in fixtures if f.get("purpose") == "development"),
+        "validation_fixture_count": sum(1 for f in fixtures if f.get("purpose") == "validation"),
         "held_out_real_validation_fixture_count": len(held_out_real),
         "held_out_real_annotated_fixture_count": len(held_out_real_annotated),
         "exercises": sorted({str(f.get("exercise")) for f in fixtures}),
         "camera_views": sorted({str(f.get("camera", {}).get("view")) for f in fixtures}),
+        "camera_movements": sorted({str(f.get("camera", {}).get("movement")) for f in fixtures}),
+        "motion_blur_levels": sorted({str(f.get("conditions", {}).get("motion_blur")) for f in fixtures}),
+        "occlusion_levels": sorted({str(f.get("conditions", {}).get("occlusion")) for f in fixtures}),
+        "lighting_conditions": sorted({str(f.get("conditions", {}).get("lighting")) for f in fixtures}),
+        "camera_distance_m_values": distance_values,
+        "approx_yaw_deg_values": yaw_values,
+        "challenge_tags": sorted(
+            {
+                str(tag)
+                for f in fixtures
+                for tag in f.get("conditions", {}).get("challenge_tags", [])
+            }
+        ),
         "fps_values": fps_values,
         "purposes": sorted({str(f.get("purpose")) for f in fixtures}),
+        "metadata_gaps": metadata_gaps,
     }
 
 
@@ -323,7 +365,17 @@ def render_markdown(evidence: dict[str, Any]) -> str:
         f"- Annotated held-out non-synthetic validation fixtures: {coverage['held_out_real_annotated_fixture_count']}.",
         f"- Exercises: {', '.join(coverage['exercises']) or 'none'}.",
         f"- Camera views: {', '.join(coverage['camera_views']) or 'none'}.",
+        f"- Camera movement: {', '.join(coverage['camera_movements']) or 'none'}.",
+        f"- Motion blur: {', '.join(coverage['motion_blur_levels']) or 'none'}; occlusion: {', '.join(coverage['occlusion_levels']) or 'none'}.",
+        f"- Lighting: {', '.join(coverage['lighting_conditions']) or 'none'}.",
         f"- FPS values: {', '.join(str(value) for value in coverage['fps_values']) or 'none'}.",
+        f"- Camera distances (m): {', '.join(str(value) for value in coverage['camera_distance_m_values']) or 'not recorded'}.",
+        f"- Approximate yaw (deg): {', '.join(str(value) for value in coverage['approx_yaw_deg_values']) or 'not recorded'}.",
+        f"- Development vs validation fixtures: {coverage['development_fixture_count']} / {coverage['validation_fixture_count']}.",
+        f"- Challenge tags: {', '.join(coverage['challenge_tags']) or 'none'}.",
+        "",
+        "Metadata gaps:",
+        *[f"- {gap}" for gap in coverage["metadata_gaps"]],
         "",
         "The public synthetic fixture is useful for integration/regression evidence but is not treated as a substitute for real lifting-video validation.",
         "",
