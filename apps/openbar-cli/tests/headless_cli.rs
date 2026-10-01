@@ -226,7 +226,10 @@ fn render_failure_fixture_is_deterministic_and_keeps_uncertainty_visible() {
 
     let first = fs::read(&output_a).expect("read first failure report");
     let second = fs::read(&output_b).expect("read second failure report");
-    assert_eq!(\n        first, second,\n        "same canonical input must render byte-identically"\n    );
+    assert_eq!(
+        first, second,
+        "same canonical input must render byte-identically"
+    );
     let svg = String::from_utf8(first).expect("SVG must be UTF-8");
     assert!(svg.contains("data-state=\"lost\""));
     assert!(svg.contains("data-state=\"low_confidence\""));
@@ -235,6 +238,28 @@ fn render_failure_fixture_is_deterministic_and_keeps_uncertainty_visible() {
 
     let _ = fs::remove_file(output_a);
     let _ = fs::remove_file(output_b);
+}
+
+#[test]
+fn render_rejects_malformed_canonical_analysis_without_creating_output() {
+    let analysis = scratch("render-malformed.json");
+    let output = scratch("render-malformed.svg");
+    let _ = fs::remove_file(&analysis);
+    let _ = fs::remove_file(&output);
+    fs::write(&analysis, r#"{"schema_version":1}"#).expect("write malformed analysis");
+
+    let render = Command::new(binary())
+        .arg("render")
+        .arg("--analysis")
+        .arg(&analysis)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .expect("run malformed render");
+    assert_exit(&render, 2, "status=failure error[invalid-input]");
+    assert!(!output.exists(), "invalid analysis must not create a render artifact");
+
+    let _ = fs::remove_file(analysis);
 }
 
 #[test]
