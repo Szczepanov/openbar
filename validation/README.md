@@ -20,6 +20,8 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `examples/manual-target-seed.example.json` — a seed linked to the synthetic example fixture ID.
 - `examples/annotation-import-metadata.example.json` + `annotation.example.csv` — minimal annotation import example.
 - `tools/annotations.py` — deterministic stdlib-only importer, validator, and repeatability metric tool.
+- `tools/label_package.py` + `tools/label_page.html` — optional stdlib-only helper that extracts frames on a
+  uniform time grid and builds a local click-to-label page exporting the `import-csv` format.
 - `tools/schema_check.py` — stdlib-only JSON Schema checker; validates every committed fixture against its schema and fails on unmapped JSON files.
 - `tests/` — annotation and schema-check contract/tooling tests.
 - `private/` — local-only research material; ignored by Git.
