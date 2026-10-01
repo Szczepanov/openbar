@@ -21,6 +21,9 @@ jobs:
   rust:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    env:
+      # Decode tests skip without FFmpeg locally; in CI a missing install must fail.
+      OPENBAR_REQUIRE_FFMPEG: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,6 +41,11 @@ jobs:
           rustup --version
           rustc --version --verbose
           cargo --version
+      - name: Install FFmpeg (external decode prerequisite, ADR-0006)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -version | head -n 1
       - name: Verify dependency lock
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format
@@ -64,6 +72,19 @@ jobs:
           python3 validation/tools/schema_check.py
           --schema validation/schema/benchmark-result-v1.schema.json
           target/benchmark-smoke.json
+      - name: Decoded-video tracker smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- tracker-run
+          --manifest validation/fixtures/public/manifest.json
+          --fixture synthetic-clean-side-12
+          --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json
+          --output-dir target/tracker-run-smoke
+      - name: Tracker prediction schema
+        run: >-
+          python3 validation/tools/schema_check.py
+          --schema validation/schema/tracker-prediction-v1.schema.json
+          target/tracker-run-smoke/synthetic-clean-side-12.template-sad-v1.prediction-v1.json
+          target/tracker-run-smoke/synthetic-clean-side-12.local-contrast-centroid-v1.prediction-v1.json
       - name: Upload M0 smoke evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -72,6 +93,7 @@ jobs:
             target/tracker-experiment.json
             target/filter-experiment.json
             target/benchmark-smoke.json
+            target/tracker-run-smoke/
           if-no-files-found: error
           retention-days: 14
 
@@ -79,6 +101,8 @@ jobs:
     # Primary development happens on Windows; this catches line-ending and path regressions.
     runs-on: windows-2025
     timeout-minutes: 20
+    env:
+      OPENBAR_REQUIRE_FFMPEG: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +118,10 @@ jobs:
           rustup --version
           rustc --version --verbose
           cargo --version
+      - name: Install FFmpeg (external decode prerequisite, ADR-0006)
+        run: |
+          choco install ffmpeg --yes --no-progress
+          ffmpeg -hide_banner -version
       - name: Test
         run: cargo test --locked --workspace --all-targets --all-features
       - name: First tracker comparison
@@ -105,6 +133,19 @@ jobs:
           cargo run --locked -p openbar-cli -- benchmark
           --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json
           --output target/benchmark-smoke.json
+      - name: Decoded-video tracker smoke
+        run: >-
+          cargo run --locked -p openbar-cli -- tracker-run
+          --manifest validation/fixtures/public/manifest.json
+          --fixture synthetic-clean-side-12
+          --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json
+          --output-dir target/tracker-run-smoke
+      - name: Tracker prediction schema
+        run: >-
+          python validation/tools/schema_check.py
+          --schema validation/schema/tracker-prediction-v1.schema.json
+          target/tracker-run-smoke/synthetic-clean-side-12.template-sad-v1.prediction-v1.json
+          target/tracker-run-smoke/synthetic-clean-side-12.local-contrast-centroid-v1.prediction-v1.json
 
   dependencies:
     runs-on: ubuntu-26.04

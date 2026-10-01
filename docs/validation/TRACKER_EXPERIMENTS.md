@@ -104,6 +104,59 @@ Tests also load the committed manual seed and annotation document for
 through the same timestamp-based evaluator. This checks compatibility with the #3/#4/#5/#6
 contracts without pretending synthetic pixels are real-video evidence.
 
+## Real decoded video: `tracker-run`
+
+Issue #40 adds the ADR-0006 frame source and a `tracker-run` subcommand that feeds real
+decoded frames to both baselines:
+
+```bash
+cargo run --locked -p openbar-cli -- tracker-run \
+  --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 \
+  --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json \
+  --output-dir target/tracker-run-smoke
+```
+
+- **Media and checks.** Media comes from the manifest's `media.repository_path`, resolved from
+  the current directory, or from `--media`. Its SHA-256, encoded size and rotation must match
+  the manifest, and the seed is validated against the decoded display frame.
+- **Range and memory.** `--start-s/--end-s` select an inclusive window. Its boundaries are
+  exact, with no tolerance. `--max-frame-memory-mib` (default 2048) caps the frames held in
+  memory.
+- **Seed check.** The seed must lie within 0.0005 s of a selected decoded frame. Otherwise the
+  run stops before tracking and reports the gap to the nearest frame.
+- **Configuration.** Both trackers use their default configuration, with two changes. Seed
+  timestamp tolerance is set to 0.0005 s, the annotation decoder-match tolerance.
+  `--search-radius-px` overrides the search radius for both trackers when given.
+- **Output.** One tracker-prediction-v1 document is written per tracker, named
+  `<fixture>.<tracker>.prediction-v1.json`. `implementation.config` records the tracker
+  config, the seed and the full frame-source provenance. The benchmark harness consumes these
+  documents unchanged.
+- **Coverage.** Trackers observe from the seed frame onward; frames before the seed are decoded
+  but not tracked.
+- **Failures.** A tracker that rejects its input fails without blocking the other tracker. The
+  command still exits non-zero.
+
+### First real-footage observations (private, unannotated)
+
+These are qualitative observations from one private hang-snatch clip (720×1280 display, VFR,
+30 fps nominal, 90° rotation). The seed was estimated from intensity profiles (about ±5 px).
+They are not accuracy evidence. That needs annotations and the benchmark harness.
+
+| Run | Outcome |
+| --- | --- |
+| `template-sad-v1`, default search radius 12 px | Followed the plate through the dip, lost it in the explosive pull (where the plate moves about 30+ px/frame), then followed the lifter's body for the rest of the clip. Every frame stayed `tracked`, at confidence about 0.85–0.97. **No loss was reported.** Runtime about 0.36× real time. |
+| `template-sad-v1`, search radius 40 px | Visually stayed on the plate through pull, catch and overhead, with a visible offset and the plate partly leaving the top of the frame; lagged when the bar was dropped. Runtime about 0.05× real time. |
+| `local-contrast-centroid-v1` | Refused the seed: plate/background contrast 11.9 is below its 12.0 minimum (grey bumper plate against grey clothing and wall). |
+
+Implications to test with annotated real clips:
+
+- Template confidence can remain high on a wrong target. Availability and confidence alone
+  cannot detect a silent false track, so position error against annotations is required.
+- A fixed per-frame search radius has to cover peak bar speed in pixels per frame. That speed
+  scales with frame rate and plate size in pixels, so a constant radius is fragile.
+- Exhaustive SAD search over a plate-sized template is far slower than real time at realistic
+  radii. Meeting the offline-speed gate needs a cheaper search or a different candidate.
+
 ## Carry-forward recommendation
 
 Carry both candidates into real decoded-video benchmarking:
