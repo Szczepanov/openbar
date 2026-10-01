@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/manual-target-seed-v1.schema.json",
+  "title": "OpenBar M0 manual target seed",
+  "description": "Standalone serialized wrapper for the Rust manual target seed domain type.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "seed"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Standalone manual-target-seed document schema version."
+    },
+    "fixture_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "minLength": 1,
+      "description": "Optional fixture identifier from the M0 fixture manifest."
+    },
+    "seed": {
+      "$ref": "#/$defs/manual_target_seed"
+    }
+  },
+  "$defs": {
+    "manual_target_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timestamp_s",
+        "target",
+        "coordinate_space",
+        "source_rotation_deg"
+      ],
+      "properties": {
+        "timestamp_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Authoritative reference time in seconds on the decoded media timeline."
+        },
+        "frame_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional auxiliary frame lookup; timestamp remains authoritative."
+        },
+        "target": {
+          "$ref": "#/$defs/plate_target"
+        },
+        "coordinate_space": {
+          "const": "display_top_left",
+          "description": "Display-oriented pixels after applying source rotation; origin top-left, +X right, +Y down."
+        },
+        "source_rotation_deg": {
+          "enum": [0, 90, 180, 270],
+          "description": "Source rotation metadata that was applied before the display-oriented seed coordinates were selected."
+        },
+        "selection_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Optional human/annotation confidence in the manual selection, never tracker confidence."
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "plate_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["center", "radius_px"],
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/pixel_point"
+        },
+        "radius_px": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Canonical seed geometry. Diameter and square bounds are derived explicitly from this radius."
+        }
+      }
+    },
+    "pixel_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x_px", "y_px"],
+      "properties": {
+        "x_px": { "type": "number" },
+        "y_px": { "type": "number" }
+      }
+    }
+  }
+}

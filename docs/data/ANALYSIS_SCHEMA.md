@@ -13,6 +13,23 @@ The Rust types are intentionally minimal during bootstrap. This document describ
 - frame-rate metadata;
 - trim range.
 
+### Manual target seed
+
+The M0 manual selection is a distinct input domain object, not a tracker observation.
+
+It retains:
+
+- authoritative reference timestamp;
+- optional auxiliary frame index;
+- manually selected plate centre and canonical radius in display-oriented pixels;
+- explicit display/top-left coordinate convention and source rotation;
+- optional human selection confidence/notes.
+
+The authoritative Rust type is `manual_seed::ManualTargetSeed`. A standalone versioned
+document exists for validation fixtures and CLI/benchmark interchange. The canonical #9
+analysis representation should embed/reuse this Rust seed type rather than define a second
+seed shape.
+
 ### Calibration
 
 - method;
@@ -22,6 +39,10 @@ The Rust types are intentionally minimal during bootstrap. This document describ
 - scale;
 - quality flags.
 
+Where the observed plate size comes from a manual target seed, calibration should retain
+that provenance and use the seed's explicit diameter helper rather than silently duplicating
+or rewriting the manual selection.
+
 ### Observation
 
 - timestamp;
@@ -30,6 +51,9 @@ The Rust types are intentionally minimal during bootstrap. This document describ
 - confidence;
 - visibility/tracking state;
 - detector/tracker provenance.
+
+Tracker observations and tracker confidence are downstream outputs. They must not overwrite
+or be written back into the manual target seed.
 
 ### Derived metric sample
 

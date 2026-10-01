@@ -107,6 +107,20 @@ The examples are metadata-only synthetic records. They intentionally include sid
 clean/snatch/control cases and an oblique boundary case; they do not grant or imply rights
 to any external media.
 
+## Manual target seed linkage
+
+Manual target selections are intentionally separate artifacts rather than fields inside the
+fixture catalogue. A standalone seed document may reference the stable fixture ID through
+`fixture_id`:
+
+- `validation/schema/manual-target-seed-v1.schema.json`;
+- `validation/examples/manual-target-seed.example.json`.
+
+This keeps fixture provenance/conditions stable while #5 benchmark cases can resolve the
+same manual seed for multiple tracker implementations. See
+[`MANUAL_TARGET_SEED.md`](MANUAL_TARGET_SEED.md) for coordinate, timestamp, geometry, and
+validation semantics.
+
 ## Schema evolution
 
 - Compatible additions may extend the v1 schema without changing existing field meaning.
