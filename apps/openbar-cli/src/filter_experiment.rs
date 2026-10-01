@@ -436,12 +436,9 @@ fn max_gap(samples: &[MetricPositionSample]) -> Option<f64> {
 }
 
 fn scenarios() -> Vec<Scenario> {
-    const DEVELOPMENT_NOISE_SEEDS: [u64; 3] = [
-        0x4f50_454e_4241_5201,
-        0x4f50_454e_4241_5202,
-        0x4f50_454e_4241_5203,
-    ];
-    const HELD_OUT_NOISE_SEED: u64 = 0x4845_4c44_4f55_5401;
+    // Keep persisted seeds below 2^53 so JSON consumers that use IEEE-754 numbers preserve them exactly.
+    const DEVELOPMENT_NOISE_SEEDS: [u64; 3] = [0x4f50_0001, 0x4f50_0002, 0x4f50_0003];
+    const HELD_OUT_NOISE_SEED: u64 = 0x4845_0001;
 
     let mut scenarios = Vec::new();
     for seed in DEVELOPMENT_NOISE_SEEDS {
