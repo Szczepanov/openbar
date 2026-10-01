@@ -199,7 +199,7 @@ fn confidence(out: &mut String, analysis: &Analysis, top: f64) -> f64 {
     if !d.is_empty() { writeln!(out, r#"<path class="r" data-layer="confidence" d="{}"/>"#, d.trim()).unwrap(); }
     for sample in analysis.raw_observations() {
         let px = time_x(analysis, sample.timestamp_s, X, PW);
-        let py = value_y(match sample.tracking_state { TrackingState::Tracked => .95, TrackingState::LowConfidence => .5, TrackingState::Lost => .05 }, (0.0,1.0), y);
+        let py = value_y(match sample.tracking_state { TrackingState::Tracked => 0.95, TrackingState::LowConfidence => 0.5, TrackingState::Lost => 0.05 }, (0.0,1.0), y);
         state(out, px, py, sample.tracking_state);
     }
     labels(out, analysis, y, (0.0,1.0), "confidence");
@@ -246,7 +246,7 @@ fn labels(out:&mut String, analysis:&Analysis, top:f64, limits:(f64,f64), unit:&
     text(out,X+5.0,top+14.0,&format!("max {:.3} {unit}",limits.1),"s"); text(out,X+5.0,top+PH-5.0,&format!("min {:.3} {unit}",limits.0),"s");
     text(out,X+PW-180.0,top+PH-5.0,&format!("{:.3}s → {:.3}s",analysis.video().trim.start_s,analysis.video().trim.end_s),"s");
 }
-fn range(v:&[f64], pad:f64)->(f64,f64){ let mut lo=v.iter().copied().fold(0.0,f64::min); let mut hi=v.iter().copied().fold(0.0,f64::max); let p=((hi-lo)*.08).max(pad); lo-=p; hi+=p; (lo,hi) }
+fn range(v:&[f64], pad:f64)->(f64,f64){ let mut lo=v.iter().copied().fold(0.0,f64::min); let mut hi=v.iter().copied().fold(0.0,f64::max); let p=((hi-lo)*0.08).max(pad); lo-=p; hi+=p; (lo,hi) }
 fn lost_between(a:&Analysis,s:f64,e:f64)->bool{a.raw_observations().iter().any(|r|r.tracking_state==TrackingState::Lost&&r.timestamp_s>s&&r.timestamp_s<e)}
 fn time_x(a:&Analysis,t:f64,left:f64,w:f64)->f64{let span=a.video().trim.end_s-a.video().trim.start_s;if span<=f64::EPSILON{return left+w/2.0;}left+((t-a.video().trim.start_s)/span).clamp(0.0,1.0)*w}
 fn value_y(v:f64,(lo,hi):(f64,f64),top:f64)->f64{if hi-lo<=f64::EPSILON{return top+PH/2.0;}top+PH-(v-lo)/(hi-lo)*PH}
