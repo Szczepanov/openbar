@@ -748,3 +748,253 @@ pub enum AnalysisJsonError {
 impl fmt::Display for AnalysisJsonError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Validation(error) => write!(formatter, "analysis validation failed: {error}"),
+            Self::Json(error) => write!(formatter, "analysis JSON error: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for AnalysisJsonError {}
+
+fn invalid(message: impl Into<String>) -> AnalysisValidationError {
+    AnalysisValidationError {
+        message: message.into(),
+    }
+}
+
+fn validate_non_blank(path: &str, value: &str) -> Result<(), AnalysisValidationError> {
+    if value.trim().is_empty() {
+        return Err(invalid(format!("{path} must not be blank")));
+    }
+    Ok(())
+}
+
+fn validate_identifier(path: &str, value: &str) -> Result<(), AnalysisValidationError> {
+    validate_non_blank(path, value)?;
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return Err(invalid(format!("{path} must not be blank")));
+    };
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return Err(invalid(format!(
+            "{path} must start with a lowercase ASCII letter or digit"
+        )));
+    }
+    if !bytes.all(|byte| {
+        byte.is_ascii_lowercase()
+            || byte.is_ascii_digit()
+            || matches!(byte, b'.' | b'_' | b'-')
+    }) {
+        return Err(invalid(format!(
+            "{path} may contain only lowercase ASCII letters, digits, '.', '_' or '-'"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_sha256(path: &str, value: &str) -> Result<(), AnalysisValidationError> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid(format!(
+            "{path} must be exactly 64 hexadecimal characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_bounds(bounds: PixelBoundingBox) -> Result<(), AnalysisValidationError> {
+    if !bounds.left_px.is_finite()
+        || !bounds.top_px.is_finite()
+        || !bounds.width_px.is_finite()
+        || !bounds.height_px.is_finite()
+    {
+        return Err(invalid("target bounds must be finite"));
+    }
+    if bounds.width_px <= 0.0 || bounds.height_px <= 0.0 {
+        return Err(invalid("target bounds must have positive width and height"));
+    }
+    Ok(())
+}
+
+fn validate_configuration(
+    path: &str,
+    configuration: &Configuration,
+) -> Result<(), AnalysisValidationError> {
+    for (key, value) in configuration {
+        validate_non_blank(&format!("{path}.parameters key"), key)?;
+        value.validate(&format!("{path}.parameters.{key}"))?;
+    }
+    Ok(())
+}
+
+fn validate_metric_series(
+    samples: &[MetricPositionSample],
+    name: &str,
+) -> Result<(), AnalysisValidationError> {
+    let mut previous_timestamp = None;
+    for (index, sample) in samples.iter().copied().enumerate() {
+        sample.validate().map_err(|error| {
+            trajectory_error(format!("{name} sample {index}"), error)
+        })?;
+        if let Some(previous) = previous_timestamp {
+            if sample.timestamp_s <= previous {
+                return Err(invalid(format!(
+                    "{name} sample timestamps must be strictly increasing"
+                )));
+            }
+        }
+        previous_timestamp = Some(sample.timestamp_s);
+    }
+    Ok(())
+}
+
+fn validate_aligned_metric_series(
+    source: &[MetricPositionSample],
+    derived: &[MetricPositionSample],
+    name: &str,
+) -> Result<(), AnalysisValidationError> {
+    if source.len() != derived.len() {
+        return Err(invalid(format!(
+            "{name} trajectory must stay timestamp-aligned with the calibrated trajectory"
+        )));
+    }
+    for (index, (source, derived)) in source.iter().zip(derived).enumerate() {
+        if source.timestamp_s != derived.timestamp_s {
+            return Err(invalid(format!(
+                "{name} sample {index} timestamp does not match calibrated input"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_kinematic_series(samples: &[KinematicSample]) -> Result<(), AnalysisValidationError> {
+    let mut previous_timestamp = None;
+    for (index, sample) in samples.iter().copied().enumerate() {
+        sample.validate().map_err(|error| {
+            trajectory_error(format!("kinematic sample {index}"), error)
+        })?;
+        if let Some(previous) = previous_timestamp {
+            if sample.timestamp_s <= previous {
+                return Err(invalid(
+                    "kinematic sample timestamps must be strictly increasing",
+                ));
+            }
+        }
+        previous_timestamp = Some(sample.timestamp_s);
+    }
+    Ok(())
+}
+
+fn trajectory_error(prefix: String, error: TrajectoryValidationError) -> AnalysisValidationError {
+    invalid(format!("{prefix}: {error}"))
+}
+
+fn approximately_equal(left: f64, right: f64) -> bool {
+    if left == right {
+        return true;
+    }
+    if !left.is_finite() || !right.is_finite() {
+        return false;
+    }
+    let scale = left.abs().max(right.abs()).max(1.0);
+    (left - right).abs() <= f64::EPSILON * 16.0 * scale
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::calibration::{CalibrationQuality, PlateDiameterCalibration};
+    use crate::manual_seed::{PixelPoint, PlateTarget};
+
+    fn seed(video: &VideoMetadata) -> ManualTargetSeed {
+        ManualTargetSeed::try_new(
+            1.0,
+            Some(60),
+            PlateTarget::new(PixelPoint::new(960.0, 700.0), 100.0),
+            video.source_rotation_deg,
+            Some(0.95),
+            Some("golden seed".to_owned()),
+            SeedValidationContext {
+                frame_width_px: video.display_width_px,
+                frame_height_px: video.display_height_px,
+                selected_range_start_s: video.trim.start_s,
+                selected_range_end_s: video.trim.end_s,
+                source_rotation_deg: video.source_rotation_deg,
+            },
+        )
+        .unwrap()
+    }
+
+    fn video() -> VideoMetadata {
+        VideoMetadata {
+            decoded_width_px: 1920,
+            decoded_height_px: 1080,
+            display_width_px: 1920,
+            display_height_px: 1080,
+            source_rotation_deg: 0,
+            frame_rate: FrameRateMetadata {
+                timestamp_basis: TimestampBasis::DecodedPresentationTimestamp,
+                nominal_fps: Some(60.0),
+                measured_fps: Some(59.94),
+            },
+            trim: TimeRange {
+                start_s: 0.5,
+                end_s: 2.0,
+            },
+        }
+    }
+
+    fn provenance() -> AnalysisProvenance {
+        let mut tracker_parameters = BTreeMap::new();
+        tracker_parameters.insert("search_radius_px".to_owned(), ParameterValue::Integer(32));
+        AnalysisProvenance {
+            pipeline: PipelineProvenance {
+                openbar_version: "0.1.0".to_owned(),
+                git_commit: Some("0123456789abcdef0123456789abcdef01234567".to_owned()),
+            },
+            tracker: TrackerProvenance {
+                id: "tracker-primary".to_owned(),
+                implementation: ImplementationProvenance {
+                    implementation: "synthetic-tracker".to_owned(),
+                    version: "1".to_owned(),
+                    parameters: tracker_parameters,
+                },
+            },
+            model: None,
+            environment: Some(EnvironmentProvenance {
+                os: Some("test-os".to_owned()),
+                architecture: Some("test-arch".to_owned()),
+                device: None,
+                decoder: Some("synthetic-decoder@1".to_owned()),
+            }),
+        }
+    }
+
+    fn analysis() -> Analysis {
+        let video = video();
+        let seed = seed(&video);
+        let calibration = PlateDiameterCalibration::try_from_manual_seed(
+            0.45,
+            &seed,
+            CalibrationQuality::unassessed(),
+        )
+        .unwrap();
+        let raw_a = PixelObservation {
+            timestamp_s: 1.0,
+            x_px: 960.0,
+            y_px: 700.0,
+            confidence: 0.95,
+        };
+        let raw_b = PixelObservation {
+            timestamp_s: 1.2,
+            x_px: 980.0,
+            y_px: 660.0,
+            confidence: 0.75,
+        };
+        let calibrated_a = calibration.calibrate_observation(raw_a).unwrap();
+        let calibrated_b = calibration.calibrate_observation(raw_b).unwrap();
+        let metric = vec![
+            MetricPositionSample {
+                timestamp_s: raw_a.timestamp_s,
+                x_m: calibrated_a.x_m,
+                y_m: calibrated_a.y_m,
