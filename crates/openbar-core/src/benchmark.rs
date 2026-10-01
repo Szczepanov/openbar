@@ -855,7 +855,7 @@ impl fmt::Display for FilterBenchmarkError {
                 formatter,
                 "filter benchmark timestamps must be strictly increasing (indices {previous_index} and {index})"
             ),
-            Self::Kinematics(reason) => write!(formatter, "velocity derivation failed: {reason}"),
+            Self::Kinematics(reason) => write!(formatter, "kinematics evaluation failed: {reason}"),
         }
     }
 }
@@ -1009,46 +1009,37 @@ pub fn evaluate_filter_case(
                 .map(|(truth, actual)| (actual.value - truth.value).abs()),
         )
     };
-    let horizontal_rom_absolute_error_m =
-        metric_error(crate::kinematics::MetricAxis::HorizontalX)?;
-    let vertical_rom_absolute_error_m =
-        metric_error(crate::kinematics::MetricAxis::VerticalY)?;
+    let horizontal_rom_absolute_error_m = metric_error(crate::kinematics::MetricAxis::HorizontalX)?;
+    let vertical_rom_absolute_error_m = metric_error(crate::kinematics::MetricAxis::VerticalY)?;
 
     let full_interval = crate::kinematics::MetricInterval::try_new(
         reference[0].timestamp_s,
         reference[reference.len() - 1].timestamp_s,
     )
     .ok();
-    let (mean_vx_absolute_error_mps, mean_vy_absolute_error_mps) =
-        if let Some(interval) = full_interval {
-            let axis_error = |axis: crate::kinematics::MetricAxis| {
-                let truth = crate::kinematics::mean_axis_velocity(
-                    reference,
-                    axis,
-                    interval,
-                    kinematics_config,
-                )
-                .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-                let actual = crate::kinematics::mean_axis_velocity(
-                    filtered,
-                    axis,
-                    interval,
-                    kinematics_config,
-                )
-                .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-                Ok::<_, FilterBenchmarkError>(
-                    truth
-                        .zip(actual)
-                        .map(|(truth, actual)| (actual.value - truth.value).abs()),
-                )
-            };
-            (
-                axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
-                axis_error(crate::kinematics::MetricAxis::VerticalY)?,
+    let (mean_vx_absolute_error_mps, mean_vy_absolute_error_mps) = if let Some(interval) =
+        full_interval
+    {
+        let axis_error = |axis: crate::kinematics::MetricAxis| {
+            let truth =
+                crate::kinematics::mean_axis_velocity(reference, axis, interval, kinematics_config)
+                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+            let actual =
+                crate::kinematics::mean_axis_velocity(filtered, axis, interval, kinematics_config)
+                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+            Ok::<_, FilterBenchmarkError>(
+                truth
+                    .zip(actual)
+                    .map(|(truth, actual)| (actual.value - truth.value).abs()),
             )
-        } else {
-            (None, None)
         };
+        (
+            axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
+            axis_error(crate::kinematics::MetricAxis::VerticalY)?,
+        )
+    } else {
+        (None, None)
+    };
 
     let (peak_vx_absolute_error_mps, peak_vy_absolute_error_mps) =
         if parameters.evaluate_peak_metrics {
