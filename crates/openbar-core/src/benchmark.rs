@@ -764,6 +764,7 @@ mod tests {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FilterBenchmarkParameters {
     pub max_velocity_gap_s: f64,
+    pub evaluate_peak_metrics: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -973,19 +974,21 @@ pub fn evaluate_filter_case(
         velocity_squared_error_sum += squared_error;
         velocity_count += 1;
 
-        let truth_speed = truth_vx.hypot(truth_vy);
-        let actual_speed = actual_vx.hypot(actual_vy);
-        if reference_peak
-            .as_ref()
-            .is_none_or(|(speed, _)| truth_speed > *speed)
-        {
-            reference_peak = Some((truth_speed, truth.timestamp_s));
-        }
-        if filtered_peak
-            .as_ref()
-            .is_none_or(|(speed, _)| actual_speed > *speed)
-        {
-            filtered_peak = Some((actual_speed, actual.timestamp_s));
+        if parameters.evaluate_peak_metrics {
+            let truth_speed = truth_vx.hypot(truth_vy);
+            let actual_speed = actual_vx.hypot(actual_vy);
+            if reference_peak
+                .as_ref()
+                .is_none_or(|(speed, _)| truth_speed > *speed)
+            {
+                reference_peak = Some((truth_speed, truth.timestamp_s));
+            }
+            if filtered_peak
+                .as_ref()
+                .is_none_or(|(speed, _)| actual_speed > *speed)
+            {
+                filtered_peak = Some((actual_speed, actual.timestamp_s));
+            }
         }
     }
 
@@ -1046,6 +1049,7 @@ mod filter_benchmark_tests {
             &filtered,
             FilterBenchmarkParameters {
                 max_velocity_gap_s: 1.5,
+                evaluate_peak_metrics: true,
             },
         )
         .unwrap();
@@ -1074,6 +1078,7 @@ mod filter_benchmark_tests {
             &filtered,
             FilterBenchmarkParameters {
                 max_velocity_gap_s: 0.05,
+                evaluate_peak_metrics: true,
             },
         )
         .unwrap();
@@ -1085,6 +1090,29 @@ mod filter_benchmark_tests {
     }
 
     #[test]
+    fn filter_metrics_can_disable_peak_metrics_when_the_reference_has_no_defined_peak() {
+        let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0), sample(2.0, 2.0)];
+        let filtered = vec![sample(0.0, 0.0), sample(1.0, 0.9), sample(2.0, 1.9)];
+
+        let metrics = evaluate_filter_case(
+            &reference,
+            &filtered,
+            FilterBenchmarkParameters {
+                max_velocity_gap_s: 1.5,
+                evaluate_peak_metrics: false,
+            },
+        )
+        .unwrap();
+
+        assert!(metrics.velocity_rmse_mps.is_some());
+        assert_eq!(metrics.ground_truth_peak_speed_mps, None);
+        assert_eq!(metrics.filtered_peak_speed_mps, None);
+        assert_eq!(metrics.peak_attenuation_mps, None);
+        assert_eq!(metrics.peak_attenuation_fraction, None);
+        assert_eq!(metrics.peak_timing_shift_s, None);
+    }
+
+    #[test]
     fn filter_metrics_reject_invalid_velocity_gap_policy() {
         let reference = vec![sample(0.0, 0.0), sample(1.0, 1.0)];
         assert!(matches!(
@@ -1093,6 +1121,7 @@ mod filter_benchmark_tests {
                 &reference,
                 FilterBenchmarkParameters {
                     max_velocity_gap_s: 0.0,
+                    evaluate_peak_metrics: true,
                 },
             ),
             Err(FilterBenchmarkError::InvalidMaximumVelocityGap { .. })
