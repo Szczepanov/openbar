@@ -1138,5 +1138,4 @@ mod tests {
             Err(KinematicsError::TrajectoryMismatch { index: 1 })
         );
     }
-
 }
