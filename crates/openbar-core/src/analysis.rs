@@ -498,3 +498,253 @@ impl RawObservation {
         }
 
         if let Some(measurement) = self.measurement {
+            measurement
+                .validate()
+                .map_err(|error| invalid(format!("raw measurement: {error}")))?;
+            if measurement.timestamp_s != self.timestamp_s {
+                return Err(invalid(
+                    "raw observation timestamp must equal its measured sample timestamp",
+                ));
+            }
+        }
+
+        if self.tracking_state == TrackingState::Lost && self.target_bounds_px.is_some() {
+            return Err(invalid(
+                "lost raw observation must not retain target bounds as if they were measured",
+            ));
+        }
+        if let Some(bounds) = self.target_bounds_px {
+            validate_bounds(bounds)?;
+            if let Some(measurement) = self.measurement {
+                if measurement.x_px < bounds.left_px
+                    || measurement.x_px > bounds.right_px()
+                    || measurement.y_px < bounds.top_px
+                    || measurement.y_px > bounds.bottom_px()
+                {
+                    return Err(invalid(
+                        "raw measurement centre must lie inside recorded target bounds",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ParameterValue {
+    Boolean(bool),
+    Integer(i64),
+    Float(f64),
+    Text(String),
+}
+
+impl ParameterValue {
+    fn validate(&self, path: &str) -> Result<(), AnalysisValidationError> {
+        match self {
+            Self::Float(value) if !value.is_finite() => {
+                Err(invalid(format!("{path} must not contain non-finite floats")))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+pub type Configuration = BTreeMap<String, ParameterValue>;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImplementationProvenance {
+    pub implementation: String,
+    pub version: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: Configuration,
+}
+
+impl ImplementationProvenance {
+    fn validate(&self, path: &str) -> Result<(), AnalysisValidationError> {
+        validate_non_blank(&format!("{path}.implementation"), &self.implementation)?;
+        validate_non_blank(&format!("{path}.version"), &self.version)?;
+        validate_configuration(path, &self.parameters)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrackerProvenance {
+    pub id: String,
+    pub implementation: ImplementationProvenance,
+}
+
+impl TrackerProvenance {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        validate_identifier("provenance.tracker.id", &self.id)?;
+        self.implementation.validate("provenance.tracker")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PipelineProvenance {
+    pub openbar_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+}
+
+impl PipelineProvenance {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        validate_non_blank("provenance.pipeline.openbar_version", &self.openbar_version)?;
+        if let Some(commit) = self.git_commit.as_deref() {
+            if commit.len() < 7 || commit.len() > 64 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(invalid(
+                    "provenance.pipeline.git_commit must be a 7-64 character hexadecimal commit id",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelProvenance {
+    pub identifier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum_sha256: Option<String>,
+}
+
+impl ModelProvenance {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        validate_non_blank("provenance.model.identifier", &self.identifier)?;
+        if let Some(hash) = self.checksum_sha256.as_deref() {
+            validate_sha256("provenance.model.checksum_sha256", hash)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentProvenance {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoder: Option<String>,
+}
+
+impl EnvironmentProvenance {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        for (name, value) in [
+            ("provenance.environment.os", self.os.as_deref()),
+            (
+                "provenance.environment.architecture",
+                self.architecture.as_deref(),
+            ),
+            ("provenance.environment.device", self.device.as_deref()),
+            ("provenance.environment.decoder", self.decoder.as_deref()),
+        ] {
+            if let Some(value) = value {
+                validate_non_blank(name, value)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnalysisProvenance {
+    pub pipeline: PipelineProvenance,
+    pub tracker: TrackerProvenance,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelProvenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<EnvironmentProvenance>,
+}
+
+impl AnalysisProvenance {
+    fn validate(&self) -> Result<(), AnalysisValidationError> {
+        self.pipeline.validate()?;
+        self.tracker.validate()?;
+        if let Some(model) = &self.model {
+            model.validate()?;
+        }
+        if let Some(environment) = &self.environment {
+            environment.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalibratedTrajectory {
+    pub samples: Vec<MetricPositionSample>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilteredTrajectory {
+    pub filter: ImplementationProvenance,
+    pub samples: Vec<MetricPositionSample>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KinematicsInput {
+    Calibrated,
+    Filtered,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KinematicTrajectory {
+    pub input: KinematicsInput,
+    pub method: ImplementationProvenance,
+    pub samples: Vec<KinematicSample>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DerivedData {
+    pub calibrated: CalibratedTrajectory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filtered: Option<FilteredTrajectory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kinematics: Option<KinematicTrajectory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalysisValidationError {
+    message: String,
+}
+
+impl AnalysisValidationError {
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for AnalysisValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for AnalysisValidationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnalysisJsonError {
+    Validation(AnalysisValidationError),
+    Json(String),
+}
+
+impl fmt::Display for AnalysisJsonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
