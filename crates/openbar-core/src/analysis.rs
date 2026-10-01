@@ -1239,4 +1239,22 @@ mod tests {
         let decoded = Analysis::from_json(golden).unwrap();
         assert_eq!(decoded, expected);
     }
+
+    #[test]
+    fn time_range_contains_checks_inclusive_bounds() {
+        let range = TimeRange {
+            start_s: 1.0,
+            end_s: 5.0,
+        };
+
+        assert!(range.contains(1.0));
+        assert!(range.contains(3.0));
+        assert!(range.contains(5.0));
+
+        assert!(!range.contains(0.999));
+        assert!(!range.contains(5.001));
+        assert!(!range.contains(f64::NAN));
+        assert!(!range.contains(f64::INFINITY));
+        assert!(!range.contains(f64::NEG_INFINITY));
+    }
 }

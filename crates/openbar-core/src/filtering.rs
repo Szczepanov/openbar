@@ -83,6 +83,12 @@ mod tests {
     }
 
     #[test]
+    fn moving_average_handles_empty_samples() {
+        let result = moving_average(&[], 3).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
     fn moving_average_zero_window_returns_error() {
         let input = [MetricPositionSample {
             timestamp_s: 0.0,
