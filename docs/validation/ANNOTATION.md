@@ -56,6 +56,8 @@ For v1:
 
 The fixture manifest's `video.width_px` / `video.height_px` describe the encoded raster.
 For 90° or 270° rotation metadata, annotation display width/height are therefore swapped.
+Rotation values use FFmpeg's counter-clockwise display-matrix convention, normalised modulo
+360, the same as the manual seed's `source_rotation_deg` (ADR-0006).
 For 0° or 180°, they remain unchanged.
 
 `center_px` means the best manual estimate of the geometric plate centre in the displayed

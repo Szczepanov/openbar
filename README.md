@@ -88,8 +88,11 @@ Prerequisites:
 - **Rust 1.98.1** with clippy and rustfmt. `rust-toolchain.toml` pins it, so `rustup` installs
   the right toolchain on first use.
 - **Python 3.14** for the validation tooling. Standard library only; no packages to install.
-- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) will be required for video-decoding commands once
-  the frame source from issue #40 lands. Nothing in the current tree needs it yet.
+- **FFmpeg** (`ffmpeg` and `ffprobe` on `PATH`) for `tracker-run` and the decode tests. OpenBar
+  runs FFmpeg as a separate program and neither links nor ships it (ADR-0006). Without FFmpeg,
+  the decode tests print `SKIPPED` locally. CI sets `OPENBAR_REQUIRE_FFMPEG=1`, so a missing
+  install fails there. The frame source needs `-fps_mode` and `-enc_time_base demux`, so use a
+  current FFmpeg release (developed with 9.0.2). Older builds fail with an explicit ffmpeg error.
 
 CI runs these on Ubuntu (tests and smoke runs also on Windows). Run them before opening a PR:
 
@@ -99,6 +102,7 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
 cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json --output target/benchmark-smoke.json
+cargo run --locked -p openbar-cli -- tracker-run --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json --output-dir target/tracker-run-smoke
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py
 ```
