@@ -1234,7 +1234,9 @@ mod tests {
         let mut blank_source = analysis();
         blank_source.identity.source_id = "   ".to_owned();
         let error = blank_source.validate().unwrap_err();
-        assert!(error.to_string().contains("identity.source_id must not be blank"));
+        assert!(error
+            .to_string()
+            .contains("identity.source_id must not be blank"));
 
         let mut invalid_fixture = analysis();
         invalid_fixture.identity.fixture_id = Some("Bad Fixture!".to_owned());
@@ -1266,7 +1268,11 @@ mod tests {
 
         let mut out_of_range = analysis();
         out_of_range.raw_observations[0].timestamp_s = 0.1; // outside trim [0.5, 2.0]
-        out_of_range.raw_observations[0].measurement.as_mut().unwrap().timestamp_s = 0.1;
+        out_of_range.raw_observations[0]
+            .measurement
+            .as_mut()
+            .unwrap()
+            .timestamp_s = 0.1;
         assert!(out_of_range.validate().is_err());
     }
 
