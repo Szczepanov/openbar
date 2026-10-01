@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "identity": {
+    "source_id": "synthetic-clean-side-12",
+    "fixture_id": "synthetic-clean-side-12",
+    "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "video": {
+    "decoded_width_px": 1920,
+    "decoded_height_px": 1080,
+    "display_width_px": 1920,
+    "display_height_px": 1080,
+    "source_rotation_deg": 0,
+    "frame_rate": {
+      "timestamp_basis": "decoded_presentation_timestamp",
+      "nominal_fps": 60.0,
+      "measured_fps": 59.94
+    },
+    "trim": {
+      "start_s": 0.5,
+      "end_s": 2.0
+    }
+  },
+  "manual_seed": {
+    "timestamp_s": 1.0,
+    "frame_index": 60,
+    "target": {
+      "center": {
+        "x_px": 960.0,
+        "y_px": 700.0
+      },
+      "radius_px": 100.0
+    },
+    "coordinate_space": "display_top_left",
+    "source_rotation_deg": 0,
+    "selection_confidence": 0.95,
+    "notes": "golden seed"
+  },
+  "calibration": {
+    "method": "plate_diameter",
+    "method_version": 1,
+    "scale": {
+      "diameter_m": 0.45,
+      "diameter_px": 200.0,
+      "metres_per_pixel": 0.0022500000000000003
+    },
+    "reference": {
+      "timestamp_s": 1.0,
+      "frame_index": 60,
+      "coordinate_space": "display_top_left",
+      "source_rotation_deg": 0,
+      "geometry": {
+        "center_px": {
+          "x_px": 960.0,
+          "y_px": 700.0
+        },
+        "bounds_px": {
+          "left_px": 860.0,
+          "top_px": 600.0,
+          "width_px": 200.0,
+          "height_px": 200.0
+        }
+      },
+      "provenance": {
+        "source": "manual_target_seed",
+        "selection_confidence": 0.95,
+        "notes": "golden seed"
+      }
+    },
+    "coordinate_convention": "reference_centre_x_right_y_up",
+    "quality": {
+      "status": "unassessed",
+      "warnings": [
+        "geometry_unassessed"
+      ]
+    }
+  },
+  "raw_observations": [
+    {
+      "timestamp_s": 1.0,
+      "frame_index": 60,
+      "tracking_state": "tracked",
+      "visibility": "visible",
+      "measurement": {
+        "timestamp_s": 1.0,
+        "x_px": 960.0,
+        "y_px": 700.0,
+        "confidence": 0.95
+      },
+      "target_bounds_px": {
+        "left_px": 860.0,
+        "top_px": 600.0,
+        "width_px": 200.0,
+        "height_px": 200.0
+      },
+      "tracker_id": "tracker-primary"
+    },
+    {
+      "timestamp_s": 1.1,
+      "frame_index": 66,
+      "tracking_state": "lost",
+      "visibility": "occluded",
+      "tracker_id": "tracker-primary"
+    },
+    {
+      "timestamp_s": 1.2,
+      "frame_index": 72,
+      "tracking_state": "low_confidence",
+      "visibility": "partially_occluded",
+      "measurement": {
+        "timestamp_s": 1.2,
+        "x_px": 980.0,
+        "y_px": 660.0,
+        "confidence": 0.75
+      },
+      "target_bounds_px": {
+        "left_px": 880.0,
+        "top_px": 560.0,
+        "width_px": 200.0,
+        "height_px": 200.0
+      },
+      "tracker_id": "tracker-primary"
+    }
+  ],
+  "derived": {
+    "calibrated": {
+      "samples": [
+        {
+          "timestamp_s": 1.0,
+          "x_m": 0.0,
+          "y_m": 0.0,
+          "confidence": 0.95
+        },
+        {
+          "timestamp_s": 1.2,
+          "x_m": 0.045000000000000005,
+          "y_m": 0.09000000000000001,
+          "confidence": 0.75
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "pipeline": {
+      "openbar_version": "0.1.0",
+      "git_commit": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "tracker": {
+      "id": "tracker-primary",
+      "implementation": {
+        "implementation": "synthetic-tracker",
+        "version": "1",
+        "parameters": {
+          "search_radius_px": 32
+        }
+      }
+    },
+    "environment": {
+      "os": "test-os",
+      "architecture": "test-arch",
+      "decoder": "synthetic-decoder@1"
+    }
+  }
+}

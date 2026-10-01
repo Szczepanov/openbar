@@ -1,89 +1,221 @@
-# Canonical analysis schema direction
+# Canonical analysis schema
 
-The Rust types are intentionally minimal during bootstrap. This document describes the persistence/export direction.
+Issue: #9
 
-## Core entities
+## Authority
 
-### Video metadata
+The authoritative M0 analysis representation is the Rust domain model in
+`crates/openbar-core/src/analysis.rs`.
 
-- stable source identifier/hash where appropriate;
-- width/height;
-- nominal and/or measured timestamps;
-- rotation/orientation;
-- frame-rate metadata;
-- trim range.
+JSON is the canonical M0 interchange format, but there is no independent JSON-only domain
+model beside Rust. CLI, benchmark integration, rendering, and later UI code should consume
+or construct `analysis::Analysis` and its shared nested types.
 
-### Manual target seed
+Current version:
 
-The M0 manual selection is a distinct input domain object, not a tracker observation.
+```text
+ANALYSIS_SCHEMA_VERSION = 1
+```
 
-It retains:
+## Top-level representation
 
-- authoritative reference timestamp;
+`Analysis` retains seven concerns explicitly:
+
+1. schema/source identity;
+2. decoded/display video metadata and selected time range;
+3. the #6 `ManualTargetSeed`;
+4. the #8 `PlateDiameterCalibration`;
+5. timestamped raw tracker observations, including explicit loss;
+6. structurally separate calibrated, filtered, and kinematic layers;
+7. pipeline/tracker/model/environment provenance needed for reproducibility.
+
+The model intentionally contains no Flutter view state, cloud/database keys, accounts, or
+subscription concepts.
+
+## Identity and video metadata
+
+`AnalysisIdentity` carries a stable `source_id` plus optional fixture ID and source SHA-256.
+No random run UUID or wall-clock creation timestamp is injected into the deterministic
+measurement payload.
+
+`VideoMetadata` records:
+
+- decoded dimensions;
+- display-oriented dimensions;
+- source rotation (0/90/180/270 degrees);
+- timestamp basis;
+- optional nominal and measured FPS metadata;
+- selected/trimmed decoded-media time range.
+
+Decoded presentation timestamps remain authoritative. FPS is metadata, not the source for
+derivatives.
+
+## Manual seed and calibration
+
+The canonical analysis embeds the existing Rust domain types directly:
+
+- `manual_seed::ManualTargetSeed`;
+- `calibration::PlateDiameterCalibration`.
+
+It does not restate their fields in a second persistence model.
+
+For calibration whose provenance is `manual_target_seed`, analysis validation requires the
+calibration reference timestamp, optional frame index, orientation, coordinate space,
+centre, and bounds to match the embedded seed. Calibration must also lie inside the selected
+video range and use the same source rotation as the video metadata.
+
+## Raw observations
+
+`RawObservation` separates tracker state from measured coordinates.
+
+Each sample records:
+
+- authoritative timestamp;
 - optional auxiliary frame index;
-- manually selected plate centre and canonical radius in display-oriented pixels;
-- explicit display/top-left coordinate convention and source rotation;
-- optional human selection confidence/notes.
+- `tracking_state`: `tracked`, `low_confidence`, or `lost`;
+- visibility state;
+- an optional measured `PixelObservation`;
+- optional target bounds;
+- the tracker provenance ID that produced the sample.
 
-The authoritative Rust type is `manual_seed::ManualTargetSeed`. A standalone versioned
-document exists for validation fixtures and CLI/benchmark interchange. The canonical #9
-analysis representation should embed/reuse this Rust seed type rather than define a second
-seed shape.
+A `lost` observation contains no measured coordinate or target bounds. A tracked or
+low-confidence observation requires a measured coordinate. Missing tracking therefore never
+requires `(0, 0)`, the previous position, interpolation, or another fabricated value.
 
-### Calibration
+Measured `PixelObservation` retains timestamp, raw X/Y pixels, and confidence. Confidence
+must be finite and in `[0, 1]`.
 
-The authoritative M0 Rust type is `calibration::PlateDiameterCalibration`. Canonical
-analysis should embed/reuse that type rather than define a second calibration shape.
+## Derived layers
 
-It retains:
+Derived data is not written back into raw observations.
 
-- method and method version;
-- known plate diameter in metres;
-- measured plate size in pixels;
-- persisted derived metres-per-pixel scale;
-- authoritative reference timestamp and optional auxiliary frame index;
-- display coordinate space/source rotation;
-- reference centre and measurement bounds;
-- provenance linking seed-derived geometry back to the manual target seed;
-- explicit metric axis/origin convention;
-- quality status and geometry warning flags.
+### Calibrated trajectory
 
-Where the observed plate size comes from a manual target seed, construction uses
-`seed.target().diameter_px()` and retains the seed reference/provenance rather than silently
-duplicating or rewriting the manual selection.
+`CalibratedTrajectory` stores `MetricPositionSample` values produced from the raw measured
+samples and the embedded calibration.
 
-Metric positions are reference-centred with +X right and +Y up. Raw observations remain in
-the display/top-left pixel convention (+Y down) and must remain available alongside derived
-metric values. See [M0 plate-diameter calibration](../validation/PLATE_CALIBRATION.md).
+Canonical validation requires one calibrated sample per measured raw observation, preserving
+timestamp and confidence. X/Y values are checked against the recorded calibration so a
+persisted analysis cannot silently claim different calibrated coordinates for the same raw
+measurement.
 
-### Observation
+### Filtered trajectory
 
-- timestamp;
-- raw X/Y pixels;
-- target size/bounds if available;
-- confidence;
-- visibility/tracking state;
-- detector/tracker provenance.
+`FilteredTrajectory` is optional and stores:
 
-Tracker observations and tracker confidence are downstream outputs. They must not overwrite
-or be written back into the manual target seed.
+- filter implementation name;
+- filter version;
+- deterministic parameter map;
+- filtered metric samples.
 
-### Derived metric sample
+Filtered samples remain timestamp-aligned with the calibrated layer. They do not replace it.
 
-- calibrated X/Y;
-- velocity;
-- acceleration only when validated;
-- filter/method version.
+### Kinematics
 
-### Provenance
+`KinematicTrajectory` is optional and identifies whether it was derived from the calibrated
+or filtered position layer. It also records the kinematics implementation/version/parameters.
 
-- OpenBar pipeline version/commit;
-- model identifier/checksum;
-- filter and parameters;
-- tracker implementation/version;
-- calibration method;
-- environment/device information needed for reproducibility.
+Position and timestamp remain aligned with the declared input. Velocity components may be
+absent when not yet derivable/validated. Kinematic confidence may stay equal to or decrease
+from its position input; it cannot silently increase.
 
-## Export
+## Provenance and configuration
 
-JSON should be the first canonical interchange format. CSV can be a convenience export for trajectories. Parquet may become useful for research/batch analytics but is not required for M0.
+`AnalysisProvenance` retains:
+
+- OpenBar/pipeline version and optional git commit;
+- tracker ID, implementation, version, and effective parameters;
+- optional model identifier/checksum;
+- optional environment/device/decoder fields only where they materially affect
+  reproducibility.
+
+Filter and kinematics provenance live beside the layers they produced. Calibration method,
+method version, reference, scale, and quality remain inside the authoritative calibration
+object.
+
+Configuration maps use ordered `BTreeMap` storage and scalar values (`bool`, integer, finite
+float, string) so repeated serialization does not depend on hash-map iteration order.
+
+## Required invariants
+
+Canonical validation enforces, at minimum:
+
+1. raw observations are never overwritten by filtered/derived values;
+2. lost samples are distinguishable from measured samples and carry no fake coordinate;
+3. raw and derived timestamps are finite, non-negative, and strictly increasing within each
+   series;
+4. raw measurements remain within the display-oriented frame;
+5. confidence is finite and bounded rather than silently coerced;
+6. calibrated samples remain consistent with raw observations and calibration;
+7. filtered/kinematic layers remain timestamp-aligned with their declared inputs;
+8. tracker references resolve to the retained tracker provenance;
+9. source/config/provenance identifiers needed for reproduction are retained;
+10. the same logical input + effective configuration/version has deterministic serialized
+    semantics.
+
+## JSON/versioning policy
+
+### Schema version
+
+`schema_version` is a required integer. M0 readers accept version `1` only and fail closed on
+unsupported versions.
+
+### Field and enum stability
+
+Persisted enum values use explicit `snake_case` strings. Within one schema version, field
+names, enum strings, units, and semantics are treated as frozen.
+
+Because canonical readers intentionally reject unknown fields, adding/removing/renaming a
+persisted field or enum variant, changing units, or changing field semantics requires a new
+analysis schema version rather than silent forward reinterpretation.
+
+### Pre-1.0 compatibility
+
+OpenBar is pre-1.0. There is no promise that future schema versions will remain source- or
+wire-compatible with v1. Compatibility must be explicit through a reviewed migration at the
+load/export boundary. Migrations must preserve raw observations and provenance and must not
+recompute measurements silently.
+
+### Non-finite numbers
+
+NaN and positive/negative infinity are invalid canonical analysis values. Validation rejects
+non-finite measurements, derived values, FPS/range metadata, confidence, and floating-point
+configuration parameters before canonical export. `null` is not a substitute for an invalid
+number; optional values use explicit `Option` fields instead.
+
+### Deterministic semantics
+
+For the same validated `Analysis` value and schema implementation, repeated serialization is
+deterministic:
+
+- struct field order is fixed by the Rust representation;
+- configuration keys use `BTreeMap` ordering;
+- sample ordering is timestamp-validated;
+- volatile wall-clock/run IDs are not injected into the measurement payload.
+
+This is deterministic application serialization, not a claim of RFC 8785/JCS cryptographic
+JSON canonicalization across arbitrary serializers.
+
+## Golden fixture and tests
+
+`crates/openbar-core/tests/fixtures/analysis-v1.golden.json` is the committed v1 semantic
+golden fixture. Tests cover:
+
+- JSON round-trip;
+- repeated deterministic serialization;
+- tracked/lost/low-confidence observations;
+- irregular timestamps;
+- absence of a velocity layer;
+- full filter/kinematics provenance retention;
+- invalid and non-finite values;
+- schema/provenance consistency.
+
+## Downstream boundaries
+
+- #5 benchmark artifacts remain benchmark-result contracts; they must not become a competing
+  canonical lift-analysis schema.
+- #12 `openbar analyze` should emit this `Analysis` JSON and record effective runtime config.
+- #13 rendering should consume this representation and visualize loss/low confidence without
+  recomputing authoritative measurements.
+- CSV may later be a convenience trajectory export, but it cannot replace canonical JSON.
+- Parquet remains optional research/batch tooling outside M0 requirements.

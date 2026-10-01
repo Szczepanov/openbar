@@ -182,6 +182,8 @@ with a full camera model.
 - persisted measurement bounds must remain centred on the recorded reference centre and match
   the observed diameter;
 - derived metric overflow is rejected;
+- metric conversion canonicalizes signed zero to positive `0.0` so equivalent zero
+  displacements do not serialize as both `0.0` and `-0.0`;
 - a persisted derived scale must match the recorded diameters;
 - timestamps remain in the decoded media time base;
 - the reference frame index, when present, remains auxiliary;

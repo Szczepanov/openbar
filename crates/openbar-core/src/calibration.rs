@@ -57,7 +57,7 @@ impl PlateCalibration {
         if !metres.is_finite() {
             return Err(CalibrationError::NonFiniteConvertedDistance);
         }
-        Ok(metres)
+        Ok(if metres == 0.0 { 0.0 } else { metres })
     }
 }
 
@@ -658,6 +658,17 @@ mod tests {
                 Err(CalibrationError::NonFiniteDiameterPixels)
             );
         }
+    }
+
+    #[test]
+    fn normalizes_signed_zero_in_metric_conversion() {
+        let calibration = PlateCalibration::try_new(0.45, 200.0).unwrap();
+
+        let positive_zero = calibration.pixels_to_metres(0.0).unwrap();
+        let negative_zero = calibration.pixels_to_metres(-0.0).unwrap();
+
+        assert_eq!(positive_zero.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(negative_zero.to_bits(), 0.0_f64.to_bits());
     }
 
     #[test]
