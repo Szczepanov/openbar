@@ -45,8 +45,9 @@ of inventing them.
 
 ## Source-frame verification
 
-When `--video` is supplied, the existing ADR-0006 FFmpeg process adapter is reused. Before a frame
-is embedded, the renderer verifies, where available:
+When `--video` is supplied, the existing ADR-0006 FFmpeg process adapter is reused. A canonical
+`identity.source_sha256` is required so the renderer cannot place a plausible but unrelated
+same-sized video behind the trajectory. Before a frame is embedded, the renderer verifies:
 
 1. source SHA-256 against canonical analysis identity;
 2. display width/height;

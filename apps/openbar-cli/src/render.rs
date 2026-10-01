@@ -183,14 +183,13 @@ fn load_source_frame(
     path: &Path,
     requested_timestamp_s: Option<f64>,
 ) -> CliResult<SourceFrame> {
+    let expected_hash = source_hash_for_overlay(analysis)?;
     let probed = ProbedVideo::open(path).map_err(classify_media_error)?;
-    if let Some(expected_hash) = analysis.identity().source_sha256.as_deref() {
-        if !expected_hash.eq_ignore_ascii_case(probed.source_sha256()) {
-            return Err(CliError::media(format!(
-                "source video SHA-256 {} does not match canonical analysis value {expected_hash}",
-                probed.source_sha256()
-            )));
-        }
+    if !expected_hash.eq_ignore_ascii_case(probed.source_sha256()) {
+        return Err(CliError::media(format!(
+            "source video SHA-256 {} does not match canonical analysis value {expected_hash}",
+            probed.source_sha256()
+        )));
     }
 
     let stream = probed.stream();
@@ -268,6 +267,18 @@ fn load_source_frame(
         source_path: path.to_path_buf(),
         png_data_uri: grayscale_png_data_uri(&frame.image),
     })
+}
+
+fn source_hash_for_overlay(analysis: &Analysis) -> CliResult<&str> {
+    analysis
+        .identity()
+        .source_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            CliError::invalid_input(
+                "render --video requires canonical identity.source_sha256 so the source frame can be verified",
+            )
+        })
 }
 
 fn nearest_seed_observation(analysis: &Analysis) -> f64 {
@@ -459,6 +470,22 @@ mod tests {
         ]))
         .expect_err("frame timestamp without video must fail");
         assert!(missing_video.to_string().contains("requires --video"));
+    }
+
+    #[test]
+    fn source_frame_overlay_requires_recorded_source_hash() {
+        let mut value: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../crates/openbar-core/tests/fixtures/analysis-v1.golden.json"
+        ))
+        .unwrap();
+        value["identity"]
+            .as_object_mut()
+            .expect("identity object")
+            .remove("source_sha256");
+        let analysis =
+            Analysis::from_json(&serde_json::to_string(&value).unwrap()).expect("hashless analysis");
+        let error = source_hash_for_overlay(&analysis).expect_err("source hash must be required");
+        assert!(error.to_string().contains("identity.source_sha256"));
     }
 
     #[test]
