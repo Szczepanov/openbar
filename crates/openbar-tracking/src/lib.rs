@@ -96,6 +96,7 @@ pub enum TrackerVisibilityState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TrackerObservationState {
     Tracked { center: PixelPoint, confidence: f32 },
+    LowConfidence { center: PixelPoint, confidence: f32 },
     Lost { reason: TrackerLossReason },
 }
 
