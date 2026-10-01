@@ -321,7 +321,7 @@ fn run_suite(suite_path: &Path) -> AnyResult<BenchmarkArtifact> {
         if spec.id.trim().is_empty() {
             return Err(data_error("benchmark case id must not be blank"));
         }
-        if !seen_case_ids.insert(spec.id.clone()) {
+        if !seen_case_ids.insert(spec.id.as_str()) {
             return Err(data_error(format!(
                 "duplicate benchmark case id '{}'",
                 spec.id
