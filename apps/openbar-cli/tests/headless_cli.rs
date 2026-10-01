@@ -123,6 +123,9 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
     assert_eq!(json["identity"]["fixture_id"], "synthetic-clean-side-12");
     assert!(json["derived"]["filtered"].is_object());
     assert!(json["derived"]["kinematics"].is_object());
+    if let Some(commit) = option_env!("OPENBAR_GIT_COMMIT") {
+        assert_eq!(json["provenance"]["pipeline"]["git_commit"], commit);
+    }
 
     let overwrite = analyze_fixture(&output_a)
         .output()
