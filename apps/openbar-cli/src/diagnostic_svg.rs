@@ -26,7 +26,7 @@ pub(crate) fn render_svg(
 ) -> String {
     let mut out = String::with_capacity(48 * 1024);
     writeln!(out, r#"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1900" viewBox="0 0 1200 1900">"#).unwrap();
-    out.push_str(r#"<style>text{font-family:monospace;fill:#111}.t{font-size:25px;font-weight:700}.h{font-size:17px;font-weight:700}.s{font-size:12px}.p{fill:#fafafa;stroke:#333}.g{stroke:#ddd}.r{fill:none;stroke:#1565c0;stroke-width:3}.f{fill:none;stroke:#ef6c00;stroke-width:3;stroke-dasharray:10 7}.seed{fill:none;stroke:#6a1b9a;stroke-width:3}.low{fill:#fff;stroke:#c62828;stroke-width:2}.lost{stroke:#c62828;stroke-width:3}</style>
+    out.push_str(r#"<style>text{font-family:monospace;fill:#111}.t{font-size:25px;font-weight:700}.h{font-size:17px;font-weight:700}.s{font-size:12px}.p{fill:#fafafa;stroke:#333}.g{stroke:#ddd}.r{fill:none;stroke:#1565c0;stroke-width:3}.f{fill:none;stroke:#ef6c00;stroke-width:3;stroke-dasharray:10 7}.seed{fill:none;stroke:#6a1b9a;stroke-width:3}.low{fill:#fff;stroke:#c62828;stroke-width:2}.b{fill:none;stroke:#555;stroke-width:1;stroke-dasharray:4 4;opacity:.65}.lost{stroke:#c62828;stroke-width:3}</style>
 "#);
     metadata(&mut out, analysis, analysis_path, frame);
 
@@ -87,6 +87,22 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
         writeln!(out, r#"<image data-layer="source-frame" x="{left:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}" href="{}" preserveAspectRatio="none"/>"#, frame.png_data_uri).unwrap();
     } else {
         text(out, left + 10.0, y + 20.0, "source frame not supplied", "s");
+    }
+
+    let stride = analysis.raw_observations().len().div_ceil(12).max(1);
+    for (index, sample) in analysis.raw_observations().iter().enumerate() {
+        if let Some(bounds) = sample.target_bounds_px {
+            if index % stride == 0 || sample.tracking_state == TrackingState::LowConfidence {
+                rect(
+                    out,
+                    left + bounds.left_px * scale,
+                    y + bounds.top_px * scale,
+                    bounds.width_px * scale,
+                    bounds.height_px * scale,
+                    "b",
+                );
+            }
+        }
     }
 
     for segment in raw_segments(analysis) {
