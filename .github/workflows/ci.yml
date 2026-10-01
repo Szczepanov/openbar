@@ -26,6 +26,15 @@ jobs:
         run: >-
           cargo run -p openbar-cli -- tracker-experiment
           --output target/tracker-experiment.json
+      - name: Filter comparison
+        run: >-
+          cargo run -p openbar-cli -- filter-experiment
+          --output target/filter-experiment.json
+      - name: Upload filter comparison artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-filter-experiment
+          path: target/filter-experiment.json
       - name: Benchmark regression smoke
         run: >-
           cargo run -p openbar-cli -- benchmark
