@@ -718,7 +718,9 @@ pub struct FilterMetrics {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterBenchmarkError {
-    InvalidMaximumVelocityGap { value: f64 },
+    InvalidMaximumVelocityGap {
+        value: f64,
+    },
     LengthMismatch {
         reference: usize,
         filtered: usize,
