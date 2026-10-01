@@ -157,6 +157,12 @@ reproduce them. Canonical metric definitions and interval semantics live in
 - optional environment/device/decoder fields only where they materially affect
   reproducibility.
 
+For the ADR-0006 process frame source, `openbar-cli analyze` stores the deterministic serialized
+`FrameSourceProvenance` document in `environment.decoder`. This keeps the existing analysis-v1
+shape while retaining the effective FFmpeg version/argument vectors, source hash, stream metadata,
+selected range, and decoder diagnostics. A future structured decoder field would require an
+explicit schema-version decision rather than an unversioned shape change.
+
 Filter and kinematics provenance live beside the layers they produced. Calibration method,
 method version, reference, scale, and quality remain inside the authoritative calibration
 object.
