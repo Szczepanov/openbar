@@ -257,7 +257,10 @@ fn render_rejects_malformed_canonical_analysis_without_creating_output() {
         .output()
         .expect("run malformed render");
     assert_exit(&render, 2, "status=failure error[invalid-input]");
-    assert!(!output.exists(), "invalid analysis must not create a render artifact");
+    assert!(
+        !output.exists(),
+        "invalid analysis must not create a render artifact"
+    );
 
     let _ = fs::remove_file(analysis);
 }
