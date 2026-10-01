@@ -81,4 +81,17 @@ mod tests {
         assert_eq!(output[1].x_m, 3.0);
         assert_eq!(output[1].y_m, 6.0);
     }
+
+    #[test]
+    fn moving_average_zero_window_returns_error() {
+        let input = [MetricPositionSample {
+            timestamp_s: 0.0,
+            x_m: 1.0,
+            y_m: 2.0,
+            confidence: 1.0,
+        }];
+
+        assert_eq!(moving_average(&[], 0), Err(FilterError::ZeroWindow));
+        assert_eq!(moving_average(&input, 0), Err(FilterError::ZeroWindow));
+    }
 }
