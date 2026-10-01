@@ -65,7 +65,9 @@ Its semantics are:
 
 `source_rotation_deg` records the source rotation metadata used to obtain that display
 orientation and must be one of 0, 90, 180, or 270. A seed is rejected when this does not
-match the video context supplied by the caller.
+match the video context supplied by the caller. The value follows FFmpeg's display-matrix
+convention: degrees **counter-clockwise** applied to the coded frame to get the display frame,
+normalised modulo 360. For example, ffprobe's `rotation=-90` is recorded as 270 (ADR-0006).
 
 This makes a 90-degree source video unambiguous: apply the source rotation first, use the
 rotated/display dimensions, then record the plate centre/radius in that display frame.

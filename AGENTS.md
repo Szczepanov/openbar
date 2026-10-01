@@ -17,7 +17,7 @@ uncertainty explicit. Measurement correctness and reproducibility outrank featur
 |------|------------------|
 | `crates/openbar-core` | Authoritative deterministic domain logic: `analysis` (canonical versioned `Analysis` aggregate), `calibration`, `manual_seed`, `trajectory`, `filtering`, `kinematics`, `benchmark` (metric semantics), `math`. No UI/media/ML deps. |
 | `crates/openbar-tracking` | Decoder-agnostic M0 tracker experiments (`template`, `contrast`) behind the `GrayscaleImage` / `FrameSample` boundary. Depends only on `openbar-core`. |
-| `apps/openbar-cli` | Headless CLI + validation harness: `benchmark` (default subcommand), `tracker-experiment`, and `filter-experiment`. Hand-rolled arg parsing, no clap. |
+| `apps/openbar-cli` | Headless CLI + validation harness: `benchmark` (default subcommand), `tracker-experiment`, `filter-experiment`, and `tracker-run` (real video through the ADR-0006 FFmpeg frame source in `src/media/`). Hand-rolled arg parsing, no clap. |
 | `validation/` | JSON schemas, public fixtures (manifest, annotations, seeds, predictions), benchmark suites, and the stdlib-only Python annotation tool + tests. `validation/private/` is git-ignored. |
 | `docs/adr/` | Accepted architecture decisions. Read the relevant ADR before changing a boundary. |
 | `docs/validation/` | Contracts for fixtures, seeds, annotations, calibration, benchmark, tracker experiments. |
@@ -36,8 +36,14 @@ cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
 cargo run --locked -p openbar-cli -- filter-experiment --output target/filter-experiment.json
+cargo run --locked -p openbar-cli -- tracker-run --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json --output-dir target/tracker-run-smoke
 cargo run --locked -p openbar-cli -- benchmark --suite validation/benchmarks/synthetic-tracker-smoke.benchmark-v1.json --output target/benchmark-smoke.json
 ```
+
+`tracker-run` and the `media::` tests need `ffmpeg` and `ffprobe` on `PATH`. Decoding is an
+external process (ADR-0006): do not add FFmpeg bindings or wrapper crates. Locally, missing
+FFmpeg makes the decode tests print `SKIPPED`. CI sets `OPENBAR_REQUIRE_FFMPEG=1` so they fail
+instead.
 
 Scoped iteration: `cargo test -p openbar-core`, `cargo test -p openbar-tracking`,
 `cargo test -p openbar-core analysis::` (filter by module path).
