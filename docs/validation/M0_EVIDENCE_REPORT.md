@@ -3,9 +3,9 @@
 Issue: #14
 
 This is an engineering evidence report, not a scientific or marketing accuracy claim.
-The current redistribution-safe dataset contains one synthetic development fixture and no
-held-out real lifting footage. Tracker measurements below are useful for pipeline regression
-and failure inspection, but they are not sufficient to establish product-level accuracy gates.
+Tracker measurements below come from redistribution-safe fixtures only. They are useful for
+pipeline regression and failure inspection, but they are not sufficient to establish
+product-level accuracy gates.
 
 ## Evaluated configuration
 
@@ -19,15 +19,14 @@ No production tracker or filter winner is selected by this report.
 
 ## Dataset composition
 
-- Public fixtures: 1.
-- Development fixtures: 1.
-- Held-out validation fixtures: 0.
-- Comparable labelled samples in the public fixture: 10.
-- Exercise coverage: clean only; snatch and back squat are absent.
-- FPS coverage: 12 fps only.
-- Camera: fixed side view only; camera movement and yaw are not represented.
-- Motion blur: none.
-- Occlusion: partial and full occlusion states exist, but the fully occluded frame is intentionally unlabelable and excluded from coordinate-error denominators.
+- Fixtures: 1 (1 synthetic, 0 non-synthetic).
+- Development / held-out validation fixtures: 1 / 0.
+- Annotated fixtures: 1; annotated held-out non-synthetic: 0.
+- Comparable labelled samples: 10.
+- Exercises: clean; absent: snatch, back_squat.
+- Nominal FPS: 12.
+- Camera view / movement: side / fixed.
+- Motion blur: none; occlusion: moderate; lighting: good.
 
 Annotation repeatability on the synthetic fixture is reported separately from tracker error:
 mean Euclidean disagreement 0.9 px, RMSE 0.948683 px, maximum 1.0 px over 10 matched labels.
@@ -39,29 +38,28 @@ mean Euclidean disagreement 0.9 px, RMSE 0.948683 px, maximum 1.0 px over 10 mat
 | template-sad-v1@1 | 10/10 | 100.000% | 1.100 / 3.479 | 8.800 / 12.954 | 9.256 / 13.413 | 4.000 / 22.000 / 26.000 / 26.000 | 0 samples |
 | local-contrast-centroid-v1@1 | 10/10 | 100.000% | 0.748 / 0.821 | 0.833 / 1.285 | 1.303 / 1.525 | 1.095 / 2.264 / 2.921 / 2.921 | 0 samples |
 
-These values are from the single synthetic development fixture. They must not be generalized
+These values are from synthetic development material. They must not be generalized
 to ordinary phone video or the supported-condition envelope.
 
 ## Provisional gate status
 
 | Gate | Target | Status | Evidence/rationale |
 | --- | ---: | --- | --- |
-| Plate-centre tracking MAE | < 3 px | **NOT MEASURABLE YET** | The public run reports exact synthetic-fixture MAE for both retained tracker baselines. Only one synthetic development fixture exists; there is no held-out real-video sample. |
-| Tracking availability in supported clips | > 99% | **NOT MEASURABLE YET** | Availability/loss is measured on the public synthetic development fixture. The supported real recording envelope and held-out validation set do not yet exist. |
-| Range-of-motion MAE | < 0.01 m | **NOT MEASURABLE YET** | ROM semantics and deterministic synthetic implementation tests exist. The public subset has no independent calibrated physical ROM reference. |
-| Mean velocity MAE | < 0.05 m/s | **NOT MEASURABLE YET** | Mean-axis velocity semantics are implemented for explicit intervals. There is no definition-matched physical/reference velocity dataset in the public subset. |
-| Peak velocity MAE | < 0.10 m/s | **NOT MEASURABLE YET** | Peak signed-axis velocity semantics are implemented for explicit intervals. There is no definition-matched physical/reference velocity dataset in the public subset. |
-| Repeat-analysis determinism | 100% | **PASS** | Two tracker runs, repeated benchmark evaluation, and two canonical analyze runs were compared. PASS is scoped to the current public synthetic subset and frozen configuration. |
-| Offline processing | faster than video duration on reference hardware | **NOT MEASURABLE YET** | Per-tracker wall-clock runtime and media/runtime ratio are recorded in this evidence artifact. No stable project reference-hardware target is designated, and the one-second fixture is not representative. |
+| Plate-centre tracking MAE | < 3 px | **NOT MEASURABLE YET** | 10 comparable labelled samples exist across evaluated fixtures; per-tracker MAE is reported per fixture. No annotated held-out non-synthetic fixture exists; no production tracker is selected (#16). |
+| Tracking availability in supported clips | > 99% | **NOT MEASURABLE YET** | Availability/loss is reported per tracker and fixture. No annotated held-out non-synthetic fixture exists; no production tracker is selected (#16). The supported recording envelope (#15) is not defined yet. |
+| Range-of-motion MAE | < 0.01 m | **NOT MEASURABLE YET** | ROM semantics and deterministic synthetic implementation tests exist. No fixture has an independent calibrated physical ROM reference. |
+| Mean velocity MAE | < 0.05 m/s | **NOT MEASURABLE YET** | Mean-axis velocity semantics are implemented for explicit intervals. No fixture has a definition-matched physical/reference velocity source. |
+| Peak velocity MAE | < 0.10 m/s | **NOT MEASURABLE YET** | Peak signed-axis velocity semantics are implemented for explicit intervals. No fixture has a definition-matched physical/reference velocity source. |
+| Repeat-analysis determinism | 100% | **PASS** | Public subset: repeated tracker runs, benchmark evaluations and canonical analyze runs were compared; local clips: repeated canonical analyze runs and benchmark evaluations. Scoped to the public synthetic subset and the frozen configuration. |
+| Offline processing | faster than video duration on reference hardware | **NOT MEASURABLE YET** | Per-tracker wall-clock runtime is recorded in this evidence artifact. The project intends phone-class reference hardware; no specific device is designated and M0 has no mobile build, so desktop timings are diagnostic only. |
 
 ## Determinism and performance
 
 - Normalized tracker prediction streams identical across two complete tracker runs: True.
 - Benchmark JSON identical across repeated evaluation of the same prediction streams: True.
 - Canonical analysis JSON byte-identical across two end-to-end runs: True.
-- Runtime is recorded per tracker in the machine-readable evidence, but the offline-speed gate remains
-  NOT MEASURABLE YET: the project has not designated stable reference hardware and a one-second
-  synthetic clip is not representative of the M0 recording envelope.
+- Runtime is recorded per tracker in the machine-readable evidence. The offline-speed gate remains
+  NOT MEASURABLE YET: the project intends phone-class reference hardware, which M0 cannot run yet.
 
 ## Failure cases and unsupported conditions
 
@@ -72,6 +70,8 @@ to ordinary phone video or the supported-condition envelope.
   canonical-analysis fixture so the rendering path exposes gaps instead of hiding them.
 - No public evidence currently supports conclusions for realistic motion blur, camera motion, distance
   variation, yaw, gym clutter, plate/background contrast variation, snatch, back squat, or held-out data.
+- Local real-video evidence, when generated, is reported separately in
+  [M0_PRIVATE_EVIDENCE_REPORT.md](M0_PRIVATE_EVIDENCE_REPORT.md) as aggregates only.
 
 ## Ground truth and threats to validity
 
@@ -93,7 +93,7 @@ filter-experiment evidence, and diagnostic SVGs. Runtime/environment provenance 
 
 ## Recommended next evidence
 
-1. Add redistribution-safe or locally reproducible real clean/snatch/back-squat fixtures with held-out roles.
+1. Annotate the local real snatch clips and add clean/back-squat fixtures with held-out roles.
 2. Add condition coverage for realistic frame rates, distance/framing, blur, camera movement, contrast and yaw.
 3. Add independent calibrated position/ROM reference and definition-matched velocity reference.
 4. Re-run this package without changing gate semantics; only then promote tracker/kinematic gates from

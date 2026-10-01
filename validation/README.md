@@ -51,6 +51,9 @@ tracker baselines against the same public annotations, records environment/runti
 generates diagnostic renders, and assigns an explicit status to every provisional M0 gate. It does
 not reinterpret unavailable real-world evidence as a PASS.
 
+Add `--private-manifest validation/private/manifest.json` to also evaluate local real clips with a
+release build. Private results are aggregates only (`M0_PRIVATE_EVIDENCE_REPORT.md`).
+
 CI retains the filter JSON inside the hardened `m0-smoke-<head-sha>` workflow artifact alongside
 tracker and benchmark-smoke evidence. The retained filter JSON is deterministic measurement/contract
 evidence; environment-sensitive runtime is printed to the console and intentionally excluded from
@@ -66,6 +69,7 @@ Detailed policies and workflows:
 - [`docs/validation/FILTER_EXPERIMENTS.md`](../docs/validation/FILTER_EXPERIMENTS.md)
 - [`docs/validation/M0_EVIDENCE.md`](../docs/validation/M0_EVIDENCE.md)
 - [`docs/validation/M0_EVIDENCE_REPORT.md`](../docs/validation/M0_EVIDENCE_REPORT.md)
+- [`docs/validation/M0_PRIVATE_EVIDENCE_REPORT.md`](../docs/validation/M0_PRIVATE_EVIDENCE_REPORT.md)
 
 Do not add public media merely because it is technically accessible. Every committed media
 fixture must have affirmative redistribution rights documented in its manifest metadata.
