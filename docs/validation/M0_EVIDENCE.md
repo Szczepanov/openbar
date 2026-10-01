@@ -66,7 +66,8 @@ Each run produces:
 - a generated human-readable M0_EVIDENCE_REPORT.md.
 
 The complete machine-readable aggregate is m0-evidence-v1.json and is validated by
-validation/schema/m0-evidence-v1.schema.json.
+validation/schema/m0-evidence-v1.schema.json. The deterministic public-subset report is committed as
+[M0_EVIDENCE_REPORT.md](M0_EVIDENCE_REPORT.md); CI regenerates it and fails on drift.
 
 ## Gate interpretation
 
