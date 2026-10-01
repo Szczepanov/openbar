@@ -233,8 +233,7 @@ fn advance_prediction_index(
     mut start_index: usize,
     min_timestamp_s: f64,
 ) -> usize {
-    while start_index < predictions.len()
-        && predictions[start_index].timestamp_s < min_timestamp_s
+    while start_index < predictions.len() && predictions[start_index].timestamp_s < min_timestamp_s
     {
         start_index += 1;
     }
