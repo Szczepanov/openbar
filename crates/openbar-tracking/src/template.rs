@@ -13,6 +13,7 @@ pub const VERSION: &str = "1";
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TemplateMatchConfig {
     pub search_radius_px: u32,
+    pub low_confidence_normalized_mean_absolute_difference: f64,
     pub max_normalized_mean_absolute_difference: f64,
     pub seed_timestamp_tolerance_s: f64,
 }
@@ -21,6 +22,7 @@ impl Default for TemplateMatchConfig {
     fn default() -> Self {
         Self {
             search_radius_px: 12,
+            low_confidence_normalized_mean_absolute_difference: 0.10,
             max_normalized_mean_absolute_difference: 0.20,
             seed_timestamp_tolerance_s: 1e-6,
         }
@@ -35,8 +37,18 @@ pub struct TemplateMatchTracker {
 impl TemplateMatchTracker {
     pub fn try_new(config: TemplateMatchConfig) -> Result<Self, TrackerError> {
         validate_search_radius(config.search_radius_px)?;
+        if !config.low_confidence_normalized_mean_absolute_difference.is_finite()
+            || !(0.0..=1.0)
+                .contains(&config.low_confidence_normalized_mean_absolute_difference)
+        {
+            return Err(TrackerError::InvalidConfiguration {
+                field: "low_confidence_normalized_mean_absolute_difference",
+            });
+        }
         if !config.max_normalized_mean_absolute_difference.is_finite()
             || !(0.0..=1.0).contains(&config.max_normalized_mean_absolute_difference)
+            || config.low_confidence_normalized_mean_absolute_difference
+                > config.max_normalized_mean_absolute_difference
         {
             return Err(TrackerError::InvalidConfiguration {
                 field: "max_normalized_mean_absolute_difference",
@@ -59,6 +71,12 @@ impl ManualSeedTracker for TemplateMatchTracker {
         config.insert(
             "search_radius_px".to_owned(),
             self.config.search_radius_px.to_string(),
+        );
+        config.insert(
+            "low_confidence_normalized_mean_absolute_difference".to_owned(),
+            self.config
+                .low_confidence_normalized_mean_absolute_difference
+                .to_string(),
         );
         config.insert(
             "max_normalized_mean_absolute_difference".to_owned(),
@@ -180,10 +198,19 @@ impl ManualSeedTracker for TemplateMatchTracker {
 
             let displacement_px = distance(last_center, center);
             let confidence = (1.0 - score).clamp(0.0, 1.0) as f32;
+            let state = if score
+                > self
+                    .config
+                    .low_confidence_normalized_mean_absolute_difference
+            {
+                TrackerObservationState::LowConfidence { center, confidence }
+            } else {
+                TrackerObservationState::Tracked { center, confidence }
+            };
             observations.push(TrackerObservation {
                 timestamp_s: frame.timestamp_s,
                 frame_index: frame.frame_index,
-                state: TrackerObservationState::Tracked { center, confidence },
+                state,
                 visibility: TrackerVisibilityState::Unknown,
                 target_bounds_px: Some(bounds),
                 diagnostics: TrackerDiagnostics {
