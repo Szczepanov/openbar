@@ -1,7 +1,7 @@
 use crate::analysis::{
     ImplementationProvenance, KinematicTrajectory, KinematicsInput, ParameterValue,
 };
-use crate::trajectory::{KinematicSample, MetricPositionSample};
+use crate::trajectory::{KinematicSample, MetricPositionSample, TrajectoryValidationError};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -84,13 +84,30 @@ pub struct TimedMetricEstimate {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum KinematicsError {
-    InvalidMaximumGap { value: f64 },
-    InvalidMinimumConfidence { value: f32 },
-    InvalidSample { index: usize, reason: String },
-    NonIncreasingTimestamp { previous_index: usize, index: usize },
-    InvalidInterval { start_s: f64, end_s: f64 },
-    IntervalBoundaryNotSampled { timestamp_s: f64 },
-    NonFiniteDerivedValue { index: usize },
+    InvalidMaximumGap {
+        value: f64,
+    },
+    InvalidMinimumConfidence {
+        value: f32,
+    },
+    InvalidSample {
+        index: usize,
+        error: TrajectoryValidationError,
+    },
+    NonIncreasingTimestamp {
+        previous_index: usize,
+        index: usize,
+    },
+    InvalidInterval {
+        start_s: f64,
+        end_s: f64,
+    },
+    IntervalBoundaryNotSampled {
+        timestamp_s: f64,
+    },
+    NonFiniteDerivedValue {
+        index: usize,
+    },
 }
 
 impl fmt::Display for KinematicsError {
@@ -104,8 +121,8 @@ impl fmt::Display for KinematicsError {
                 formatter,
                 "minimum confidence must be finite and within [0, 1], got {value}"
             ),
-            Self::InvalidSample { index, reason } => {
-                write!(formatter, "kinematic input sample {index} is invalid: {reason}")
+            Self::InvalidSample { index, error } => {
+                write!(formatter, "kinematic input sample {index} is invalid: {error}")
             }
             Self::NonIncreasingTimestamp {
                 previous_index,
@@ -306,9 +323,21 @@ pub fn peak_axis_velocity(
         return Ok(None);
     }
 
-    let velocity = derive_velocity(samples, config)?;
+    // Derive only inside the interval: the segment ending at the interval start is excluded by
+    // definition, and samples outside the interval must not influence (or fail) the metric.
+    let velocity =
+        derive_velocity(&samples[start_index..=end_index], config).map_err(
+            |error| match error {
+                KinematicsError::NonFiniteDerivedValue { index } => {
+                    KinematicsError::NonFiniteDerivedValue {
+                        index: start_index + index,
+                    }
+                }
+                other => other,
+            },
+        )?;
     let mut peak: Option<(f64, f64)> = None;
-    for sample in &velocity[start_index + 1..=end_index] {
+    for sample in &velocity[1..] {
         let Some(value) = velocity_axis_value(*sample, axis) else {
             return Ok(None);
         };
@@ -333,10 +362,7 @@ fn validate_samples(samples: &[MetricPositionSample]) -> Result<(), KinematicsEr
     for (index, sample) in samples.iter().enumerate() {
         sample
             .validate()
-            .map_err(|error| KinematicsError::InvalidSample {
-                index,
-                reason: error.to_string(),
-            })?;
+            .map_err(|error| KinematicsError::InvalidSample { index, error })?;
         if let Some(previous) = previous_timestamp {
             if sample.timestamp_s <= previous {
                 return Err(KinematicsError::NonIncreasingTimestamp {
@@ -778,5 +804,89 @@ mod tests {
             provenance.parameters.get("min_confidence"),
             Some(&ParameterValue::Float(f64::from(0.4_f32)))
         );
+    }
+
+    #[test]
+    fn peak_velocity_ignores_samples_outside_the_interval() {
+        // The segment before the interval overflows to a non-finite derivative. It lies outside
+        // the requested interval, so it must neither win the peak nor fail the metric.
+        let samples = [
+            sample_metric_position(0.0, -1.0e308, 0.0, 1.0),
+            sample_metric_position(0.5, 1.0e308, 0.0, 1.0),
+            sample_metric_position(1.0, 0.0, 0.0, 1.0),
+            sample_metric_position(1.5, 1.0, 0.0, 0.9),
+            sample_metric_position(2.0, 1.5, 0.0, 0.8),
+        ];
+        let interval = MetricInterval::try_new(1.0, 2.0).unwrap();
+        let cfg = config(1.0, 0.0);
+
+        assert_eq!(
+            derive_velocity(&samples, cfg),
+            Err(KinematicsError::NonFiniteDerivedValue { index: 1 })
+        );
+        let peak = peak_axis_velocity(&samples, MetricAxis::HorizontalX, interval, cfg)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            peak,
+            TimedMetricEstimate {
+                value: 2.0,
+                timestamp_s: 1.5,
+                confidence: 0.8,
+            }
+        );
+    }
+
+    #[test]
+    fn peak_velocity_reports_non_finite_index_in_caller_series() {
+        let samples = [
+            sample_metric_position(0.0, 0.0, 0.0, 1.0),
+            sample_metric_position(0.5, -1.0e308, 0.0, 1.0),
+            sample_metric_position(1.0, 1.0e308, 0.0, 1.0),
+        ];
+        let interval = MetricInterval::try_new(0.5, 1.0).unwrap();
+
+        assert_eq!(
+            peak_axis_velocity(
+                &samples,
+                MetricAxis::HorizontalX,
+                interval,
+                config(1.0, 0.0)
+            ),
+            Err(KinematicsError::NonFiniteDerivedValue { index: 2 })
+        );
+    }
+
+    #[test]
+    fn displacement_and_range_of_motion_are_unavailable_below_confidence_threshold() {
+        let samples = [
+            sample_metric_position(0.0, 0.0, 0.0, 0.4),
+            sample_metric_position(0.1, 0.1, 0.2, 0.9),
+            sample_metric_position(0.2, 0.2, 0.4, 0.9),
+        ];
+        let cfg = config(0.2, 0.5);
+
+        assert_eq!(
+            axis_displacement(&samples, MetricAxis::VerticalY, cfg).unwrap(),
+            None
+        );
+        assert_eq!(
+            range_of_motion(&samples, MetricAxis::VerticalY, cfg).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_input_sample_reports_typed_validation_error() {
+        let samples = [sample_metric_position(0.0, f64::NAN, 0.0, 1.0)];
+
+        assert!(matches!(
+            derive_velocity(&samples, config(0.1, 0.0)),
+            Err(KinematicsError::InvalidSample {
+                index: 0,
+                error: TrajectoryValidationError::NonFiniteValue { field: "x_m", .. },
+            })
+        ));
     }
 }

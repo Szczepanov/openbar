@@ -174,6 +174,7 @@ Edge rules:
 - no derivative crossing the interval start may win the peak;
 - a segment ending exactly at the interval end is eligible;
 - if any required segment is unsupported, the peak is unavailable;
+- samples outside the interval are not differentiated, so they can neither win nor fail the peak;
 - ties retain the earliest encountered sample because only a strictly larger value replaces the
   current peak.
 

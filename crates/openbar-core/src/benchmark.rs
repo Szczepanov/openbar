@@ -998,83 +998,37 @@ pub fn evaluate_filter_case(
         }
     }
 
-    let metric_error = |axis: crate::kinematics::MetricAxis| {
-        let truth = crate::kinematics::range_of_motion(reference, axis, kinematics_config)
-            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-        let actual = crate::kinematics::range_of_motion(filtered, axis, kinematics_config)
-            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-        Ok::<_, FilterBenchmarkError>(
-            truth
-                .zip(actual)
-                .map(|(truth, actual)| (actual.value - truth.value).abs()),
-        )
-    };
-    let horizontal_rom_absolute_error_m = metric_error(crate::kinematics::MetricAxis::HorizontalX)?;
-    let vertical_rom_absolute_error_m = metric_error(crate::kinematics::MetricAxis::VerticalY)?;
+    use crate::kinematics::{mean_axis_velocity, peak_axis_velocity, range_of_motion};
+
+    let (horizontal_rom_absolute_error_m, vertical_rom_absolute_error_m) =
+        axis_metric_errors(reference, filtered, |samples, axis| {
+            Ok(range_of_motion(samples, axis, kinematics_config)?.map(|metric| metric.value))
+        })?;
 
     let full_interval = crate::kinematics::MetricInterval::try_new(
         reference[0].timestamp_s,
         reference[reference.len() - 1].timestamp_s,
     )
     .ok();
-    let (mean_vx_absolute_error_mps, mean_vy_absolute_error_mps) = if let Some(interval) =
-        full_interval
-    {
-        let axis_error = |axis: crate::kinematics::MetricAxis| {
-            let truth =
-                crate::kinematics::mean_axis_velocity(reference, axis, interval, kinematics_config)
-                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-            let actual =
-                crate::kinematics::mean_axis_velocity(filtered, axis, interval, kinematics_config)
-                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-            Ok::<_, FilterBenchmarkError>(
-                truth
-                    .zip(actual)
-                    .map(|(truth, actual)| (actual.value - truth.value).abs()),
+    let (mean_vx_absolute_error_mps, mean_vy_absolute_error_mps) = match full_interval {
+        Some(interval) => axis_metric_errors(reference, filtered, |samples, axis| {
+            Ok(
+                mean_axis_velocity(samples, axis, interval, kinematics_config)?
+                    .map(|metric| metric.value),
             )
-        };
-        (
-            axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
-            axis_error(crate::kinematics::MetricAxis::VerticalY)?,
-        )
-    } else {
-        (None, None)
+        })?,
+        None => (None, None),
     };
-
-    let (peak_vx_absolute_error_mps, peak_vy_absolute_error_mps) =
-        if parameters.evaluate_peak_metrics {
-            if let Some(interval) = full_interval {
-                let axis_error = |axis: crate::kinematics::MetricAxis| {
-                    let truth = crate::kinematics::peak_axis_velocity(
-                        reference,
-                        axis,
-                        interval,
-                        kinematics_config,
-                    )
-                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-                    let actual = crate::kinematics::peak_axis_velocity(
-                        filtered,
-                        axis,
-                        interval,
-                        kinematics_config,
-                    )
-                    .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-                    Ok::<_, FilterBenchmarkError>(
-                        truth
-                            .zip(actual)
-                            .map(|(truth, actual)| (actual.value - truth.value).abs()),
-                    )
-                };
-                (
-                    axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
-                    axis_error(crate::kinematics::MetricAxis::VerticalY)?,
-                )
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
+    let peak_interval = full_interval.filter(|_| parameters.evaluate_peak_metrics);
+    let (peak_vx_absolute_error_mps, peak_vy_absolute_error_mps) = match peak_interval {
+        Some(interval) => axis_metric_errors(reference, filtered, |samples, axis| {
+            Ok(
+                peak_axis_velocity(samples, axis, interval, kinematics_config)?
+                    .map(|metric| metric.value),
+            )
+        })?,
+        None => (None, None),
+    };
 
     let position_count = reference.len() as f64;
     let velocity_denominator = velocity_count as f64;
@@ -1114,6 +1068,31 @@ pub fn evaluate_filter_case(
         peak_attenuation_fraction,
         peak_timing_shift_s,
     })
+}
+
+/// Absolute X and Y error of one canonical kinematic metric between the reference and filtered
+/// series. An axis is `None` when the metric is unavailable on either side.
+fn axis_metric_errors(
+    reference: &[crate::trajectory::MetricPositionSample],
+    filtered: &[crate::trajectory::MetricPositionSample],
+    metric: impl Fn(
+        &[crate::trajectory::MetricPositionSample],
+        crate::kinematics::MetricAxis,
+    ) -> Result<Option<f64>, crate::kinematics::KinematicsError>,
+) -> Result<(Option<f64>, Option<f64>), FilterBenchmarkError> {
+    let axis_error = |axis| {
+        let truth = metric(reference, axis)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        let actual = metric(filtered, axis)
+            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        Ok(truth
+            .zip(actual)
+            .map(|(truth, actual)| (actual - truth).abs()))
+    };
+    Ok((
+        axis_error(crate::kinematics::MetricAxis::HorizontalX)?,
+        axis_error(crate::kinematics::MetricAxis::VerticalY)?,
+    ))
 }
 
 #[cfg(test)]
