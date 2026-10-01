@@ -208,6 +208,25 @@ fn invalid_seed_sequence_empty_sequence_irregular_timestamps_and_determinism_are
         Err(TrackerError::SeedTargetOutsideFrame)
     ));
 
+    let first = disk_frame(Some((24, 40)));
+    let changed = GrayFrame::try_new(63, 64, vec![220; 63 * 64]).unwrap();
+    let changed_samples = [
+        FrameSample {
+            timestamp_s: 0.0,
+            frame_index: Some(0),
+            image: &first,
+        },
+        FrameSample {
+            timestamp_s: 0.1,
+            frame_index: Some(1),
+            image: &changed,
+        },
+    ];
+    assert!(matches!(
+        template.track(&changed_samples, &manual_seed),
+        Err(TrackerError::FrameDimensionsChanged { index: 1, .. })
+    ));
+
     let centers = [(24, 40), (25, 39), (26, 38), (27, 37)];
     let frames = centers
         .iter()
