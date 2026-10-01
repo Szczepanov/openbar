@@ -75,4 +75,10 @@ mod tests {
             Err(KinematicsError::NonIncreasingTimestamp)
         );
     }
+
+    #[test]
+    fn returns_empty_vec_for_empty_samples() {
+        let result = derive_velocity(&[]).unwrap();
+        assert!(result.is_empty());
+    }
 }

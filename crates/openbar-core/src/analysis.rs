@@ -1,5 +1,6 @@
 use crate::calibration::{CalibrationProvenance, PlateDiameterCalibration};
 use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, SeedValidationContext};
+use crate::math::approximately_equal;
 use crate::trajectory::{
     KinematicSample, MetricPositionSample, PixelObservation, TrajectoryValidationError,
 };
@@ -902,17 +903,6 @@ fn trajectory_error(prefix: String, error: TrajectoryValidationError) -> Analysi
     invalid(format!("{prefix}: {error}"))
 }
 
-fn approximately_equal(left: f64, right: f64) -> bool {
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-    let scale = left.abs().max(right.abs()).max(1.0);
-    (left - right).abs() <= f64::EPSILON * 16.0 * scale
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1238,5 +1228,23 @@ mod tests {
 
         let decoded = Analysis::from_json(golden).unwrap();
         assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn time_range_contains_checks_inclusive_bounds() {
+        let range = TimeRange {
+            start_s: 1.0,
+            end_s: 5.0,
+        };
+
+        assert!(range.contains(1.0));
+        assert!(range.contains(3.0));
+        assert!(range.contains(5.0));
+
+        assert!(!range.contains(0.999));
+        assert!(!range.contains(5.001));
+        assert!(!range.contains(f64::NAN));
+        assert!(!range.contains(f64::INFINITY));
+        assert!(!range.contains(f64::NEG_INFINITY));
     }
 }

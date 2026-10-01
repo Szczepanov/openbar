@@ -1,4 +1,5 @@
 use crate::manual_seed::{ManualTargetSeed, PixelBoundingBox, PixelCoordinateSpace, PixelPoint};
+use crate::math::approximately_equal;
 use crate::trajectory::PixelObservation;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -581,22 +582,6 @@ fn validate_quality(quality: &CalibrationQuality) -> Result<(), CalibrationError
         return Err(CalibrationError::MissingQualityWarning);
     }
     Ok(())
-}
-
-fn approximately_equal(left: f64, right: f64) -> bool {
-    if left == right {
-        return true;
-    }
-    if !left.is_finite() || !right.is_finite() {
-        return false;
-    }
-
-    let scale = left.abs().max(right.abs());
-    if scale == 0.0 {
-        return false;
-    }
-
-    (left - right).abs() <= f64::EPSILON * 8.0 * scale
 }
 
 #[cfg(test)]
