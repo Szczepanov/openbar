@@ -81,4 +81,14 @@ mod tests {
         assert_eq!(output[1].x_m, 3.0);
         assert_eq!(output[1].y_m, 6.0);
     }
+
+    #[test]
+    fn moving_average_handles_empty_samples() {
+        let result = moving_average(&[], 3);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+
+        let result_zero_window = moving_average(&[], 0);
+        assert_eq!(result_zero_window, Err(FilterError::ZeroWindow));
+    }
 }
