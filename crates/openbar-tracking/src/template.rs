@@ -37,9 +37,10 @@ pub struct TemplateMatchTracker {
 impl TemplateMatchTracker {
     pub fn try_new(config: TemplateMatchConfig) -> Result<Self, TrackerError> {
         validate_search_radius(config.search_radius_px)?;
-        if !config.low_confidence_normalized_mean_absolute_difference.is_finite()
-            || !(0.0..=1.0)
-                .contains(&config.low_confidence_normalized_mean_absolute_difference)
+        if !config
+            .low_confidence_normalized_mean_absolute_difference
+            .is_finite()
+            || !(0.0..=1.0).contains(&config.low_confidence_normalized_mean_absolute_difference)
         {
             return Err(TrackerError::InvalidConfiguration {
                 field: "low_confidence_normalized_mean_absolute_difference",
