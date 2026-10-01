@@ -81,4 +81,10 @@ mod tests {
         assert_eq!(output[1].x_m, 3.0);
         assert_eq!(output[1].y_m, 6.0);
     }
+
+    #[test]
+    fn moving_average_handles_empty_samples() {
+        let result = moving_average(&[], 3).unwrap();
+        assert!(result.is_empty());
+    }
 }
