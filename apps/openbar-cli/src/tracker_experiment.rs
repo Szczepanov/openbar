@@ -50,6 +50,7 @@ struct ScenarioResult {
     confidence_semantics: String,
     metrics: TrackerMetrics,
     loss_reasons: BTreeMap<String, usize>,
+    low_confidence_samples: usize,
     mean_reported_confidence: Option<f64>,
     high_confidence_error_over_2px: usize,
     runtime_ms: f64,
@@ -185,6 +186,7 @@ fn run_experiment() -> AnyResult<ExperimentArtifact> {
                 confidence_semantics: identity.confidence_semantics.clone(),
                 metrics,
                 loss_reasons: loss_reason_counts(&run),
+                low_confidence_samples: low_confidence_count(&run),
                 mean_reported_confidence: mean_confidence(&run),
                 high_confidence_error_over_2px: high_confidence_error_count(&run, &truth),
                 runtime_ms: runtime_s * 1_000.0,
@@ -417,12 +419,27 @@ fn loss_reason_counts(run: &TrackerRun) -> BTreeMap<String, usize> {
     counts
 }
 
+fn low_confidence_count(run: &TrackerRun) -> usize {
+    run.observations
+        .iter()
+        .filter(|observation| {
+            matches!(
+                observation.state,
+                TrackerObservationState::LowConfidence { .. }
+            )
+        })
+        .count()
+}
+
 fn mean_confidence(run: &TrackerRun) -> Option<f64> {
     let values = run
         .observations
         .iter()
         .filter_map(|observation| match observation.state {
-            TrackerObservationState::Tracked { confidence, .. } => Some(f64::from(confidence)),
+            TrackerObservationState::Tracked { confidence, .. }
+            | TrackerObservationState::LowConfidence { confidence, .. } => {
+                Some(f64::from(confidence))
+            }
             TrackerObservationState::Lost { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -434,7 +451,8 @@ fn high_confidence_error_count(run: &TrackerRun, truth: &[GroundTruthSample]) ->
         .iter()
         .zip(truth)
         .filter(|(observation, truth)| match observation.state {
-            TrackerObservationState::Tracked { center, confidence } => {
+            TrackerObservationState::Tracked { center, confidence }
+            | TrackerObservationState::LowConfidence { center, confidence } => {
                 confidence >= 0.8
                     && (center.x_px() - truth.center.x_px())
                         .hypot(center.y_px() - truth.center.y_px())
