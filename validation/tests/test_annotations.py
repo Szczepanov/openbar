@@ -131,7 +131,7 @@ class AnnotationValidationTests(unittest.TestCase):
 
     def test_centre_keeps_v1_window_in_half_pixel_border(self):
         # ADR-0007: integer coordinates are pixel centres, so the raster spans
-        # [-0.5, width - 0.5]. v1 keeps [0, width); these points sit where the two differ.
+        # [-0.5, width - 0.5). v1 keeps [0, width); these points sit where the two differ.
         width = self.example["coordinate_system"]["width_px"]
         height = self.example["coordinate_system"]["height_px"]
 

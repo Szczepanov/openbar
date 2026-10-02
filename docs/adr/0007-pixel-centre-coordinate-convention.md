@@ -20,7 +20,7 @@ The code does not work that way:
   `[i - 0.5, i + 0.5)`;
 - the synthetic test and experiment frames draw a disk as the pixels with
   `dx² + dy² <= r²` around an integer centre, so their ground truth centre is a pixel centre;
-- the labelling page proposed in PR #52 converts clicks with `u - 0.5`.
+- the labelling page merged in PR #52 converts image-space clicks with `u - 0.5` and maps stored coordinates back with `x + 0.5`.
 
 Under the edge reading, every tracker output would be biased by half a pixel up and left. The
 benchmark compares annotations against predictions, so a human annotating under one convention
@@ -39,7 +39,8 @@ OpenBar uses the **pixel-centre** convention for every pixel coordinate it store
 - pixel `i` covers the continuous interval `[i - 0.5, i + 0.5)` on each axis;
 - the origin `(0, 0)` is the centre of the top-left pixel, and the top-left corner of the frame
   is `(-0.5, -0.5)`;
-- the full raster covers `[-0.5, width - 0.5] × [-0.5, height - 0.5]`;
+- point coordinates over the raster occupy `[-0.5, width - 0.5) × [-0.5, height - 0.5)`;
+- the outer raster edges themselves are at `-0.5`, `width - 0.5`, `-0.5`, and `height - 0.5`;
 - `GrayscaleImage::intensity(x, y)` is the sample at the pixel centred on `(x, y)`.
 
 The serialized origin names (`display_top_left` in seeds, `top_left` in annotations) are
@@ -47,14 +48,14 @@ unchanged. They name the top-left pixel, whose centre is the origin.
 
 ### v1 validation window
 
-The v1 validators keep their existing acceptance window instead of the exact raster extent:
+The v1 validators keep their existing acceptance window instead of the exact pixel-centre geometry:
 
-| Check | Accepted in v1 | Exact raster extent |
+| Check | Accepted in v1 | Exact pixel-centre geometry |
 | --- | --- | --- |
 | Point (seed centre, annotation centre, analysis measurement) | `0 <= x < width` | `-0.5 <= x < width - 0.5` |
 | Target bounds (seed, annotation, analysis, tracker `bounds_fit`) | `0 <= left`, `right <= width` | `-0.5 <= left`, `right <= width - 0.5` |
 
-This window is deliberately not the raster extent. It is half a pixel stricter on the left and
+This window deliberately differs from the pixel-centre geometry. It is half a pixel stricter on the left and
 top, and half a pixel looser on the right and bottom. We keep it because:
 
 1. Nothing in the pipeline produces values where the two windows differ. Tracker centres are
@@ -88,5 +89,5 @@ measured centre.
 - Future decoders, trackers and UI layers must follow this convention. A layer that resamples or
   crops frames must map coordinates through pixel centres, for example
   `x_out = (x_in + 0.5) * scale - 0.5`, rather than scaling `x_in` directly.
-- Adopting the exact raster extent for validation would need a new schema version for each
+- Adopting the exact pixel-centre geometry for validation would need a new schema version for each
   affected format.

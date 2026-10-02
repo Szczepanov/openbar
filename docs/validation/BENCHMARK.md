@@ -27,8 +27,9 @@ suites use the same contract without committing private media.
 
 ## Coordinate and time semantics
 
-Benchmark coordinates are display-oriented decoded pixels with origin at the top-left, +X right,
-and +Y down, matching the annotation contract. Integer coordinates are pixel centres (ADR-0007),
+Benchmark coordinates are display-oriented decoded pixels with `(0, 0)` at the centre of the
+top-left pixel, +X right, and +Y down, matching the annotation contract (ADR-0007). Integer
+coordinates are pixel centres,
 for annotations and predictions alike. A half-pixel convention mismatch between them would add a
 systematic 0.71 px error. Fixture dimensions and source identity are checked
 before evaluation.

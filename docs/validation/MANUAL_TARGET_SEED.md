@@ -67,9 +67,11 @@ Its semantics are:
   `bottom <= height`;
 - validation frame width/height are the display-oriented dimensions.
 
-The two inside-the-frame rules are the v1 acceptance window, not the raster extent
-(`-0.5 .. width - 0.5`). ADR-0007 records why v1 keeps them. The name `display_top_left` refers
-to the top-left pixel, not its outer corner.
+The two inside-the-frame rules are the v1 acceptance window, not the exact pixel-centre geometry.
+Point coordinates over the raster occupy `-0.5 <= x < width - 0.5` (and likewise on Y), while the
+outer right/bottom raster edges are at `width - 0.5` / `height - 0.5`. ADR-0007 records why v1
+keeps its existing windows. The name `display_top_left` refers to the top-left pixel, not its outer
+corner.
 
 `source_rotation_deg` records the source rotation metadata used to obtain that display
 orientation and must be one of 0, 90, 180, or 270. A seed is rejected when this does not

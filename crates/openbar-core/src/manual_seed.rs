@@ -3,6 +3,10 @@ use std::fmt;
 
 pub const MANUAL_TARGET_SEED_SCHEMA_VERSION: u32 = 1;
 
+/// Display-oriented continuous pixel coordinates (ADR-0007).
+///
+/// The serialized v1 name remains `display_top_left`, but `(0, 0)` is the centre of the top-left
+/// pixel, not the outer raster corner. +X points right and +Y points down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PixelCoordinateSpace {
@@ -21,6 +25,9 @@ pub enum PixelAxis {
     Y,
 }
 
+/// A continuous point in [`PixelCoordinateSpace::DisplayTopLeft`] pixel units.
+///
+/// Integer values identify pixel centres; fractional values are sub-pixel positions.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PixelPoint {
@@ -42,6 +49,8 @@ impl PixelPoint {
     }
 }
 
+/// Geometric target bounds expressed in the same pixel-centre coordinate frame as [`PixelPoint`].
+/// Width and height are continuous spans in pixels, not counts of discrete raster samples.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PixelBoundingBox {
@@ -506,7 +515,7 @@ fn validate_coordinate(axis: PixelAxis, value: f64) -> Result<(), SeedValidation
 }
 
 /// Checks the v1 window `[0, width) x [0, height)`. Integer coordinates are pixel centres, so this
-/// window is not the raster extent `[-0.5, width - 0.5]`; ADR-0007 records why v1 keeps it.
+/// window is not the pixel-domain interval `[-0.5, width - 0.5)`; ADR-0007 records why v1 keeps it.
 fn validate_center_in_frame(
     center: PixelPoint,
     context: SeedValidationContext,
@@ -721,7 +730,7 @@ mod tests {
     #[test]
     fn keeps_v1_frame_window_instead_of_pixel_centre_raster_extent() {
         // ADR-0007: integer coordinates are pixel centres, so the raster spans
-        // [-0.5, width - 0.5]. v1 deliberately keeps the [0, width) point window and the
+        // [-0.5, width - 0.5). v1 deliberately keeps the [0, width) point window and the
         // [0, width] bounds window; these cases sit in the half-pixel border where they differ.
         let ctx = context();
         assert!(validate_center_in_frame(PixelPoint::new(1919.75, 1079.75), ctx).is_ok());
