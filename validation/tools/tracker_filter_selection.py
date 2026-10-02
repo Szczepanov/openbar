@@ -192,7 +192,11 @@ def preflight_inputs(manifest_path: Path, freeze: dict[str, Any] | None = None) 
         if annotation.get("fixture_id") != fixture_id:
             raise SelectionError(f"{fixture_id}: annotation fixture_id does not match")
         source_sha = annotation.get("source_video_sha256")
-        if source_sha and source_sha.lower() != expected_sha.lower():
+        if not source_sha:
+            raise SelectionError(
+                f"{fixture_id}: held-out annotation requires source_video_sha256"
+            )
+        if source_sha.lower() != expected_sha.lower():
             raise SelectionError(f"{fixture_id}: annotation source sha256 does not match manifest")
         labelled = _labelled_count(annotation)
         if labelled == 0:
