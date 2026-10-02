@@ -105,6 +105,7 @@ CI runs these on Ubuntu (tests and smoke runs also on Windows). Run them before 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo build --locked --workspace --all-targets --all-features
 cargo test --locked --workspace --all-targets --all-features
 cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
 cargo run --locked -p openbar-cli -- filter-experiment --output target/filter-experiment.json

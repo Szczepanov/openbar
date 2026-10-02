@@ -1,0 +1,138 @@
+name: Bug report
+description: Report an incorrect measurement, regression, crash, validation failure, or tooling defect.
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for reproducible defects in OpenBar.
+
+        **Security:** do not report vulnerabilities, credentials, tokens, or exploit details here. Follow [SECURITY.md](https://github.com/Szczepanov/openbar/blob/main/SECURITY.md).
+
+        **Data / clean room:** use synthetic or redistribution-safe evidence. Do not upload private lifting video, proprietary competitor material, leaked implementation details, model weights, or datasets you cannot redistribute.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Measurement / openbar-core
+        - Tracking / media decode
+        - CLI / export / diagnostic rendering
+        - Validation / schemas / fixtures / benchmarks
+        - CI / build / developer tooling
+        - Documentation / architecture / ADR
+        - Licensing / clean-room / data governance
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: State the observed defect in one or two precise sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Provide the smallest deterministic sequence that reproduces the problem.
+      placeholder: |
+        Commit / branch:
+        Command:
+        Input fixture or synthetic case:
+        Steps:
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the expected observable result or contract.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact error/output and relevant measured values where possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurement_impact
+    attributes:
+      label: Measurement / contract impact
+      description: Identify affected units, timestamps, confidence/loss handling, determinism, schema, benchmark semantics, or state "Not applicable".
+      placeholder: |
+        Affected output / contract:
+        Units / timestamps:
+        Confidence / loss handling:
+        Determinism / reproducibility:
+        Schema / version:
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        Commit:
+        OS:
+        Rust:
+        Python:
+        FFmpeg / ffprobe:
+        Other:
+    validations:
+      required: false
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Regression / last known good
+      description: If known, identify when this last worked or the change after which it failed.
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Define verifiable outcomes for the fix.
+      placeholder: |
+        - [ ] Reproduction is covered by a deterministic regression test where practical.
+        - [ ] Expected behavior is restored without violating OpenBar measurement invariants.
+        - [ ] Relevant schemas/docs/fixtures are updated if the contract changes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: List focused tests plus the applicable CI/benchmark evidence.
+      placeholder: |
+        Focused regression:
+        Workspace checks:
+        Benchmark / fixture evidence:
+        Manual diagnostic check:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and pull requests for the same defect.
+          required: true
+        - label: This issue contains no secrets, private user data, unauthorized media/data/model artifacts, or proprietary competitor implementation details.
+          required: true
