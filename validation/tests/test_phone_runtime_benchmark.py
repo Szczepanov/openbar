@@ -94,8 +94,21 @@ class GateTests(unittest.TestCase):
             },
         }
 
+    def test_unfrozen_production_candidate_stays_unmeasurable(self):
+        gate = module.assess_gate(
+            self.env(),
+            [self.case("a"), self.case("b")],
+            production_candidate_frozen=False,
+        )
+        self.assertEqual(gate["status"], "NOT MEASURABLE YET")
+        self.assertIn("#57", gate["evidence"])
+
     def test_non_reference_device_stays_unmeasurable(self):
-        gate = module.assess_gate(self.env(False), [self.case("a"), self.case("b")])
+        gate = module.assess_gate(
+            self.env(False),
+            [self.case("a"), self.case("b")],
+            production_candidate_frozen=True,
+        )
         self.assertEqual(gate["status"], "NOT MEASURABLE YET")
 
     def test_warning_or_synthetic_case_stays_unmeasurable(self):
@@ -105,6 +118,7 @@ class GateTests(unittest.TestCase):
                 self.case("a", support="warning"),
                 self.case("b", source="synthetic"),
             ],
+            production_candidate_frozen=True,
         )
         self.assertEqual(gate["status"], "NOT MEASURABLE YET")
 
@@ -112,6 +126,7 @@ class GateTests(unittest.TestCase):
         gate = module.assess_gate(
             self.env(),
             [self.case("a", 0.8), self.case("b", 0.95)],
+            production_candidate_frozen=True,
         )
         self.assertEqual(gate["status"], "PASS")
 
@@ -119,6 +134,7 @@ class GateTests(unittest.TestCase):
         gate = module.assess_gate(
             self.env(),
             [self.case("a", 0.8), self.case("b", 1.01)],
+            production_candidate_frozen=True,
         )
         self.assertEqual(gate["status"], "FAIL")
 
@@ -126,6 +142,7 @@ class GateTests(unittest.TestCase):
         gate = module.assess_gate(
             self.env(),
             [self.case("a", 0.8), self.case("b", failed=1)],
+            production_candidate_frozen=True,
         )
         self.assertEqual(gate["status"], "FAIL")
 
