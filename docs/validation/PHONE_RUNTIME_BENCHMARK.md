@@ -114,6 +114,7 @@ Example validation/private/phone-runtime-suite-v1.json:
 
     {
       "schema_version": 1,
+      "production_candidate_frozen": false,
       "cases": [
         {
           "id": "held-out-clean-reference",
@@ -137,6 +138,11 @@ Example validation/private/phone-runtime-suite-v1.json:
     }
 
 Suite manifest and seed paths are resolved relative to the suite file.
+
+Keep production_candidate_frozen false while the suite uses only the current development
+integration probe. Change it to true only after #57 has frozen the candidate and the harness
+constants have been checked against that decision. A false value forces the gate to remain
+NOT MEASURABLE YET even on the reference phone.
 
 The fixture manifest remains the source of media identity, source kind, recording conditions and
 purpose. The harness does not duplicate that metadata.
