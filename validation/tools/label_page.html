@@ -50,11 +50,16 @@
   <div class="row"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button><button id="clear">Clear centre</button></div>
   <div id="strip"></div>
   <div class="row"><button id="export">Download CSV</button></div>
+  <div id="ringinfo" class="muted"></div>
   <div class="muted">
-    <b>Click</b> plate centre &middot; <b>Shift+click</b> a point on the plate rim (radius, optional) &middot;
+    <b>Click</b> plate centre (hold and drag to adjust) &middot; <b>Shift+click</b> a point on the plate rim
+    (records this frame's radius and sets the aiming ring) &middot; <kbd>[</kbd><kbd>]</kbd> resize the ring
+    (also records it as this frame's radius once a centre is placed) &middot;
     <b>Wheel</b> zoom &middot; <b>Right/middle-drag</b> pan &middot; <kbd>&larr;</kbd><kbd>&rarr;</kbd> frames &middot;
-    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> quality high/med/low &middot; <kbd>O</kbd> partially occluded &middot;
-    <kbd>U</kbd> unlabelable &middot; <kbd>F</kbd> fully occluded &middot; <kbd>S</kbd> skip (not annotated).<br>
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> quality high/med/low, then next frame &middot; <kbd>O</kbd> partially occluded &middot;
+    <kbd>U</kbd> unlabelable &middot; <kbd>F</kbd> fully occluded &middot; <kbd>S</kbd> skip (not annotated); these three also move on.<br>
+    The dashed ring follows the cursor: line it up with the plate's outer rim and click, and the click is the centre.
+    It is an aiming aid only; a frame gets a radius only from Shift+click or <kbd>[</kbd><kbd>]</kbd> on that frame.
     Label the geometric centre of the plate face, not the bar end. For every labelled centre, explicitly
     choose high/medium/low quality; CSV download is blocked until quality is assessed. If you cannot place
     the centre reliably, mark it unlabelable instead of guessing. Coordinates use pixel-centre convention (pixel <i>i</i> spans
@@ -71,7 +76,11 @@ const VIS = ["visible", "partially_occluded", "fully_occluded", "unknown"];
 const QUAL = ["high", "medium", "low"];
 let labels = {};
 try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
-let cur = 0, zoom = 1, panX = 0, panY = 0, mouse = null, dragging = null;
+let cur = 0, zoom = 1, panX = 0, panY = 0, mouse = null, dragging = null, placing = false;
+// Aiming ring radius in image pixels, kept per package. It is a cursor aid, never a label by itself.
+const RING_KEY = KEY + "-ring";
+let ringR = null;
+try { const v = Number(localStorage.getItem(RING_KEY)); if (Number.isFinite(v) && v > 0) ringR = v; } catch (e) {}
 const images = CONFIG.frames.map(f => { const im = new Image(); im.src = f.file; im.onload = () => draw(); return im; });
 const view = document.getElementById("view"), ctx = view.getContext("2d");
 const loupe = document.getElementById("loupe"), lctx = loupe.getContext("2d");
@@ -83,6 +92,8 @@ function rec() {
   return labels[ts];
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {} renderCsv(); }
+function saveRing() { try { localStorage.setItem(RING_KEY, String(ringR)); } catch (e) {} }
+function setRec(r) { labels[CONFIG.frames[cur].timestamp_s] = r; }
 
 function fit() {
   view.width = stage.clientWidth; view.height = stage.clientHeight;
@@ -105,7 +116,13 @@ function draw() {
   if (im.complete) { ctx.imageSmoothingEnabled = zoom < 2; ctx.drawImage(im, panX, panY, CONFIG.width_px * zoom, CONFIG.height_px * zoom); }
   const r = rec();
   if (r.x !== null) { const p = toCanvas(r.x, r.y); mark(ctx, p.cx, p.cy, r.r, zoom); }
+  if (mouse && ringR && !dragging) drawRing(mouse.cx, mouse.cy);
   drawLoupe(); updatePanel();
+}
+function drawRing(cx, cy) {
+  ctx.save(); ctx.strokeStyle = "rgba(255,176,32,.9)"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
+  ctx.beginPath(); ctx.arc(cx, cy, ringR * zoom, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]); ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
 }
 function drawLoupe() {
   const im = images[cur], L = 8, half = loupe.width / L / 2;
@@ -140,29 +157,67 @@ function updatePanel() {
   for (const [id, field] of [["state", "state"], ["visibility", "visibility"], ["quality", "quality"]])
     document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === r[field]));
   document.getElementById("notes").value = r.notes || "";
+  document.getElementById("ringinfo").textContent = ringR
+    ? `aiming ring r=${ringR.toFixed(1)} px ([ ] to resize)` : "Shift+click the plate rim once to set the aiming ring";
   const strip = document.getElementById("strip"); strip.innerHTML = "";
   CONFIG.frames.forEach((fr, i) => { const s = document.createElement("span"); const l = labels[fr.timestamp_s];
     if (l) s.className = l.state; if (i === cur) s.classList.add("cur"); s.title = fr.timestamp_s;
     s.onclick = () => go(i); strip.appendChild(s); });
 }
 function go(i) { cur = Math.max(0, Math.min(CONFIG.frames.length - 1, i)); draw(); }
+function inImage(p) {
+  // Integer coordinates are pixel centres; the outer half-pixel border is outside 0 <= x < width.
+  return p.x >= 0 && p.y >= 0 && p.x < CONFIG.width_px - 0.5 && p.y < CONFIG.height_px - 0.5;
+}
+function placeCentre(p) {
+  const r = rec();
+  setRec({ ...r, x: p.x, y: p.y, state: "labelled", visibility: r.visibility === "fully_occluded" ? "visible" : r.visibility });
+  save(); draw();
+}
+
+// BEGIN keyActions (pure; exercised by validation/tests/test_label_package.py)
+const RING_STEP = 1.02;
+function resizeRing(ring, key) {
+  if (!ring) return ring;
+  return key === "]" ? ring * RING_STEP : key === "[" ? ring / RING_STEP : ring;
+}
+// Updated record plus whether to move on, or null when `key` is not a labelling key. Quality moves on
+// only once a centre exists; a frame gets a radius only from an explicit ring resize while it has a centre.
+function applyKey(r, key, ring) {
+  const hasCentre = r.state === "labelled" && r.x !== null && r.x !== undefined;
+  const quality = ["1", "2", "3"].indexOf(key);
+  if (quality >= 0) return { rec: { ...r, quality: ["high", "medium", "low"][quality] }, advance: hasCentre };
+  if (key === "o") {
+    return { rec: { ...r, visibility: r.visibility === "partially_occluded" ? "visible" : "partially_occluded" }, advance: false };
+  }
+  const cleared = { ...r, x: null, y: null, r: null };
+  if (key === "u") return { rec: { ...cleared, state: "unlabelable" }, advance: true };
+  if (key === "f") return { rec: { ...cleared, state: "unlabelable", visibility: "fully_occluded" }, advance: true };
+  if (key === "s") return { rec: { ...cleared, state: "not_annotated" }, advance: true };
+  if ((key === "[" || key === "]") && hasCentre && ring) return { rec: { ...r, r: ring }, advance: false };
+  return null;
+}
+// END keyActions
 
 stage.addEventListener("contextmenu", e => e.preventDefault());
 stage.addEventListener("mousedown", e => {
   const rect = view.getBoundingClientRect(), cx = e.clientX - rect.left, cy = e.clientY - rect.top;
   if (e.button !== 0) { dragging = { x: e.clientX, y: e.clientY, px: panX, py: panY }; return; }
   const p = toImage(cx, cy), r = rec();
-  // Integer coordinates are pixel centres; the outer half-pixel border is outside 0 <= x < width.
-  if (p.x < 0 || p.y < 0 || p.x >= CONFIG.width_px - 0.5 || p.y >= CONFIG.height_px - 0.5) return;
-  if (e.shiftKey) { if (r.x !== null) r.r = Math.hypot(p.x - r.x, p.y - r.y); }
-  else { r.x = p.x; r.y = p.y; r.state = "labelled"; if (r.visibility === "fully_occluded") r.visibility = "visible"; }
-  save(); draw();
+  if (!inImage(p)) return;
+  if (e.shiftKey) {
+    if (r.x === null) return;
+    ringR = Math.hypot(p.x - r.x, p.y - r.y); saveRing();
+    setRec({ ...r, r: ringR }); save(); draw();
+  } else { placing = true; placeCentre(p); }
 });
-window.addEventListener("mouseup", () => { dragging = null; });
+window.addEventListener("mouseup", () => { dragging = null; placing = false; });
 stage.addEventListener("mousemove", e => {
   const rect = view.getBoundingClientRect();
   if (dragging) { panX = dragging.px + e.clientX - dragging.x; panY = dragging.py + e.clientY - dragging.y; }
-  mouse = { cx: e.clientX - rect.left, cy: e.clientY - rect.top }; draw();
+  mouse = { cx: e.clientX - rect.left, cy: e.clientY - rect.top };
+  const p = toImage(mouse.cx, mouse.cy);
+  if (placing && inImage(p)) placeCentre(p); else draw();
 });
 stage.addEventListener("mouseleave", () => { mouse = null; draw(); });
 stage.addEventListener("wheel", e => {
@@ -174,14 +229,16 @@ document.getElementById("notes").addEventListener("input", e => { rec().notes = 
 document.addEventListener("keydown", e => {
   if (e.target.id === "notes") return;
   const k = e.key.toLowerCase();
-  if (k === "arrowright" || k === "n") go(cur + 1);
-  else if (k === "arrowleft" || k === "p") go(cur - 1);
-  else if (k === "1" || k === "2" || k === "3") setField("quality", QUAL[+k - 1]);
-  else if (k === "o") setField("visibility", rec().visibility === "partially_occluded" ? "visible" : "partially_occluded");
-  else if (k === "u") setField("state", "unlabelable");
-  else if (k === "f") setField("visibility", "fully_occluded");
-  else if (k === "s") setField("state", "not_annotated");
-  else if (k === "0") { fit(); draw(); }
+  if (k === "arrowright" || k === "n") { go(cur + 1); return; }
+  if (k === "arrowleft" || k === "p") { go(cur - 1); return; }
+  if (k === "0") { fit(); draw(); return; }
+  const resize = k === "[" || k === "]";
+  // A held key must not sweep labels across frames; only the ring resize repeats.
+  if (e.repeat && !resize) return;
+  if (resize) { ringR = resizeRing(ringR, k); if (ringR) saveRing(); }
+  const result = applyKey(rec(), k, ringR);
+  if (result) { setRec(result.rec); save(); }
+  if (result && result.advance) go(cur + 1); else draw();
 });
 document.getElementById("prev").onclick = () => go(cur - 1);
 document.getElementById("next").onclick = () => go(cur + 1);

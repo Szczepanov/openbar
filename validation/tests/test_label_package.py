@@ -208,6 +208,36 @@ class PageContractTests(unittest.TestCase):
             if expect_problem:
                 self.assertIn("choose quality", output)
 
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_keys_never_invent_quality_or_radius(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        functions = re.search(r"// BEGIN keyActions.*?\n(.*?)// END keyActions", page, re.S).group(1)
+        centred = {"state": "labelled", "visibility": "visible", "quality": None, "x": 10.0, "y": 20.0, "r": None}
+        empty = {"state": "not_annotated", "visibility": "visible", "quality": None, "x": None, "y": None, "r": None}
+        cases = [
+            # (record, key, ring) -> expected {rec, advance} or None
+            (centred, "2", None, {"rec": {**centred, "quality": "medium"}, "advance": True}),
+            (empty, "1", 40.0, {"rec": {**empty, "quality": "high"}, "advance": False}),
+            (centred, "]", 40.0, {"rec": {**centred, "r": 40.0}, "advance": False}),
+            (empty, "]", 40.0, None),
+            (centred, "]", None, None),
+            (centred, "o", 40.0, {"rec": {**centred, "visibility": "partially_occluded"}, "advance": False}),
+            (centred, "f", 40.0, {"rec": {**centred, "state": "unlabelable", "visibility": "fully_occluded",
+                                          "x": None, "y": None}, "advance": True}),
+            (centred, "u", 40.0, {"rec": {**centred, "state": "unlabelable", "x": None, "y": None}, "advance": True}),
+            (centred, "s", 40.0, {"rec": {**centred, "state": "not_annotated", "x": None, "y": None}, "advance": True}),
+            (centred, "x", 40.0, None),
+        ]
+        calls = ",".join(f"applyKey({json.dumps(r)}, {json.dumps(k)}, {json.dumps(ring)})" for r, k, ring, _ in cases)
+        script = functions + (
+            f"process.stdout.write(JSON.stringify({{keys: [{calls}], "
+            "ring: [resizeRing(50, ']'), resizeRing(51, '['), resizeRing(null, ']'), resizeRing(50, 'x')]}));"
+        )
+        output = json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
+
+        self.assertEqual(output["keys"], [expected for *_, expected in cases])
+        self.assertEqual(output["ring"], [51.0, 50.0, None, 50])
+
     def test_package_id_separates_annotator_passes_and_grids(self):
         frames = [{"file": "frames/frame_000000.png", "frame_index": 0, "timestamp_s": 0.0}]
         first = label_package.page_config("clip", "pass-a", (320, 240), frames)

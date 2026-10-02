@@ -173,7 +173,13 @@ picked on a uniform time grid, not from tracker output, so the labeller is not a
 is being evaluated. The output folder holds the frames, a `metadata.json` sidecar and an
 `index.html` page:
 
-- click the plate centre; Shift+click a rim point to record the radius (optional);
+- click the plate centre (hold and drag to adjust); Shift+click a rim point to record that frame's
+  radius (optional). The Shift+click also sets a dashed aiming ring that follows the cursor: line it up
+  with the plate's outer rim and click, so the centre comes from the whole rim rather than a guess at the
+  middle. The ring is an aiming aid only; a frame gets a radius only from its own Shift+click or a
+  `[`/`]` ring resize while it has a centre. Nothing is prefilled from a detector or tracker;
+- `1`/`2`/`3` set the quality of a labelled frame and move to the next frame; `U`, `F` and `S` also
+  move on. Clicking never advances, so a centre can be corrected before its quality is chosen;
 - the wheel zooms, right/middle-drag pans, and a loupe magnifies the cursor area;
 - set visibility/quality, mark `unlabelable` or skip (`not_annotated`) explicitly;
 - integer coordinates fall on pixel centres, matching how the trackers compute positions (for

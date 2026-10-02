@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PAGE_TEMPLATE = Path(__file__).with_name("label_page.html")
 CONFIG_PLACEHOLDER = "/*CONFIG*/null"
 PRIVATE_ROOT = ROOT / "validation" / "private"
-TOOL = {"name": "openbar-label-package", "version": "2"}
+TOOL = {"name": "openbar-label-package", "version": "3"}
 # One select term per frame keeps the FFmpeg command well under the Windows command-line limit.
 MAX_FRAMES = 2000
 SHOWINFO = re.compile(r"\[Parsed_showinfo[^\]]*\] n:\s*\d+ pts:\s*(-?\d+)")
