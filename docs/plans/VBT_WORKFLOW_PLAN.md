@@ -93,8 +93,11 @@ Default tracker for the personal workflow: `opencv-csrt`, which runs on CPU and 
 
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
 
-- **Mapping to vertical-up.** Displacement = −(y_m − y_m at the first sample); velocity = −vy_mps.
-  Image +Y points down (ADR-0007).
+- **Mapping to vertical-up.** `analysis-v1` calibrated and kinematic coordinates use
+  `calibration.coordinate_convention` = `reference_centre_x_right_y_up`, so `y_m` and `vy_mps` are
+  already upward-positive. Use them as-is: displacement = y_m − y_m at the first sample, velocity =
+  vy_mps. Reject any other `coordinate_convention`. Only raw pixel observations are +Y down
+  (ADR-0007).
 - **Gaps.** OpenBar omits samples that are lost or below the confidence floor. Segmentation must not
   bridge a gap as if it were continuous.
 - **Load.** It is not in `analysis-v1`; the athlete enters it on the capture screen.
@@ -115,6 +118,28 @@ Default tracker for the personal workflow: `opencv-csrt`, which runs on CPU and 
 4. Record PASS / FAIL and the decision.
 
 Only aggregates are committed.
+
+**Trial run (2026-10-02, excluded from the formal study).** One clean & jerk set:
+`self-clean-jerk-side-002`, 40 kg, four reps, 60 fps. It was run through WL Analysis and through
+`opencv-csrt` → `analyze --observations`, then the recommender's segmentation rules (re-implemented for
+the check).
+
+- **Same reps.** Both sources found the same 4 reps.
+- **Positions agree closely.** Over 533 matched frames, OpenBar = 1.022 × WL Analysis, with a residual
+  SD of 0.39 cm. That is about 2 % scale and negligible tracking disagreement.
+- **Unfiltered velocity is too noisy to compare.** With `--filter raw`, frame-difference noise at the slow
+  start of each pull delayed rep onset by 0.08–0.15 s on three of the four reps. That raised OpenBar's mean concentric velocity by
+  0.009–0.174 m/s (mean +0.088).
+- **A generic smoother fixes it.** With a Savitzky–Golay filter (window 9, order 2, max gap 0.2 s) — a
+  textbook setting chosen before the run, not tuned — the mean concentric velocity difference was
+  +0.006 to +0.050 m/s (mean +0.032), consistent with the 2 % scale difference. Peak velocity stayed
+  0.10–0.14 m/s higher, because WL Analysis smooths more heavily.
+
+Implications for #79:
+- Pre-register the OpenBar filter and its parameters.
+- Make mean concentric velocity the primary metric, with peak velocity secondary (it is
+  filter-dependent).
+- Report the 2 % scale difference separately: deciding which source is right is #58's job.
 
 ## 5. Known risks
 
