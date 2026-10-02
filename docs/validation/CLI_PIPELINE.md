@@ -76,7 +76,12 @@ all of the following:
 
 Tracked coordinates, timestamps and confidence values are preserved as canonical raw
 observations. Lost samples remain lost and contribute no position; import never interpolates or
-revives them. The matched decoded frame index is attached to each canonical raw observation.
+revives them. The matched decoded frame index is attached to each canonical raw observation. If a
+prediction timestamp represents the first or last selected decoded frame but differs from that
+frame's exact probe timestamp only by the accepted decoder tolerance (for example a fixture timestamp
+rounded to six decimals), the external-analysis `video.trim` envelope is widened only enough to
+contain the preserved imported boundary timestamp. The built-in `--tracker` path keeps its existing
+exact decoded-media trim bytes unchanged.
 
 External provenance uses the existing `analysis-v1` tracker provenance shape. The prediction
 implementation name becomes the tracker id/implementation, its version is preserved, and each
