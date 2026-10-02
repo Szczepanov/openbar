@@ -23,6 +23,8 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `tools/annotations.py` — deterministic stdlib-only importer, validator, and repeatability metric tool.
 - `tools/label_package.py` + `tools/label_page.html` — optional stdlib-only helper that extracts frames on a
   uniform time grid and builds a local click-to-label page exporting the `import-csv` format.
+- `tools/tracker_filter_selection.py` — issue #57 held-out study orchestration: freeze candidates,
+  fail-closed real-fixture preflight, evaluate tracker/filter evidence, and record an explicit decision.
 - `tools/schema_check.py` — stdlib-only JSON Schema checker; validates every committed fixture against its schema and fails on unmapped JSON files.
 - `tests/` — annotation and schema-check contract/tooling tests.
 - `private/` — local-only research material; ignored by Git.
@@ -61,6 +63,19 @@ tracker and benchmark-smoke evidence. The retained filter JSON is deterministic 
 evidence; environment-sensitive runtime is printed to the console and intentionally excluded from
 that JSON. Both experiment artifacts remain separate from real-video M0 validation results.
 
+The #57 production-candidate study is intentionally separate from the synthetic/public smoke package.
+It requires a frozen, annotated, non-synthetic validation set and refuses to turn the current
+development-only private clips into selection evidence:
+
+```bash
+python3 validation/tools/tracker_filter_selection.py freeze \
+  --manifest validation/private/manifest.json \
+  --output target/m0-selection/freeze-v1.json
+python3 validation/tools/tracker_filter_selection.py preflight \
+  --manifest validation/private/manifest.json \
+  --freeze target/m0-selection/freeze-v1.json
+```
+
 Detailed policies and workflows:
 
 - [`docs/validation/FIXTURE_DATASET.md`](../docs/validation/FIXTURE_DATASET.md)
@@ -72,6 +87,7 @@ Detailed policies and workflows:
 - [`docs/validation/M0_EVIDENCE.md`](../docs/validation/M0_EVIDENCE.md)
 - [`docs/validation/M0_EVIDENCE_REPORT.md`](../docs/validation/M0_EVIDENCE_REPORT.md)
 - [`docs/validation/M0_PRIVATE_EVIDENCE_REPORT.md`](../docs/validation/M0_PRIVATE_EVIDENCE_REPORT.md)
+- [`docs/validation/TRACKER_FILTER_SELECTION.md`](../docs/validation/TRACKER_FILTER_SELECTION.md)
 
 Do not add public media merely because it is technically accessible. Every committed media
 fixture must have affirmative redistribution rights documented in its manifest metadata.
