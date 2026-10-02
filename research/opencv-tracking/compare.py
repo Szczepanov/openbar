@@ -20,6 +20,7 @@ import argparse
 from dataclasses import dataclass, field
 import json
 import math
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,7 @@ class CandidateProducer:
         end_s: float,
         output_path: Path,
         allow_held_out: bool = False,
+        sibling_output_path: Path | None = None,
     ) -> None:
         cmd = [
             str(self.interpreter),
@@ -66,9 +68,22 @@ class CandidateProducer:
             str(output_path),
             *self.extra_args,
         ]
+        if sibling_output_path is not None:
+            cmd += ["--sibling-output", str(sibling_output_path)]
         if allow_held_out:
             cmd.append("--allow-held-out")
         execute(cmd)
+
+
+def mask_sibling(name: str) -> str | None:
+    """The other centre method of a GPU mask candidate (centroid <-> circle), or None."""
+    if not name.startswith(("sam2.1-", "cutie-base-")):
+        return None
+    if name.endswith("-centroid"):
+        return name.removesuffix("-centroid") + "-circle"
+    if name.endswith("-circle"):
+        return name.removesuffix("-circle") + "-centroid"
+    return None
 
 
 # Default candidate registry for OpenCV trackers
@@ -127,6 +142,66 @@ CANDIDATE_REGISTRY: dict[str, CandidateProducer] = {
         script=TRACK,
         extra_args=["--tracker", "csrt+hough"],
     ),
+    "opencv-lk-affine": CandidateProducer(
+        name="opencv-lk-affine",
+        interpreter=sys.executable,
+        script=TRACK,
+        extra_args=["--tracker", "lk-affine"],
+    ),
+    "opencv-csrt+lk": CandidateProducer(
+        name="opencv-csrt+lk",
+        interpreter=sys.executable,
+        script=TRACK,
+        extra_args=["--tracker", "csrt+lk"],
+    ),
+    "sam2.1-small-centroid": CandidateProducer(
+        name="sam2.1-small-centroid",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "sam2.1-small-centroid"],
+    ),
+    "sam2.1-small-circle": CandidateProducer(
+        name="sam2.1-small-circle",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "sam2.1-small-circle"],
+    ),
+    "sam2.1-bplus-centroid": CandidateProducer(
+        name="sam2.1-bplus-centroid",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "sam2.1-bplus-centroid"],
+    ),
+    "sam2.1-bplus-circle": CandidateProducer(
+        name="sam2.1-bplus-circle",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "sam2.1-bplus-circle"],
+    ),
+    "cutie-base-centroid": CandidateProducer(
+        name="cutie-base-centroid",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "cutie-base-centroid"],
+    ),
+    "cutie-base-circle": CandidateProducer(
+        name="cutie-base-circle",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "cutie-base-circle"],
+    ),
+    "bootstapir-affine": CandidateProducer(
+        name="bootstapir-affine",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "bootstapir-affine"],
+    ),
+    "cotracker3-affine": CandidateProducer(
+        name="cotracker3-affine",
+        interpreter=ROOT / "research" / "gpu-tracking" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"),
+        script=ROOT / "research" / "gpu-tracking" / "track_gpu.py",
+        extra_args=["--candidate", "cotracker3-affine"],
+    ),
 }
 
 TRACKER_LICENSES: dict[str, str] = {
@@ -141,6 +216,16 @@ TRACKER_LICENSES: dict[str, str] = {
     "opencv-csrt+circle-b1": "Apache-2.0",
     "opencv-csrt+circle-b5": "Apache-2.0",
     "opencv-csrt+hough": "Apache-2.0",
+    "opencv-lk-affine": "Apache-2.0",
+    "opencv-csrt+lk": "Apache-2.0",
+    "sam2.1-small-centroid": "Apache-2.0 / Apache-2.0",
+    "sam2.1-small-circle": "Apache-2.0 / Apache-2.0",
+    "sam2.1-bplus-centroid": "Apache-2.0 / Apache-2.0",
+    "sam2.1-bplus-circle": "Apache-2.0 / Apache-2.0",
+    "cutie-base-centroid": "MIT / unconfirmed weights",
+    "cutie-base-circle": "MIT / unconfirmed weights",
+    "bootstapir-affine": "Apache-2.0 / Apache-2.0",
+    "cotracker3-affine": "CC-BY-NC-4.0 / CC-BY-NC-4.0",
 }
 
 
@@ -329,6 +414,7 @@ def generate_summary(
                 or TRACKER_LICENSES.get(t_name, "unknown")
             )
             runtime_s = pred.get("runtime", {}).get("processing_wall_s")
+            peak_gpu_mem_mb = pred.get("implementation", {}).get("config", {}).get("peak_gpu_memory_mb")
             pred_samples = pred.get("samples", [])
 
             # Check for geometry sidecar
@@ -344,7 +430,8 @@ def generate_summary(
                 sc_doc = json.loads(sidecar_file.read_text(encoding="utf-8"))
                 sidecar_samples = sc_doc.get("samples", [])
                 fit_attempted = sum(1 for s in sidecar_samples if s.get("fit_attempted"))
-                fit_accepted = sum(1 for s in sidecar_samples if s.get("accepted"))
+                # The seed entry is marked accepted without a fit attempt; count accepted fits only.
+                fit_accepted = sum(1 for s in sidecar_samples if s.get("fit_attempted") and s.get("accepted"))
                 overall_rate = fit_accepted / fit_attempted if fit_attempted else 0.0
 
                 # Match sidecar samples to labelled annotations
@@ -378,6 +465,7 @@ def generate_summary(
                 "tracker": t_name,
                 "license": t_license,
                 "runtime_s": runtime_s,
+                "peak_gpu_memory_mb": peak_gpu_mem_mb,
                 "all_samples": m_all,
                 "seed_excluded": m_no_seed,
                 "geometry_sidecar": sidecar_summary,
@@ -493,8 +581,8 @@ def generate_summary(
         "",
         "## 4. Geometry Fit Acceptance & Runtime Overhead",
         "",
-        "| Clip | Candidate | Overall Acceptance | Labelled Acceptance | Runtime s | vs CSRT |",
-        "|---|---|---:|---:|---:|---:|",
+        "| Clip | Candidate | Overall Acceptance | Labelled Acceptance | Runtime s | vs CSRT | Peak GPU MB |",
+        "|---|---|---:|---:|---:|---:|---:|",
     ])
     for f in summary_fixtures:
         for t in f["trackers"]:
@@ -507,8 +595,9 @@ def generate_summary(
                 la_str = "N/A"
             rt_str = f"{t['runtime_s']:.2f} s" if t.get('runtime_s') is not None else "N/A"
             ovh_str = f"{t['runtime_overhead_vs_csrt']:.2f}x" if t.get('runtime_overhead_vs_csrt') is not None else "1.00x"
+            peak_str = f"{t['peak_gpu_memory_mb']:.1f} MB" if t.get('peak_gpu_memory_mb') is not None else "N/A"
             md_lines.append(
-                f"| `{f['fixture_id']}` | {t['tracker']} | {oa_str} | {la_str} | {rt_str} | {ovh_str} |"
+                f"| `{f['fixture_id']}` | {t['tracker']} | {oa_str} | {la_str} | {rt_str} | {ovh_str} | {peak_str} |"
             )
 
     md_lines.extend([
@@ -568,15 +657,26 @@ def main(argv: list[str] | None = None) -> int:
         start_s = max(0.0, seed_s - TIMESTAMP_TOLERANCE_S)
         end_s_tolerant = end_s + TIMESTAMP_TOLERANCE_S
         predictions_dir = out / fixture_id
+        # Evidence-producing runs must not consume stale predictions or geometry sidecars.
+        shutil.rmtree(predictions_dir, ignore_errors=True)
 
         # Always run OpenBar baseline trackers
         execute(["cargo", "run", "--locked", "--release", "-q", "-p", "openbar-cli", "--", "tracker-run",
                  "--manifest", str(args.manifest), "--fixture", fixture_id, "--seed", str(seed),
                  "--start-s", f"{start_s:.6f}", "--end-s", f"{end_s_tolerant:.6f}", "--output-dir", str(predictions_dir)])
 
-        # Run registered candidate producers
+        # Run registered candidate producers. When both centre methods of a mask model are selected, the
+        # model runs once and writes both predictions from the same masks.
+        produced: set[str] = set()
         for producer in selected_producers:
+            if producer.name in produced:
+                continue
             output_file = predictions_dir / f"{fixture_id}.{producer.name}.prediction-v1.json"
+            sibling = mask_sibling(producer.name)
+            sibling_file = None
+            if sibling in candidate_names:
+                sibling_file = predictions_dir / f"{fixture_id}.{sibling}.prediction-v1.json"
+                produced.add(sibling)
             producer.run(
                 manifest_path=args.manifest,
                 fixture_id=fixture_id,
@@ -584,7 +684,9 @@ def main(argv: list[str] | None = None) -> int:
                 end_s=end_s_tolerant,
                 output_path=output_file,
                 allow_held_out=args.allow_held_out,
+                sibling_output_path=sibling_file,
             )
+            produced.add(producer.name)
 
         # Collect only outputs expected from this invocation. Reusing an output directory must not
         # silently pull stale predictions from older candidate sets into the benchmark.

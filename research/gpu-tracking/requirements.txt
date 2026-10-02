@@ -1,0 +1,20 @@
+# GPU tracking bootstrap constraints (#57 Phase 3 bake-off).
+# This file was used as a bootstrap, not as an immutable lock for the historical Phase 3 run.
+# Exact installed package versions and pip VCS direct-source metadata available at runtime are
+# now recorded in each GPU prediction's implementation.config.dependencies. Checkpoint bytes
+# are SHA-256 verified by track_gpu.py. Before Phase 4 freeze, create and retain an explicit
+# environment lock for the shortlisted candidate(s) and rerun the development evidence.
+# PyTorch with CUDA 12.4
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.4.0
+torchvision>=0.19.0
+numpy>=1.26.0,<3.0.0
+opencv-python>=4.10.0
+timm
+hydra-core
+iopath
+matplotlib
+pyyaml
+scipy
+einops
+packaging

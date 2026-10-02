@@ -144,9 +144,142 @@ Phase 2 (plate-geometry refinement) showed dramatic gains on the snatch (MAE 7.5
 clean & jerk (6.44 -> 5.97 px, fit acceptance only 20%), but degraded the squat (3.22 -> 3.80 px), failing the
 consistent paired improvement rule.
 Fast lifts require Phase 3 (SAM 2 video segmentation).
+Phase 3 result: see "Phase 3 bake-off" below and §6 Phase 3 (outcome PARTIAL).
 
 Reproduce:
 `research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --candidate opencv-csrt --candidate opencv-csrt+circle-a --candidate opencv-csrt+circle-b1 --candidate opencv-csrt+circle-b5 --candidate opencv-csrt+hough --output-dir target/opencv-spike/phase2-compare`
+
+### Phase 3 bake-off (seed-excluded, development clips)
+
+Run 1 of `TRACKER_BAKEOFF_PLAN.md` (2026-10-02), scored by `openbar-cli benchmark`. Nominal mm as in Phase 2.
+"False Tracks" counts samples with error > 3 px and confidence ≥ 0.8; "FT (Base Conf)" uses the confidence
+before any × 0.7 fallback penalty.
+
+| Clip | Tracker | License | Availability | MAE px | MAE mm (nom) | p90 px | p90 mm (nom) | Max px | False Tracks | FT (Base Conf) | High Errors (>3px) |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | template-sad-v1 | PolyForm Shield 1.0.0 | 100.0 % | 54.34 | 134.47 | 165.96 | 410.71 | 178.28 | 13 | 13 | 13 |
+| `self-back-squat-side-002` | local-contrast-centroid-v1 | PolyForm Shield 1.0.0 | 100.0 % | 113.42 | 280.69 | 251.49 | 622.35 | 281.63 | 24 | 24 | 24 |
+| `self-back-squat-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 3.22 | 7.96 | 5.00 | 12.36 | 5.83 | 5 | 5 | 14 |
+| `self-back-squat-side-002` | opencv-lk-affine | Apache-2.0 | 8.3 % | 1.22 | 3.03 | 1.71 | 4.23 | 1.71 | 0 | 0 | 0 |
+| `self-back-squat-side-002` | opencv-csrt+lk | Apache-2.0 | 100.0 % | 2.96 | 7.33 | 5.00 | 12.36 | 5.83 | 0 | 4 | 12 |
+| `self-back-squat-side-002` | sam2.1-small-centroid | Apache-2.0 / Apache-2.0 | 100.0 % | 3.02 | 7.47 | 4.75 | 11.76 | 5.59 | 13 | 13 | 13 |
+| `self-back-squat-side-002` | sam2.1-small-circle | Apache-2.0 / Apache-2.0 | 100.0 % | 1.92 | 4.76 | 3.52 | 8.72 | 3.85 | 4 | 4 | 4 |
+| `self-back-squat-side-002` | sam2.1-bplus-centroid | Apache-2.0 / Apache-2.0 | 100.0 % | 3.62 | 8.97 | 5.62 | 13.91 | 6.59 | 15 | 15 | 15 |
+| `self-back-squat-side-002` | sam2.1-bplus-circle | Apache-2.0 / Apache-2.0 | 100.0 % | 1.94 | 4.81 | 3.47 | 8.60 | 3.97 | 6 | 6 | 6 |
+| `self-back-squat-side-002` | cutie-base-centroid | MIT / unconfirmed weights | 100.0 % | 2.18 | 5.40 | 4.28 | 10.60 | 4.88 | 5 | 5 | 5 |
+| `self-back-squat-side-002` | cutie-base-circle | MIT / unconfirmed weights | 100.0 % | 2.24 | 5.53 | 3.85 | 9.53 | 4.74 | 5 | 5 | 5 |
+| `self-back-squat-side-002` | bootstapir-affine | Apache-2.0 / Apache-2.0 | 4.2 % | 1.24 | 3.07 | 1.24 | 3.07 | 1.24 | 0 | 0 | 0 |
+| `self-back-squat-side-002` | cotracker3-affine | CC-BY-NC-4.0 / CC-BY-NC-4.0 | 12.5 % | 0.69 | 1.70 | 0.94 | 2.32 | 0.94 | 0 | 0 | 0 |
+| `self-clean-jerk-side-002` | template-sad-v1 | PolyForm Shield 1.0.0 | 100.0 % | 208.69 | 235.72 | 423.28 | 478.10 | 439.77 | 18 | 18 | 18 |
+| `self-clean-jerk-side-002` | local-contrast-centroid-v1 | PolyForm Shield 1.0.0 | 100.0 % | 783.38 | 884.84 | 1144.20 | 1292.40 | 1162.22 | 20 | 20 | 20 |
+| `self-clean-jerk-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 6.44 | 7.27 | 10.25 | 11.57 | 14.33 | 2 | 2 | 18 |
+| `self-clean-jerk-side-002` | opencv-lk-affine | Apache-2.0 | 40.0 % | 4.64 | 5.24 | 8.22 | 9.29 | 8.22 | 1 | 1 | 7 |
+| `self-clean-jerk-side-002` | opencv-csrt+lk | Apache-2.0 | 100.0 % | 5.44 | 6.15 | 9.31 | 10.52 | 10.51 | 1 | 1 | 18 |
+| `self-clean-jerk-side-002` | sam2.1-small-centroid | Apache-2.0 / Apache-2.0 | 100.0 % | 4.11 | 4.64 | 9.31 | 10.51 | 10.40 | 12 | 12 | 12 |
+| `self-clean-jerk-side-002` | sam2.1-small-circle | Apache-2.0 / Apache-2.0 | 100.0 % | 4.34 | 4.90 | 6.66 | 7.52 | 10.12 | 11 | 11 | 11 |
+| `self-clean-jerk-side-002` | sam2.1-bplus-centroid | Apache-2.0 / Apache-2.0 | 100.0 % | 4.15 | 4.68 | 6.53 | 7.38 | 17.44 | 10 | 10 | 10 |
+| `self-clean-jerk-side-002` | sam2.1-bplus-circle | Apache-2.0 / Apache-2.0 | 100.0 % | 4.41 | 4.98 | 7.93 | 8.96 | 9.18 | 15 | 15 | 15 |
+| `self-clean-jerk-side-002` | cutie-base-centroid | MIT / unconfirmed weights | 100.0 % | 6.41 | 7.24 | 16.51 | 18.65 | 20.30 | 14 | 14 | 14 |
+| `self-clean-jerk-side-002` | cutie-base-circle | MIT / unconfirmed weights | 100.0 % | 4.30 | 4.86 | 7.15 | 8.08 | 10.52 | 14 | 14 | 14 |
+| `self-clean-jerk-side-002` | bootstapir-affine | Apache-2.0 / Apache-2.0 | 100.0 % | 4.89 | 5.52 | 7.21 | 8.15 | 8.70 | 1 | 1 | 15 |
+| `self-clean-jerk-side-002` | cotracker3-affine | CC-BY-NC-4.0 / CC-BY-NC-4.0 | 100.0 % | 3.97 | 4.49 | 5.56 | 6.28 | 9.12 | 1 | 1 | 16 |
+| `self-snatch-side-002` | template-sad-v1 | PolyForm Shield 1.0.0 | 95.5 % | 34.49 | 58.72 | 119.31 | 203.16 | 243.05 | 19 | 19 | 19 |
+| `self-snatch-side-002` | local-contrast-centroid-v1 | PolyForm Shield 1.0.0 | 100.0 % | 59.87 | 101.94 | 211.48 | 360.09 | 392.57 | 9 | 9 | 22 |
+| `self-snatch-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 7.51 | 12.78 | 10.31 | 17.56 | 11.45 | 3 | 3 | 21 |
+| `self-snatch-side-002` | opencv-lk-affine | Apache-2.0 | 0.0 % | N/A | N/A | N/A | N/A | N/A | 0 | 0 | 0 |
+| `self-snatch-side-002` | opencv-csrt+lk | Apache-2.0 | 100.0 % | 7.51 | 12.78 | 10.31 | 17.56 | 11.45 | 0 | 3 | 21 |
+| `self-snatch-side-002` | sam2.1-small-centroid | Apache-2.0 / Apache-2.0 | 100.0 % | 5.93 | 10.09 | 15.72 | 26.77 | 22.98 | 15 | 15 | 15 |
+| `self-snatch-side-002` | sam2.1-small-circle | Apache-2.0 / Apache-2.0 | 100.0 % | 3.96 | 6.75 | 5.72 | 9.74 | 22.98 | 11 | 12 | 12 |
+| `self-snatch-side-002` | sam2.1-bplus-centroid | Apache-2.0 / Apache-2.0 | 100.0 % | 5.25 | 8.94 | 8.36 | 14.24 | 22.25 | 14 | 14 | 14 |
+| `self-snatch-side-002` | sam2.1-bplus-circle | Apache-2.0 / Apache-2.0 | 100.0 % | 3.10 | 5.28 | 4.85 | 8.26 | 7.54 | 12 | 12 | 12 |
+| `self-snatch-side-002` | cutie-base-centroid | MIT / unconfirmed weights | 81.8 % | 17.54 | 29.87 | 58.64 | 99.86 | 100.12 | 16 | 16 | 16 |
+| `self-snatch-side-002` | cutie-base-circle | MIT / unconfirmed weights | 81.8 % | 4.53 | 7.71 | 8.98 | 15.29 | 9.60 | 13 | 13 | 13 |
+| `self-snatch-side-002` | bootstapir-affine | Apache-2.0 / Apache-2.0 | 90.9 % | 10.04 | 17.09 | 16.01 | 27.27 | 21.19 | 0 | 0 | 20 |
+| `self-snatch-side-002` | cotracker3-affine | CC-BY-NC-4.0 / CC-BY-NC-4.0 | 100.0 % | 8.49 | 14.46 | 14.43 | 24.58 | 17.21 | 0 | 0 | 20 |
+
+**Paired comparison against CSRT (seed-excluded labels):**
+
+| Clip | Candidate | Compared | Improved | Worsened | Tied | Median Delta px | Median Delta mm (nom) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | opencv-lk-affine | 2 | 2 | 0 | 0 | -3.757 | -9.298 |
+| `self-back-squat-side-002` | opencv-csrt+lk | 24 | 2 | 0 | 22 | +0.000 | +0.000 |
+| `self-back-squat-side-002` | sam2.1-small-centroid | 24 | 12 | 12 | 0 | -0.004 | -0.009 |
+| `self-back-squat-side-002` | sam2.1-small-circle | 24 | 20 | 4 | 0 | -1.495 | -3.699 |
+| `self-back-squat-side-002` | sam2.1-bplus-centroid | 24 | 11 | 13 | 0 | +0.584 | +1.446 |
+| `self-back-squat-side-002` | sam2.1-bplus-circle | 24 | 19 | 5 | 0 | -1.469 | -3.636 |
+| `self-back-squat-side-002` | cutie-base-centroid | 24 | 16 | 8 | 0 | -1.401 | -3.468 |
+| `self-back-squat-side-002` | cutie-base-circle | 24 | 17 | 7 | 0 | -1.364 | -3.377 |
+| `self-back-squat-side-002` | bootstapir-affine | 1 | 1 | 0 | 0 | -3.754 | -9.290 |
+| `self-back-squat-side-002` | cotracker3-affine | 3 | 3 | 0 | 0 | -4.056 | -10.038 |
+| `self-clean-jerk-side-002` | opencv-lk-affine | 8 | 5 | 3 | 0 | -1.987 | -2.245 |
+| `self-clean-jerk-side-002` | opencv-csrt+lk | 20 | 5 | 3 | 12 | +0.000 | +0.000 |
+| `self-clean-jerk-side-002` | sam2.1-small-centroid | 20 | 17 | 3 | 0 | -2.121 | -2.396 |
+| `self-clean-jerk-side-002` | sam2.1-small-circle | 20 | 12 | 8 | 0 | -1.497 | -1.691 |
+| `self-clean-jerk-side-002` | sam2.1-bplus-centroid | 20 | 16 | 4 | 0 | -2.459 | -2.778 |
+| `self-clean-jerk-side-002` | sam2.1-bplus-circle | 20 | 14 | 6 | 0 | -1.291 | -1.458 |
+| `self-clean-jerk-side-002` | cutie-base-centroid | 20 | 12 | 8 | 0 | -2.461 | -2.780 |
+| `self-clean-jerk-side-002` | cutie-base-circle | 20 | 14 | 6 | 0 | -1.856 | -2.096 |
+| `self-clean-jerk-side-002` | bootstapir-affine | 20 | 13 | 7 | 0 | -2.879 | -3.252 |
+| `self-clean-jerk-side-002` | cotracker3-affine | 20 | 15 | 5 | 0 | -2.603 | -2.940 |
+| `self-snatch-side-002` | opencv-csrt+lk | 22 | 0 | 0 | 22 | +0.000 | +0.000 |
+| `self-snatch-side-002` | sam2.1-small-centroid | 22 | 18 | 4 | 0 | -2.294 | -3.906 |
+| `self-snatch-side-002` | sam2.1-small-circle | 22 | 19 | 3 | 0 | -5.334 | -9.082 |
+| `self-snatch-side-002` | sam2.1-bplus-centroid | 22 | 19 | 3 | 0 | -2.227 | -3.792 |
+| `self-snatch-side-002` | sam2.1-bplus-circle | 22 | 20 | 2 | 0 | -4.738 | -8.067 |
+| `self-snatch-side-002` | cutie-base-centroid | 18 | 8 | 10 | 0 | +0.426 | +0.725 |
+| `self-snatch-side-002` | cutie-base-circle | 18 | 16 | 2 | 0 | -3.563 | -6.067 |
+| `self-snatch-side-002` | bootstapir-affine | 20 | 5 | 15 | 0 | +2.421 | +4.123 |
+| `self-snatch-side-002` | cotracker3-affine | 22 | 11 | 11 | 0 | -0.069 | -0.117 |
+
+**Fit acceptance, runtime and GPU memory.** For the mask models, the centroid and circle candidates come from
+one shared model run, so both rows carry that run's runtime and peak memory. Peak GPU memory is
+`torch.cuda.max_memory_allocated`.
+
+| Clip | Candidate | Labelled fit acceptance | Runtime s | vs CSRT | Peak GPU MB |
+|---|---|---:|---:|---:|---:|
+| `self-back-squat-side-002` | template-sad-v1 | N/A | 5.41 s | 0.94x | N/A |
+| `self-back-squat-side-002` | local-contrast-centroid-v1 | N/A | 1.24 s | 0.22x | N/A |
+| `self-back-squat-side-002` | opencv-csrt | N/A | 5.78 s | 1.00x | N/A |
+| `self-back-squat-side-002` | opencv-lk-affine | N/A | 1.67 s | 0.29x | N/A |
+| `self-back-squat-side-002` | opencv-csrt+lk | 8.3 % (2/24) | 6.62 s | 1.15x | N/A |
+| `self-back-squat-side-002` | sam2.1-small-centroid | N/A | 13.55 s | 2.34x | 747.8 MB |
+| `self-back-squat-side-002` | sam2.1-small-circle | 100.0 % (24/24) | 13.55 s | 2.34x | 747.8 MB |
+| `self-back-squat-side-002` | sam2.1-bplus-centroid | N/A | 15.44 s | 2.67x | 976.0 MB |
+| `self-back-squat-side-002` | sam2.1-bplus-circle | 100.0 % (24/24) | 15.44 s | 2.67x | 976.0 MB |
+| `self-back-squat-side-002` | cutie-base-centroid | N/A | 11.41 s | 1.97x | 1551.8 MB |
+| `self-back-squat-side-002` | cutie-base-circle | 100.0 % (24/24) | 11.41 s | 1.97x | 1551.8 MB |
+| `self-back-squat-side-002` | bootstapir-affine | N/A | 33.76 s | 5.84x | 5958.7 MB |
+| `self-back-squat-side-002` | cotracker3-affine | N/A | 7.89 s | 1.36x | 7224.9 MB |
+| `self-clean-jerk-side-002` | template-sad-v1 | N/A | 21.66 s | 1.41x | N/A |
+| `self-clean-jerk-side-002` | local-contrast-centroid-v1 | N/A | 5.01 s | 0.33x | N/A |
+| `self-clean-jerk-side-002` | opencv-csrt | N/A | 15.33 s | 1.00x | N/A |
+| `self-clean-jerk-side-002` | opencv-lk-affine | N/A | 4.86 s | 0.32x | N/A |
+| `self-clean-jerk-side-002` | opencv-csrt+lk | 40.0 % (8/20) | 21.32 s | 1.39x | N/A |
+| `self-clean-jerk-side-002` | sam2.1-small-centroid | N/A | 17.25 s | 1.13x | 747.9 MB |
+| `self-clean-jerk-side-002` | sam2.1-small-circle | 100.0 % (20/20) | 17.25 s | 1.13x | 747.9 MB |
+| `self-clean-jerk-side-002` | sam2.1-bplus-centroid | N/A | 18.48 s | 1.21x | 978.5 MB |
+| `self-clean-jerk-side-002` | sam2.1-bplus-circle | 100.0 % (20/20) | 18.48 s | 1.21x | 978.5 MB |
+| `self-clean-jerk-side-002` | cutie-base-centroid | N/A | 1367.63 s | 89.22x | 6869.5 MB |
+| `self-clean-jerk-side-002` | cutie-base-circle | 100.0 % (20/20) | 1367.63 s | 89.22x | 6869.5 MB |
+| `self-clean-jerk-side-002` | bootstapir-affine | N/A | 8.10 s | 0.53x | 4962.7 MB |
+| `self-clean-jerk-side-002` | cotracker3-affine | N/A | 8.64 s | 0.56x | 6860.4 MB |
+| `self-snatch-side-002` | template-sad-v1 | N/A | 19.49 s | 1.27x | N/A |
+| `self-snatch-side-002` | local-contrast-centroid-v1 | N/A | 4.21 s | 0.27x | N/A |
+| `self-snatch-side-002` | opencv-csrt | N/A | 15.33 s | 1.00x | N/A |
+| `self-snatch-side-002` | opencv-lk-affine | N/A | 5.08 s | 0.33x | N/A |
+| `self-snatch-side-002` | opencv-csrt+lk | 0.0 % (0/22) | 16.07 s | 1.05x | N/A |
+| `self-snatch-side-002` | sam2.1-small-centroid | N/A | 24.95 s | 1.63x | 802.0 MB |
+| `self-snatch-side-002` | sam2.1-small-circle | 95.5 % (21/22) | 24.95 s | 1.63x | 802.0 MB |
+| `self-snatch-side-002` | sam2.1-bplus-centroid | N/A | 27.58 s | 1.80x | 1031.9 MB |
+| `self-snatch-side-002` | sam2.1-bplus-circle | 100.0 % (22/22) | 27.58 s | 1.80x | 1031.9 MB |
+| `self-snatch-side-002` | cutie-base-centroid | N/A | 2093.16 s | 136.56x | 6869.5 MB |
+| `self-snatch-side-002` | cutie-base-circle | 100.0 % (18/18) | 2093.16 s | 136.56x | 6869.5 MB |
+| `self-snatch-side-002` | bootstapir-affine | N/A | 89.28 s | 5.82x | 10578.7 MB |
+| `self-snatch-side-002` | cotracker3-affine | N/A | 44.95 s | 2.93x | 14832.6 MB |
+
+Reproduce (run 1; run 2 used the same command for the OpenCV candidates, and the GPU candidates on the squat
+only):
+`research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --candidate opencv-csrt --candidate opencv-lk-affine --candidate opencv-csrt+lk --candidate sam2.1-small-centroid --candidate sam2.1-small-circle --candidate sam2.1-bplus-centroid --candidate sam2.1-bplus-circle --candidate cutie-base-centroid --candidate cutie-base-circle --candidate bootstapir-affine --candidate cotracker3-affine --output-dir target/opencv-spike/phase3-bakeoff`
 
 ## 3. Non-negotiable rules
 
@@ -195,26 +328,36 @@ These come from `AGENTS.md`, ADR-0003/0005/0006/0007/0008 and lessons from this 
 
 ## 4. Current state inventory
 
-### Code (`research/opencv-tracking/`, in this research PR)
+### Code (`research/opencv-tracking/` and `research/gpu-tracking/`)
 
-- `track.py`: OpenCV CSRT/KCF tracker run from a manual seed to a `tracker-prediction-v1` file.
+- `track.py`: OpenCV CSRT/KCF tracker run from a manual seed to a `tracker-prediction-v1` file, plus candidates 1–2 (`opencv-lk-affine` and `opencv-csrt+lk`).
   Confidence = normalised cross-correlation of the tracked box against the seed template (`TM_CCOEFF_NORMED`,
   clamped). Refuses held-out fixtures and validates the full FFmpeg decode count/exit status.
-- `compare.py`: for each fixture, runs `openbar-cli tracker-run` (both built-in trackers) plus the selected
-  research candidates from the seed to the last labelled frame, writes one `benchmark-suite-v1`, scores it
-  with `openbar-cli benchmark`, and emits seed-excluded/false-track summaries. It enumerates only outputs
-  produced by the current invocation so stale files cannot silently join the comparison.
-- `visual_qa.py`: diagnostic labelled-frame crop overlays. Orchestrated runs receive an explicit prediction
-  file list; directory discovery is retained only for standalone use.
-- `requirements.txt`: `opencv-contrib-python==4.12.0.88`, `numpy==2.2.6`.
-- `.venv/` (git-ignored): Python 3.11, created with `python -m venv research/opencv-tracking/.venv`.
+- `point_motion.py`: pure Lucas-Kanade optical flow point tracker, annulus query point selection (`[0.25, 0.90] * r_seed`), bidirectional error filtering (1.0 px tolerance), and RANSAC similarity center estimation.
+- `refine_circle.py`: refactored circle fitting with extracted pure `fit_circle_ransac(points, r_ref, frame_index)`.
+- `compare.py`: orchestrates tracker runs across OpenBar baselines, OpenCV candidates, and GPU candidates, scoring with `openbar-cli benchmark` and producing structured summary JSON and Markdown tables.
+- `visual_qa.py`: diagnostic labelled-frame crop overlays.
+- `research/gpu-tracking/`:
+  - `centres.py`: pure mask centroid extraction, contour circle fitting via RANSAC, seed-disk rasterisation, and coordinate mapping.
+  - `track_gpu.py`: unified runner for candidates 3–10 (SAM 2.1 small/base+ centroid & circle, Cutie base centroid & circle, BootsTAPIR, CoTracker3). Decodes only the seed-to-end window into an ephemeral JPEG cache, keeps SAM 2 frames in host RAM, and with `--sibling-output` writes a mask model's centroid and circle candidates from one run (`compare.py` pairs them automatically).
+  - `download_models.py`: SHA-256-verified downloader for all 5 neural checkpoints into `validation/private/models/`.
+  - `requirements.txt`: bootstrap constraints for the GPU venv, **not** an immutable historical lock. The
+    reviewed runner now records critical installed package/VCS provenance per prediction and verifies model
+    checkpoint SHA-256 before inference. A retained environment lock is required before Phase 4 freeze.
+  - `.venv/` (git-ignored): Python 3.11 with CUDA-enabled PyTorch.
 
 ### Environment
 
 - Windows 11; Git Bash and PowerShell. Python 3.11 and 3.13 are installed (`py -0`).
-- GPU: NVIDIA GeForce RTX 3060 Ti, 8 GB, driver 616.92. The pip OpenCV build has **no CUDA**
-  (`cv2.cuda.getCudaEnabledDeviceCount() == 0`), so OpenCV DNN trackers run on the CPU.
-- OpenCV 4.12 exposes `TrackerVit`, `TrackerNano`, `TrackerDaSiamRPN`, `TrackerGOTURN` and `TrackerMIL`.
+- GPU: NVIDIA GeForce RTX 3060 Ti, 8 GB, driver 616.92.
+  - OpenCV venv: pip CPU-only OpenCV build (`cv2.cuda.getCudaEnabledDeviceCount() == 0`).
+  - GPU venv: PyTorch 2.6.0+cu124 with CUDA support active (`torch.cuda.is_available() == True`).
+- Checkpoints present in `validation/private/models/` (git-ignored):
+  - `sam2.1_hiera_small.pt`
+  - `sam2.1_hiera_base_plus.pt`
+  - `cutie-base-mega.pth`
+  - `bootstapir_checkpoint_v2.pt`
+  - `scaled_offline.pth`
 - `ffmpeg`/`ffprobe` 9.0.2 are on PATH.
 
 ### Data (`validation/private/`)
@@ -238,7 +381,9 @@ Paths: `annotations/<id>.annotation-v1.json`, `annotations/<id>.owner-pass-b.ann
 `annotations/work/<id>/` (pass A) and `annotations/work/<id>.owner-pass-b/` (pass B). Every seed is the
 owner's first labelled frame of the package window.
 
-Owner tasks that unblock this plan: finish pass B for the five remaining validation clips (Phase 5).
+Owner tasks that unblock this plan: label pass B on the development clip `self-clean-jerk-side-002` (package
+built at `annotations/work/self-clean-jerk-side-002.owner-pass-b/`; it answers the Phase 3 gate question, see §6
+Phase 3 "Recommendation"), and finish pass B for the five remaining validation clips (Phase 5).
 
 ## 5. Known gotchas (each one hit during this session)
 
@@ -355,6 +500,125 @@ New candidate `opencv-<base>+circle` (evaluated on top of `csrt`). Per frame:
 - **Phase 3 direction:** Phase 3 (SAM 2) proceeds against plain `opencv-csrt` as the primary classical reference.
 
 ### Phase 3: SAM 2 video segmentation (medium; uses the GPU)
+
+**Superseded by a wider bake-off.** Phase 3 now compares ten candidates in one PR: optical flow, SAM 2.1,
+Cutie, BootsTAPIR and CoTracker3. The roster, pre-declared parameters and decision rule are in
+[`docs/plans/TRACKER_BAKEOFF_PLAN.md`](../docs/plans/TRACKER_BAKEOFF_PLAN.md). Its GPU environment is
+`research/gpu-tracking/`, which replaces `research/sam2-tracking/`. The SAM 2 notes below remain the reference
+for the SAM 2 candidates.
+
+**Status: completed (2026-10-02).** Decision outcome: **PARTIAL** per §9 of `TRACKER_BAKEOFF_PLAN.md`. All ten
+candidates were evaluated; none is NOT EVALUATED. Full tables are in §2 "Phase 3 bake-off".
+
+- **Paired comparison favours three candidates on every clip, all from the video-segmentation family and all
+  using the `-circle` centre:** `sam2.1-small-circle`, `sam2.1-bplus-circle` and `cutie-base-circle`. No
+  centroid, optical-flow or neural point-tracking candidate is favoured on every clip.
+- **None of the three passes all gates.** Each passes the squat (MAE 1.92–2.24 px) and fails on the clean & jerk
+  and the snatch:
+
+  | Candidate | Failing gate | Clean & jerk | Snatch |
+  |---|---|---|---|
+  | `sam2.1-small-circle` | MAE < 3.0 px | 4.34 px (+1.34 px; 4.90 mm vs 3.39 mm) | 3.96 px (+0.96 px; 6.75 mm vs 5.11 mm) |
+  | | high-confidence false tracks = 0 | 11 | 11 (squat 4) |
+  | `sam2.1-bplus-circle` | MAE < 3.0 px | 4.41 px (+1.41 px; 4.98 mm vs 3.39 mm) | 3.10 px (+0.10 px; 5.28 mm vs 5.11 mm) |
+  | | high-confidence false tracks = 0 | 15 | 12 (squat 6) |
+  | `cutie-base-circle` | MAE < 3.0 px | 4.30 px (+1.30 px; 4.86 mm vs 3.39 mm) | 4.53 px (+1.53 px; 7.71 mm vs 5.11 mm) |
+  | | availability > 99 % | 100 % | 81.8 % (max loss 4 samples) |
+  | | high-confidence false tracks = 0 | 14 | 13 (squat 5) |
+
+  The "vs" mm figure is the 3 px gate converted at that clip's nominal scale (`225 / r_seed`). Availability is
+  100 % on every clip for both SAM 2 candidates.
+- **Against CSRT** (seed-excluded MAE 3.22 / 6.44 / 7.51 px): the SAM 2 circle candidates cut MAE by 40 % on the
+  squat, 31–33 % on the clean & jerk and 47–59 % on the snatch. In nominal mm they are 4.8 / 4.9–5.0 / 5.3–6.8 mm,
+  against CSRT's 8.0 / 7.3 / 12.8 mm. SAM 2 small and base+ differ by less than 0.5 px on the squat and clean &
+  jerk, which is within label noise, and base+ leads by 0.86 px on the snatch.
+- **The false-track gate fails on confidence, not only on error.** SAM 2's object-score sigmoid and Cutie's mean
+  foreground probability are ≥ 0.8 on essentially every frame, so every sample above 3 px counts as a
+  high-confidence false track: with base confidence, the false-track count equals the high-error count for every
+  mask candidate on every clip. The confidence does not separate good from bad centres. None of the failures
+  above depends on the × 0.7 fallback penalty (base-confidence counts are the same or one higher).
+- **Point trackers:** `opencv-lk-affine`, `bootstapir-affine` and `cotracker3-affine` lose most samples on the
+  squat (availability 4–13 %), and `opencv-lk-affine` also on the snatch (0 %): those samples are emitted as
+  lost under the pre-declared lost rule (fewer than 12 inliers, or the centre outside the frame). `opencv-csrt+lk` therefore falls back to CSRT almost everywhere and ties it on most labels
+  (median Δ 0.000 px on all clips). REJECT for the optical-flow and point-tracking families.
+- **Centroid vs circle:** the circle fit is accepted on 98.5–100 % of the frames where it was attempted, and it
+  is what removes the occluder bias: the centroid variants are not favoured on the squat (SAM 2) or the snatch
+  (Cutie).
+- **Runtime (reported, not judged):** SAM 2 takes 13.6–27.6 s per clip (1.1–2.7× CSRT) with 0.75–1.03 GB peak
+  GPU memory. Cutie takes 11 s on the squat but 1368 s and 2093 s on the clean & jerk and snatch, with 6.9 GB
+  allocated peak on both. The slowdown with clip length is consistent with its memory bank outgrowing the 8 GB
+  card, but this was not profiled. BootsTAPIR (5.0–10.6 GB) and CoTracker3 (6.9–14.8 GB) report allocated peaks
+  above 8 GB on the snatch, which on Windows can only be met by spilling into shared system memory.
+- **Licence:** of the three favoured candidates only SAM 2.1 is shippable (Apache-2.0 code and weights). Cutie's
+  weights licence is unconfirmed.
+- **Run-to-run (§8.3):** OpenCV candidates (CSRT, `opencv-lk-affine`, `opencv-csrt+lk`) are identical between
+  runs on all three clips apart from `runtime`. All eight GPU candidates on the squat: maximum per-sample centre
+  difference 0.000 px, no state or confidence differences. The four clean & jerk predictions finished by the
+  stopped first run are also sample-identical to run 1. On this machine and these pins the GPU outputs repeat
+  exactly across processes; determinism is still not claimed for other hardware or drivers. `opencv-csrt`
+  reproduces the Phase 2 baseline exactly on all three clips (§8.2), and all 39 run 1 predictions pass
+  `schema_check.py --schema tracker-prediction-v1.schema.json` (§8.4).
+- **Deviations from the bake-off plan, recorded:**
+  1. The first run was stopped and restarted after a runner fix: the GPU runner decoded and loaded every frame
+     of the clip, so SAM 2 overflowed the 8 GB card (≈ 380 s per clean & jerk run). It now decodes only the
+     seed-to-end window (as this section's frame notes always said), keeps SAM 2's frames in host RAM
+     (`offload_video_to_cpu=True`), and runs each mask model once for both its centroid and circle candidates
+     (`--sibling-output`; implementation version `gpu-spike-2`). Every prediction the old runner had completed
+     (all ten candidates on the squat, four on the clean & jerk) is sample-identical to the new runner's, and
+     the windowed JPEGs are byte-identical to the corresponding frames of a full decode.
+  2. Run 2 repeated the OpenCV candidates on all three clips but the GPU candidates on the squat only, with the
+     owner's agreement, to save GPU time.
+  3. `compare.py`'s overall fit-acceptance count included the seed entry (which is marked accepted without a fit
+     attempt), giving rates above 100 %. Fixed; labelled acceptance was not affected. The run 1 summary on disk
+     predates the fix; the rates above are recomputed from the sidecars.
+  4. Review found that `research/gpu-tracking/requirements.txt` was a bootstrap constraint file even though the
+     plan/inventory described it as pinned. The committed aggregates above remain useful development evidence,
+     but the exact historical package/VCS lock is not recoverable from committed artifacts. The runner now
+     SHA-256-verifies every checkpoint and records critical installed package versions and pip direct-source/VCS
+     metadata when available. This reviewed provenance/diagnostic runner is versioned `gpu-spike-3`; the
+     aggregate tables above remain explicitly historical `gpu-spike-2` evidence. Before Phase 4 freeze, rerun
+     the shortlisted SAM 2 candidates under an explicit, retained environment lock. No historical metric is
+     rewritten by this provenance correction.
+- **Error diagnosis (development labels, read-only, after scoring).** This analysis looked at labels, so it is
+  development evidence only; nothing was tuned from it.
+  - Most of the SAM 2 circle error is a shared offset, not scatter: the mean signed error is 49–69 % of MAE, in
+    the same direction for both SAM 2 sizes on each clip (squat dx ≈ +1.1 px; clean & jerk dy ≈ +2.8 px).
+    Fitted radius matches the labelled radius within 1.2 %, so mask size is not the cause.
+  - The offset follows the bar's motion: vertical error is anti-correlated with labelled vertical velocity
+    (Spearman −0.21 to −0.62 for SAM 2 circle) and is 0.0–0.9 px on the slower half of each clip. The same sign
+    appears on all three clips for CSRT, `cutie-base-circle` and `sam2.1-bplus-centroid` (−0.31 to −0.64), so it
+    is not a SAM 2 memory effect. `cutie-base-centroid` on the snatch and CoTracker3 do not show it.
+  - Label pairing is correct: each pass A label frame is pixel-identical to the decoded frame at its index
+    (mean |diff| 0.000, against 0.9–2.7 for the neighbouring frames). Trackers and labeller saw the same image.
+    The motion-linked offset therefore comes from how a blurred, moving plate's centre is placed: by the
+    labeller, by the trackers, or both. These data cannot say which.
+  - Size: an in-sample linear velocity term (≈ 3 ms vertical lag) explains about 1.1 px of SAM 2's clean & jerk
+    MAE (4.34 → 3.12 px small, 4.41 → 3.29 px base+), and little on the snatch. In-sample fits on about 20
+    labels are optimistic; this is an order-of-magnitude statement, not a correction.
+  - On the clean & jerk the 3 px threshold is 0.75 % of the plate diameter, and both SAM 2 circle
+    candidates have a median error of about 3.8 px, and 11 and 15 of the 20 samples exceed it, whatever the
+    confidence says. No confidence rule can pass the
+    false-track gate there without marking most good frames as low confidence. The available runtime signals
+    (fit coverage, inlier count, the track's own speed, radius change) correlate weakly and
+    inconsistently with error (|ρ| from under 0.1 to 0.6, varying by clip, on about 20 labels per clip), which is too little to freeze a rule on.
+- **Recommendation (2026-10-02).** Both remaining gate failures on the SAM 2 circle candidates depend on how
+  accurate the reference is at large plate scale under motion, so measure that before changing either the
+  trackers or the gates:
+  1. **Owner:** label pass B on `self-clean-jerk-side-002` (bake-off plan §10 question 2). The package is
+     built: `validation/private/annotations/work/self-clean-jerk-side-002.owner-pass-b/`, same 21 frames as pass
+     A (byte-identical), same instructions. Then run `annotations.py repeatability` (§7). If pass B repeats
+     pass A to well under 3 px, the pixel gate is measurable on this clip and the tracker error is real. If
+     pass B disagrees with pass A by about as much as SAM 2 does, the 3 px gate cannot be tested at this
+     scale, and §10 question 1 (size-normalised gate) should be settled from that measurement. In either case,
+     check whether the motion-linked offset relative to the trackers recurs in pass B.
+  2. **Do not tune trackers to the motion-linked offset**, and do not change the gate on the strength of this
+     run's results. Both would fit the development labels in this round.
+  3. **Carry only `sam2.1-small-circle` and `sam2.1-bplus-circle` forward.** They are the shippable
+     candidates the paired comparison favours. Drop Cutie (unconfirmed weights licence, 81.8 % availability on
+     the snatch, 23–35 min per long clip) and every point-tracking candidate.
+  4. **Confidence** for the SAM 2 circle candidates needs a pre-registered, geometry-based definition before
+     Phase 4. Design it only after the gate question is answered, because the false-track gate's threshold is
+     the same 3 px.
 
 Separate environment: `research/sam2-tracking/` with its own `.venv` and `requirements.txt`.
 
