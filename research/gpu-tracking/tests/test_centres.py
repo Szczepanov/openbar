@@ -77,6 +77,14 @@ class TestCentres(unittest.TestCase):
         undersized_mask = centres.rasterize_seed_disk(cx, cy, 0.5 * r, w, h)  # area ~ 0.25 of seed
         self.assertFalse(centres.validate_mask(undersized_mask, seed_area))
 
+        # A rejected fit still carries useful radius diagnostics; keep the fitted radius.
+        larger = centres.rasterize_seed_disk(cx, cy, 1.3 * r, w, h)
+        rejected = centres.fit_circle_from_mask(larger, r, 11, w, h)
+        self.assertFalse(rejected.accepted)
+        self.assertIn("seed_radius", rejected.reject_reasons)
+        self.assertIsNotNone(rejected.radius_px)
+        self.assertGreater(rejected.radius_px, 1.2 * r)
+
     def test_07_seed_disk_rasterisation_symmetry(self) -> None:
         """7. Seed-disk rasterisation follows pixel-centre rule (symmetric about half-integer centre)."""
         w, h = 50, 50
