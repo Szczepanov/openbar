@@ -142,6 +142,17 @@ Synthetic analytic tests verify implementation semantics. Real/reference evidenc
 before the provisional ROM/mean/peak engineering gates can be treated as satisfied for the supported
 recording envelope.
 
+### Independent physical/reference study (#58)
+
+[`M0_REFERENCE_STUDY.md`](M0_REFERENCE_STUDY.md) defines the versioned input/result contracts and
+headless `kinematic-reference` evaluator for the three unresolved kinematic gates. It requires exact
+timestamp alignment, pinned tracker/filter/kinematics provenance, explicit reference uncertainty,
+and preserves failed/unsupported cases instead of silently averaging them away.
+
+The tooling does not change the current review status by itself. Until a qualifying independent
+physical/reference dataset is captured or imported and evaluated, ROM/mean/peak velocity remain
+**NOT MEASURABLE YET** in the M0 evidence report.
+
 ## Failure policy
 
 - Never silently fill long tracking gaps.

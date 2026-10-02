@@ -3,6 +3,7 @@ mod benchmark;
 mod cli_error;
 mod diagnostic_svg;
 mod filter_experiment;
+mod kinematic_reference;
 mod media;
 mod render;
 mod sha256;
@@ -21,6 +22,7 @@ Commands:\n\
   tracker-run         Decode a fixture and emit tracker prediction artifacts\n\
   tracker-experiment  Run deterministic tracker experiments\n\
   filter-experiment   Run deterministic filter experiments\n\
+  kinematic-reference Evaluate independent physical/reference kinematic evidence\n\
 \n\
 Use 'openbar-cli <command> --help' for command-specific options.";
 
@@ -31,6 +33,7 @@ fn main() {
         Some("tracker-experiment") => run_legacy(tracker_experiment::run_cli()),
         Some("tracker-run") => run_legacy(tracker_run::run_cli()),
         Some("filter-experiment") => run_legacy(filter_experiment::run_cli()),
+        Some("kinematic-reference") => run_legacy(kinematic_reference::run_cli()),
         _ => {
             if let Err(error) = dispatch() {
                 eprintln!("status=failure error[{}]: {error}", error.kind().label());

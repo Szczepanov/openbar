@@ -44,6 +44,8 @@ class CatalogueTests(unittest.TestCase):
         exercised = set(schema_check.CATALOGUE) | {
             "benchmark-result-v1.schema.json",
             "m0-evidence-v1.schema.json",
+            "kinematic-reference-study-v1.schema.json",
+            "kinematic-reference-result-v1.schema.json",
         }
         self.assertEqual({path.name for path in SCHEMA_DIR.glob("*.schema.json")}, exercised)
 
@@ -230,3 +232,158 @@ class FailClosedSchemaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KinematicReferenceSchemaTests(unittest.TestCase):
+    def test_independent_reference_study_contract_is_valid(self):
+        document = {
+            "schema_version": 1,
+            "study_id": "rig-study-001",
+            "evidence_class": "independent_physical_reference",
+            "purpose": "Validate M0 vertical kinematics against a controlled rig.",
+            "reference": {
+                "source_type": "controlled_geometric_rig",
+                "system": "linear rail with independent encoder",
+                "protocol": "three repeated vertical traversals",
+                "synchronization": "shared trigger; timestamps mapped to video PTS",
+                "coordinate_alignment": "reference positions transformed to OpenBar reference-centre-relative +Y-up metres",
+                "rights_or_access": "private owner-generated measurements",
+            },
+            "construct": {
+                "coordinate_convention": "reference_centre_x_right_y_up",
+                "axis": "vertical_y",
+                "interval_semantics": "closed_exact_sample_boundaries",
+                "mean_velocity_definition": "axis_displacement_over_interval_duration",
+                "peak_velocity_definition": "maximum_signed_axis_velocity",
+                "timestamp_alignment": "exact_sample_timestamp",
+                "calibration_method": "plate_diameter",
+                "calibration_method_version": 1,
+                "kinematics": {
+                    "implementation": "backward-difference",
+                    "version": "1",
+                    "max_gap_s": 0.2,
+                    "min_confidence": 0,
+                },
+            },
+            "cases": [
+                {
+                    "id": "trial-001",
+                    "condition": "fixed side view",
+                    "status": "supported",
+                    "analysis_path": "trial-001.analysis-v1.json",
+                    "velocity_layer": "filtered",
+                    "expected_tracker": {
+                        "implementation": "template-sad-v1",
+                        "version": "1",
+                    },
+                    "expected_filter": {
+                        "implementation": "raw-identity",
+                        "version": "1",
+                    },
+                    "interval": {"start_s": 0.0, "end_s": 0.2},
+                    "reference_uncertainty": {
+                        "position_m": 0.001,
+                        "velocity_mps": 0.01,
+                        "method": "encoder calibration certificate + timestamp propagation",
+                    },
+                    "reference_samples": [
+                        {"timestamp_s": 0.0, "position_m": 0.0},
+                        {"timestamp_s": 0.1, "position_m": 0.1},
+                        {"timestamp_s": 0.2, "position_m": 0.2},
+                    ],
+                },
+                {
+                    "id": "trial-unsupported",
+                    "condition": "camera moved during lift",
+                    "status": "unsupported",
+                    "unsupported_reason": "recording geometry violates the frozen study envelope",
+                },
+            ],
+        }
+        schema = schema_check.load_schema(
+            SCHEMA_DIR / "kinematic-reference-study-v1.schema.json"
+        )
+        self.assertEqual(schema_check.validate_document(document, schema), [])
+
+    def test_kinematic_reference_result_contract_is_valid(self):
+        distribution = {
+            "count": 2,
+            "mae": 0.002,
+            "rmse": 0.002236,
+            "bias": -0.001,
+            "p50_absolute": 0.001,
+            "p90_absolute": 0.003,
+            "p95_absolute": 0.003,
+            "max_absolute": 0.003,
+        }
+        gate = {
+            "status": "PASS",
+            "original_threshold": 0.01,
+            "effective_threshold": 0.01,
+            "evaluated_case_count": 1,
+            "failed_supported_case_count": 0,
+            "error_distribution": distribution,
+            "meets_effective_target": True,
+            "rationale": "Observed MAE is below the frozen target.",
+        }
+        document = {
+            "schema_version": 1,
+            "study_id": "rig-study-001",
+            "evidence_class": "independent_physical_reference",
+            "purpose": "Validate M0 vertical kinematics.",
+            "reference": {"source_type": "controlled_geometric_rig"},
+            "construct": {"axis": "vertical_y"},
+            "summary": {
+                "total_cases": 1,
+                "evaluated_cases": 1,
+                "failed_supported_cases": 0,
+                "unsupported_cases": 0,
+                "evaluated_reference_samples": 3,
+            },
+            "cases": [
+                {
+                    "id": "trial-001",
+                    "condition": "fixed side view",
+                    "outcome": "evaluated",
+                    "reference_sample_count": 3,
+                    "reference_uncertainty": {
+                        "position_m": 0.001,
+                        "velocity_mps": 0.01,
+                        "method": "calibrated encoder",
+                    },
+                    "metrics": {
+                        "calibrated_position_error_m": distribution,
+                        "reference_rom_m": 0.2,
+                        "openbar_rom_m": 0.198,
+                        "rom_error_m": -0.002,
+                        "reference_mean_velocity_mps": 1.0,
+                        "openbar_mean_velocity_mps": 0.99,
+                        "mean_velocity_error_mps": -0.01,
+                        "reference_peak_velocity_mps": 1.1,
+                        "reference_peak_timestamp_s": 0.1,
+                        "openbar_peak_velocity_mps": 1.08,
+                        "openbar_peak_timestamp_s": 0.1,
+                        "peak_velocity_error_mps": -0.02,
+                    },
+                    "openbar_provenance": {"source_id": "trial-001"},
+                }
+            ],
+            "gates": {
+                "rom_mae_m": gate,
+                "mean_velocity_mae_mps": {
+                    **gate,
+                    "original_threshold": 0.05,
+                    "effective_threshold": 0.05,
+                },
+                "peak_velocity_mae_mps": {
+                    **gate,
+                    "original_threshold": 0.10,
+                    "effective_threshold": 0.10,
+                },
+            },
+            "limitations": ["Scoped to the recorded study envelope."],
+        }
+        schema = schema_check.load_schema(
+            SCHEMA_DIR / "kinematic-reference-result-v1.schema.json"
+        )
+        self.assertEqual(schema_check.validate_document(document, schema), [])

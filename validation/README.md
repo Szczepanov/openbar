@@ -11,6 +11,8 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `schema/tracker-prediction-v1.schema.json` — tracker prediction interchange contract.
 - `schema/benchmark-result-v1.schema.json` — versioned benchmark result artifact.
 - `schema/m0-evidence-v1.schema.json` — issue #14 aggregate public evidence/gate-status contract.
+- `schema/kinematic-reference-study-v1.schema.json` — independent physical/reference study input contract for #58.
+- `schema/kinematic-reference-result-v1.schema.json` — machine-readable ROM/velocity reference-study result contract.
 - `schema/analysis-v1.schema.json` — structural wire contract for the canonical Rust `Analysis` (see `docs/data/ANALYSIS_SCHEMA.md`).
 - `fixtures/public/manifest.json` — committed manifest for redistribution-safe fixtures.
 - `fixtures/public/annotations/` — canonical annotations/repeatability artifacts for public fixtures.
@@ -38,6 +40,19 @@ The filter comparison is generated with:
 ```bash
 cargo run -p openbar-cli -- filter-experiment --output target/filter-experiment.json
 ```
+
+Independent physical/reference kinematic evidence is evaluated with:
+
+```bash
+cargo run --locked -p openbar-cli -- kinematic-reference \\
+  --study validation/private/reference-study/study.json \\
+  --output target/kinematic-reference-result.json \\
+  --report target/KINEMATIC_REFERENCE_REPORT.md
+```
+
+This command is intentionally not part of the synthetic CI smoke evidence: #58 requires genuinely
+independent physical/reference observations. See
+[`M0_REFERENCE_STUDY.md`](../docs/validation/M0_REFERENCE_STUDY.md).
 
 The complete reproducible public M0 evidence package is generated with:
 

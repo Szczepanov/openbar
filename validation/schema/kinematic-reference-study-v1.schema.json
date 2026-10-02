@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.dev/schema/kinematic-reference-study-v1.schema.json",
+  "title": "OpenBar independent kinematic reference study v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "study_id",
+    "evidence_class",
+    "purpose",
+    "reference",
+    "construct",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "study_id": { "type": "string", "minLength": 1 },
+    "evidence_class": { "const": "independent_physical_reference" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "reference": { "$ref": "#/$defs/reference" },
+    "construct": { "$ref": "#/$defs/construct" },
+    "target_revisions": { "$ref": "#/$defs/gate_revisions" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_type",
+        "system",
+        "protocol",
+        "synchronization",
+        "coordinate_alignment",
+        "rights_or_access"
+      ],
+      "properties": {
+        "source_type": {
+          "enum": [
+            "controlled_geometric_rig",
+            "encoder",
+            "linear_position_transducer",
+            "high_frame_rate_reference",
+            "validated_vbt_device",
+            "other_independent_physical_reference"
+          ]
+        },
+        "system": { "type": "string", "minLength": 1 },
+        "protocol": { "type": "string", "minLength": 1 },
+        "synchronization": { "type": "string", "minLength": 1 },
+        "coordinate_alignment": { "type": "string", "minLength": 1 },
+        "rights_or_access": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "construct": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinate_convention",
+        "axis",
+        "interval_semantics",
+        "mean_velocity_definition",
+        "peak_velocity_definition",
+        "timestamp_alignment",
+        "calibration_method",
+        "calibration_method_version",
+        "kinematics"
+      ],
+      "properties": {
+        "coordinate_convention": { "const": "reference_centre_x_right_y_up" },
+        "axis": { "enum": ["horizontal_x", "vertical_y"] },
+        "interval_semantics": { "const": "closed_exact_sample_boundaries" },
+        "mean_velocity_definition": { "const": "axis_displacement_over_interval_duration" },
+        "peak_velocity_definition": { "const": "maximum_signed_axis_velocity" },
+        "timestamp_alignment": { "const": "exact_sample_timestamp" },
+        "calibration_method": { "const": "plate_diameter" },
+        "calibration_method_version": { "const": 1 },
+        "kinematics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["implementation", "version", "max_gap_s", "min_confidence"],
+          "properties": {
+            "implementation": { "const": "backward-difference" },
+            "version": { "const": "1" },
+            "max_gap_s": { "type": "number", "exclusiveMinimum": 0 },
+            "min_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "parameter_value": {
+      "anyOf": [
+        { "type": "boolean" },
+        { "type": "integer" },
+        { "type": "number" },
+        { "type": "string" }
+      ]
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "version"],
+      "properties": {
+        "implementation": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/parameter_value" }
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position_m", "velocity_mps", "method"],
+      "properties": {
+        "position_m": { "type": "number", "minimum": 0 },
+        "velocity_mps": { "type": "number", "minimum": 0 },
+        "method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "interval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_s", "end_s"],
+      "properties": {
+        "start_s": { "type": "number", "minimum": 0 },
+        "end_s": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "reference_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "position_m"],
+      "properties": {
+        "timestamp_s": { "type": "number", "minimum": 0 },
+        "position_m": { "type": "number" }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "condition", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "condition": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["supported", "unsupported"] },
+        "unsupported_reason": { "type": "string", "minLength": 1 },
+        "analysis_path": { "type": "string", "minLength": 1 },
+        "velocity_layer": { "enum": ["calibrated", "filtered"] },
+        "expected_tracker": { "$ref": "#/$defs/implementation" },
+        "expected_filter": { "$ref": "#/$defs/implementation" },
+        "interval": { "$ref": "#/$defs/interval" },
+        "reference_uncertainty": { "$ref": "#/$defs/uncertainty" },
+        "reference_samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reference_sample" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "supported" } },
+            "required": ["status"]
+          },
+          "then": {
+            "required": [
+              "analysis_path",
+              "velocity_layer",
+              "expected_tracker",
+              "interval",
+              "reference_uncertainty",
+              "reference_samples"
+            ],
+            "properties": {
+              "reference_samples": { "minItems": 2 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "unsupported" } },
+            "required": ["status"]
+          },
+          "then": { "required": ["unsupported_reason"] }
+        }
+      ]
+    },
+    "gate_revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revised_threshold", "rationale", "evidence"],
+      "properties": {
+        "revised_threshold": { "type": "number", "exclusiveMinimum": 0 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "gate_revisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rom": { "$ref": "#/$defs/gate_revision" },
+        "mean_velocity": { "$ref": "#/$defs/gate_revision" },
+        "peak_velocity": { "$ref": "#/$defs/gate_revision" }
+      }
+    }
+  }
+}
