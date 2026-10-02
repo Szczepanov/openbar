@@ -256,13 +256,14 @@ fn validate_and_adapt(
                 sample.timestamp_s
             )));
         }
-        if let Some(previous) = previous_frame_index
-            && matched_frame.frame_index <= previous
-        {
-            return Err(CliError::invalid_input(format!(
-                "external observation {index} resolves to decoded frame {} after frame {previous}; each sample must map to a distinct, strictly advancing decoded frame",
-                matched_frame.frame_index
-            )));
+        match previous_frame_index {
+            Some(previous) if matched_frame.frame_index <= previous => {
+                return Err(CliError::invalid_input(format!(
+                    "external observation {index} resolves to decoded frame {} after frame {previous}; each sample must map to a distinct, strictly advancing decoded frame",
+                    matched_frame.frame_index
+                )));
+            }
+            _ => {}
         }
         previous_frame_index = Some(matched_frame.frame_index);
 
