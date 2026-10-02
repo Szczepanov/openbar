@@ -1609,8 +1609,7 @@ mod tests {
 
         let mut args = base_args("analysis.json");
         args.extend(strings(&["--recording-support-output", "seed.json"]));
-        let error = parse_args(args)
-            .expect_err("support output must not alias the seed input");
+        let error = parse_args(args).expect_err("support output must not alias the seed input");
         assert_eq!(error.kind(), CliErrorKind::InvalidInput);
         assert!(error.to_string().contains("--recording-support-output"));
         assert!(error.to_string().contains("--seed"));
