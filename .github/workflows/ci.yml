@@ -76,6 +76,12 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --workspace --all-targets --all-features
+      - name: Labelling package build (FFmpeg + Node)
+        # The Python validation job has no FFmpeg. Node is required here so the browser CSV/export
+        # contract cannot silently skip in the CI job that owns the decode-backed package test.
+        run: |
+          node --version
+          python3 -m unittest discover -v -s validation/tests -p 'test_label_package.py'
       - name: First tracker comparison
         run: >-
           cargo run --locked -p openbar-cli -- tracker-experiment

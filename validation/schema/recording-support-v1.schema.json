@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/recording-support-v1.schema.json",
+  "title": "OpenBar recording support assessment",
+  "description": "Machine-readable M0 recording-envelope assessment. Unknown dimensions remain explicit and unsupported geometry is never promoted to a physical metric claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "conditions", "dimensions", "metrics"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "$ref": "#/$defs/status" },
+    "conditions": { "$ref": "#/$defs/conditions" },
+    "dimensions": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/dimension_assessment" }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "horizontal_displacement",
+        "vertical_displacement",
+        "plate_diameter_scale",
+        "velocity"
+      ],
+      "properties": {
+        "horizontal_displacement": { "$ref": "#/$defs/status" },
+        "vertical_displacement": { "$ref": "#/$defs/status" },
+        "plate_diameter_scale": { "$ref": "#/$defs/status" },
+        "velocity": { "$ref": "#/$defs/status" }
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": ["supported", "warning", "unsupported", "unknown"]
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "camera_view",
+        "camera_movement",
+        "width_px",
+        "height_px",
+        "lighting",
+        "plate_visibility",
+        "occlusion",
+        "motion_blur"
+      ],
+      "properties": {
+        "camera_view": {
+          "enum": ["side", "oblique_45", "front", "rear", "unknown"]
+        },
+        "approx_yaw_deg": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "approx_pitch_deg": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "camera_roll_deg": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "distance_m": { "type": "number", "exclusiveMinimum": 0 },
+        "camera_movement": {
+          "enum": ["fixed", "handheld", "panning", "moving_other", "unknown"]
+        },
+        "nominal_fps": { "type": "number", "exclusiveMinimum": 0 },
+        "measured_fps": { "type": "number", "exclusiveMinimum": 0 },
+        "width_px": { "type": "integer", "minimum": 1 },
+        "height_px": { "type": "integer", "minimum": 1 },
+        "plate_diameter_px": { "type": "number", "exclusiveMinimum": 0 },
+        "lighting": {
+          "enum": ["good", "mixed", "low", "backlit", "unknown"]
+        },
+        "plate_visibility": {
+          "enum": ["clear", "partial", "intermittent", "poor", "unknown"]
+        },
+        "occlusion": {
+          "enum": ["none", "minor", "moderate", "severe", "unknown"]
+        },
+        "motion_blur": {
+          "enum": ["none", "low", "moderate", "severe", "unknown"]
+        }
+      }
+    },
+    "dimension_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension", "status", "reason", "evidence_ref"],
+      "properties": {
+        "dimension": {
+          "enum": [
+            "camera_view",
+            "camera_yaw",
+            "camera_pitch_height",
+            "camera_roll",
+            "camera_distance_framing",
+            "frame_rate",
+            "resolution_orientation",
+            "motion_blur_shutter",
+            "lighting_contrast",
+            "compression",
+            "plate_size",
+            "plate_visibility_occlusion",
+            "camera_stability"
+          ]
+        },
+        "status": { "$ref": "#/$defs/status" },
+        "reason": {
+          "enum": [
+            "no_held_out_real_validation",
+            "view_outside_m0_side_geometry",
+            "view_unknown",
+            "camera_movement_changes_reference_frame",
+            "camera_movement_unvalidated",
+            "yaw_boundary_unmeasured",
+            "pitch_height_boundary_unmeasured",
+            "roll_boundary_unmeasured",
+            "distance_framing_boundary_unmeasured",
+            "frame_rate_boundary_unmeasured",
+            "resolution_boundary_unmeasured",
+            "motion_blur_shutter_boundary_unmeasured",
+            "lighting_contrast_boundary_unmeasured",
+            "compression_boundary_unmeasured",
+            "plate_size_boundary_unmeasured",
+            "occlusion_boundary_unmeasured"
+          ]
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

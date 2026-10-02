@@ -151,10 +151,46 @@ collection of personal information.
 
 ## Minimal workflow
 
-The repository intentionally does not select or embed a GUI annotation product for M0.
-Any local video/frame viewer may be used as long as the operator can obtain the actual
-decoded timestamp and display-oriented pixel coordinates. The canonical handoff is a
-small CSV plus JSON metadata sidecar.
+The repository does not depend on a GUI annotation product for M0. Any local video/frame
+viewer may be used as long as the operator can obtain the actual decoded timestamp and
+display-oriented pixel coordinates. The canonical handoff is a small CSV plus JSON metadata
+sidecar.
+
+### Optional labelling package
+
+`validation/tools/label_package.py` (standard library plus FFmpeg on `PATH`) prepares that
+handoff for one fixture:
+
+```bash
+python3 validation/tools/label_package.py \
+  --manifest validation/private/manifest.json --fixture <fixture-id> \
+  --step-s 0.5 [--start-s 21.0] [--end-s 44.5] [--include-frame <seed-frame-index>]
+```
+
+It decodes frames the way the OpenBar frame source does (display rotation applied, passthrough
+timing, first video stream) and stamps each one with `(pts - start_pts) * time_base`. Frames are
+picked on a uniform time grid, not from tracker output, so the labeller is not anchored on what
+is being evaluated. The output folder holds the frames, a `metadata.json` sidecar and an
+`index.html` page:
+
+- click the plate centre; Shift+click a rim point to record the radius (optional);
+- the wheel zooms, right/middle-drag pans, and a loupe magnifies the cursor area;
+- set visibility/quality, mark `unlabelable` or skip (`not_annotated`) explicitly;
+- integer coordinates fall on pixel centres, matching how the trackers compute positions (for
+  example the contrast tracker's centroid); clicks on the outer half-pixel border are ignored so
+  every label stays within `0 <= x < width`;
+- progress is kept in the browser's local storage, separately for each package, so a second
+  annotator pass (`--annotator-id`) starts empty;
+- "Download CSV" writes exactly the `import-csv` columns.
+
+Every extracted frame's PTS is checked against the probe, and the media is checked against the
+manifest SHA-256, so labels cannot be stamped onto the wrong frame or a different file. Packages
+are written to `validation/private/annotations/work/<fixture-id>.<annotator-id>/` for private
+fixtures and `target/label-packages/` otherwise.
+
+Fill in `provenance.annotated_at` in `metadata.json` before importing. Frames of a fixture
+whose `redistribution_status` is not `allowed` can only be written below the git-ignored
+`validation/private/`; the tool refuses any other output directory.
 
 Example inputs:
 

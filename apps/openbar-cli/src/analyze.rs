@@ -14,10 +14,17 @@ use openbar_core::analysis::{
     KinematicsInput, ParameterValue, PipelineProvenance, RawObservation, TimeRange, TimestampBasis,
     TrackerProvenance, TrackingState, VideoMetadata, VisibilityState,
 };
-use openbar_core::calibration::{CalibrationQuality, PlateDiameterCalibration};
+use openbar_core::calibration::{
+    CalibrationQuality, CalibrationQualityStatus, CalibrationWarning, PlateDiameterCalibration,
+};
 use openbar_core::filtering::{apply_filter, FilterConfig};
 use openbar_core::kinematics::{derive_kinematic_trajectory, KinematicsConfig};
 use openbar_core::manual_seed::{ManualTargetSeedDocument, SeedValidationContext};
+use openbar_core::recording_support::{
+    assess_recording_support, CameraMovement, CameraView, LightingCondition, MotionBlurCondition,
+    OcclusionCondition, PlateVisibilityCondition, RecordingConditions, RecordingSupportAssessment,
+    RecordingSupportStatus,
+};
 use openbar_core::trajectory::{MetricPositionSample, PixelObservation};
 use openbar_tracking::{
     LocalContrastConfig, LocalContrastTracker, ManualSeedTracker, TemplateMatchConfig,
@@ -38,7 +45,14 @@ const USAGE: &str = "Usage: openbar-cli analyze (--video <path> | --manifest <pa
      \x20      --plate-diameter-m <m> --tracker <template|contrast> --filter <raw|moving-average|savitzky-golay|kalman>\n\
      \x20      --kinematics-max-gap-s <s> --kinematics-min-confidence <0..1> --output <analysis.json>\n\
      \x20      [--start-s <s> --end-s <s>] [--max-frame-memory-mib <MiB>] [--tracker-search-radius-px <px>]\n\
-     \x20      [tracker-specific options] [filter-specific options] [--diagnostics <quiet|normal|verbose>] [--force]\n\
+     \x20      [tracker-specific options] [filter-specific options] [--diagnostics <quiet|normal|verbose>]\n\
+     \x20      [--recording-support-output <support.json>] [--force]\n\
+\n\
+Direct-video recording metadata (fixture mode reads these from the manifest):\n\
+  --camera-view <side|oblique_45|front|rear|unknown>\n\
+  --camera-movement <fixed|handheld|panning|moving_other|unknown>\n\
+  [--approx-yaw-deg <deg>] [--approx-pitch-deg <deg>] [--camera-roll-deg <deg>]\n\
+  [--camera-distance-m <m>]\n\
 \n\
 Tracker options:\n\
   template: [--template-low-confidence-nmad <0..1>] [--template-max-nmad <0..1>]\n\
@@ -73,6 +87,12 @@ struct Args {
     video: Option<PathBuf>,
     manifest: Option<PathBuf>,
     fixture_id: Option<String>,
+    camera_view: Option<CameraView>,
+    camera_movement: Option<CameraMovement>,
+    approx_yaw_deg: Option<f64>,
+    approx_pitch_deg: Option<f64>,
+    camera_roll_deg: Option<f64>,
+    camera_distance_m: Option<f64>,
     seed: PathBuf,
     plate_diameter_m: f64,
     tracker: TrackerChoice,
@@ -87,6 +107,7 @@ struct Args {
     selection: Option<MediaTimeRange>,
     max_frame_bytes: u64,
     output: PathBuf,
+    recording_support_output: Option<PathBuf>,
     diagnostics: DiagnosticsVerbosity,
     force: bool,
 }
@@ -103,7 +124,9 @@ struct ManifestFixture {
     #[serde(default)]
     media: Option<ManifestMedia>,
     video: ManifestVideo,
+    camera: ManifestCamera,
     load: ManifestLoad,
+    conditions: ManifestConditions,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -116,10 +139,31 @@ struct ManifestMedia {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ManifestVideo {
+    nominal_fps: f64,
     width_px: u32,
     height_px: u32,
     #[serde(default)]
     rotation_deg: Option<u16>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestCamera {
+    view: CameraView,
+    #[serde(default)]
+    approx_yaw_deg: Option<f64>,
+    #[serde(default)]
+    approx_pitch_deg: Option<f64>,
+    #[serde(default)]
+    distance_m: Option<f64>,
+    movement: CameraMovement,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestConditions {
+    lighting: LightingCondition,
+    plate_visibility: PlateVisibilityCondition,
+    occlusion: OcclusionCondition,
+    motion_blur: MotionBlurCondition,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -161,7 +205,30 @@ fn run(args: &Args) -> CliResult<()> {
         })
         .map_err(classify_media_error)?;
 
+    // Validate the seed against the decoded media before deriving any support metadata from it.
+    // Otherwise an invalid target radius/timestamp could be reclassified as recording metadata
+    // and, when requested, persisted into a misleading support sidecar.
     validate_seed(&seed, &stream, args.selection, &clip)?;
+
+    let recording_conditions = recording_conditions(
+        args,
+        fixture.as_ref(),
+        &stream,
+        &clip,
+        seed.seed().target().diameter_px(),
+    );
+    let recording_support = assess_recording_support(&recording_conditions)
+        .map_err(|error| CliError::invalid_input(format!("invalid recording metadata: {error}")))?;
+    if let Some(path) = args.recording_support_output.as_deref() {
+        write_recording_support(path, &recording_support, args.force)?;
+    }
+    if recording_support.status == RecordingSupportStatus::Unsupported {
+        let reasons = recording_support.unsupported_reason_codes().join(",");
+        return Err(CliError::unsupported(format!(
+            "recording is outside the M0 supported geometry: {reasons}; no physical analysis was written"
+        )));
+    }
+
     let tracker_run = tracker
         .track(&clip.frame_samples(), seed.seed())
         .map_err(|error| CliError::tracking(format!("selected tracker failed: {error}")))?;
@@ -169,7 +236,7 @@ fn run(args: &Args) -> CliResult<()> {
     let calibration = PlateDiameterCalibration::try_from_manual_seed(
         args.plate_diameter_m,
         seed.seed(),
-        CalibrationQuality::unassessed(),
+        calibration_quality_for_recording(&recording_conditions),
     )
     .map_err(|error| CliError::seed_calibration(format!("invalid plate calibration: {error}")))?;
 
@@ -216,7 +283,7 @@ fn run(args: &Args) -> CliResult<()> {
     })?;
 
     write_analysis(&args.output, &analysis, args.force)?;
-    emit_diagnostics(args, &analysis, &clip);
+    emit_diagnostics(args, &analysis, &clip, &recording_support);
     Ok(())
 }
 
@@ -235,8 +302,38 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     let fixture_id = values.remove("--fixture");
     validate_source_selection(video.as_ref(), manifest.as_ref(), fixture_id.as_deref())?;
 
+    let camera_view = values
+        .remove("--camera-view")
+        .map(|value| parse_camera_view(&value))
+        .transpose()?;
+    let camera_movement = values
+        .remove("--camera-movement")
+        .map(|value| parse_camera_movement(&value))
+        .transpose()?;
+    let approx_yaw_deg = take_parsed(&mut values, "--approx-yaw-deg")?;
+    let approx_pitch_deg = take_parsed(&mut values, "--approx-pitch-deg")?;
+    let camera_roll_deg = take_parsed(&mut values, "--camera-roll-deg")?;
+    let camera_distance_m = take_parsed(&mut values, "--camera-distance-m")?;
+    validate_recording_metadata_source(
+        manifest.as_ref(),
+        camera_view,
+        camera_movement,
+        approx_yaw_deg,
+        approx_pitch_deg,
+        camera_roll_deg,
+        camera_distance_m,
+    )?;
+
     let seed = PathBuf::from(required(&mut values, "--seed")?);
     let output = PathBuf::from(required(&mut values, "--output")?);
+    let recording_support_output = take_path(&mut values, "--recording-support-output");
+    validate_output_paths(
+        video.as_ref(),
+        manifest.as_ref(),
+        &seed,
+        &output,
+        recording_support_output.as_ref(),
+    )?;
     let plate_diameter_m = parse_f64(
         &required(&mut values, "--plate-diameter-m")?,
         "--plate-diameter-m",
@@ -339,6 +436,12 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         video,
         manifest,
         fixture_id,
+        camera_view,
+        camera_movement,
+        approx_yaw_deg,
+        approx_pitch_deg,
+        camera_roll_deg,
+        camera_distance_m,
         seed,
         plate_diameter_m,
         tracker,
@@ -353,6 +456,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         selection,
         max_frame_bytes,
         output,
+        recording_support_output,
         diagnostics,
         force,
     }))
@@ -396,6 +500,12 @@ fn is_known_value_flag(flag: &str) -> bool {
         "--video"
             | "--manifest"
             | "--fixture"
+            | "--camera-view"
+            | "--camera-movement"
+            | "--approx-yaw-deg"
+            | "--approx-pitch-deg"
+            | "--camera-roll-deg"
+            | "--camera-distance-m"
             | "--seed"
             | "--plate-diameter-m"
             | "--tracker"
@@ -419,6 +529,7 @@ fn is_known_value_flag(flag: &str) -> bool {
             | "--end-s"
             | "--max-frame-memory-mib"
             | "--output"
+            | "--recording-support-output"
             | "--diagnostics"
     )
 }
@@ -436,6 +547,105 @@ fn validate_source_selection(
         _ => Err(CliError::invalid_input(
             "--manifest and --fixture must be provided together; --video may optionally override fixture media",
         )),
+    }
+}
+
+fn validate_recording_metadata_source(
+    manifest: Option<&PathBuf>,
+    camera_view: Option<CameraView>,
+    camera_movement: Option<CameraMovement>,
+    approx_yaw_deg: Option<f64>,
+    approx_pitch_deg: Option<f64>,
+    camera_roll_deg: Option<f64>,
+    camera_distance_m: Option<f64>,
+) -> CliResult<()> {
+    let has_direct_metadata = camera_view.is_some()
+        || camera_movement.is_some()
+        || approx_yaw_deg.is_some()
+        || approx_pitch_deg.is_some()
+        || camera_roll_deg.is_some()
+        || camera_distance_m.is_some();
+
+    if manifest.is_some() {
+        if has_direct_metadata {
+            return Err(CliError::invalid_input(
+                "camera recording flags cannot override fixture metadata; update the manifest instead",
+            ));
+        }
+        return Ok(());
+    }
+
+    if camera_view.is_none() || camera_movement.is_none() {
+        return Err(CliError::invalid_input(
+            "direct --video analysis requires --camera-view and --camera-movement; OpenBar will not assume side/fixed geometry",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_output_paths(
+    video: Option<&PathBuf>,
+    manifest: Option<&PathBuf>,
+    seed: &Path,
+    output: &Path,
+    recording_support_output: Option<&PathBuf>,
+) -> CliResult<()> {
+    if recording_support_output.is_some_and(|path| path.as_path() == output) {
+        return Err(CliError::invalid_input(
+            "--recording-support-output must differ from --output",
+        ));
+    }
+
+    let explicit_inputs = [
+        ("--video", video.map(PathBuf::as_path)),
+        ("--manifest", manifest.map(PathBuf::as_path)),
+        ("--seed", Some(seed)),
+    ];
+    for (output_flag, destination) in [
+        ("--output", Some(output)),
+        (
+            "--recording-support-output",
+            recording_support_output.map(PathBuf::as_path),
+        ),
+    ] {
+        let Some(destination) = destination else {
+            continue;
+        };
+        if let Some((input_flag, _)) = explicit_inputs
+            .iter()
+            .find(|(_, input)| input.is_some_and(|input| input == destination))
+        {
+            return Err(CliError::invalid_input(format!(
+                "{output_flag} must not overwrite the explicit input path supplied by {input_flag}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn parse_camera_view(value: &str) -> CliResult<CameraView> {
+    match value {
+        "side" => Ok(CameraView::Side),
+        "oblique_45" => Ok(CameraView::Oblique45),
+        "front" => Ok(CameraView::Front),
+        "rear" => Ok(CameraView::Rear),
+        "unknown" => Ok(CameraView::Unknown),
+        _ => Err(CliError::invalid_input(format!(
+            "--camera-view must be side, oblique_45, front, rear, or unknown, got '{value}'"
+        ))),
+    }
+}
+
+fn parse_camera_movement(value: &str) -> CliResult<CameraMovement> {
+    match value {
+        "fixed" => Ok(CameraMovement::Fixed),
+        "handheld" => Ok(CameraMovement::Handheld),
+        "panning" => Ok(CameraMovement::Panning),
+        "moving_other" => Ok(CameraMovement::MovingOther),
+        "unknown" => Ok(CameraMovement::Unknown),
+        _ => Err(CliError::invalid_input(format!(
+            "--camera-movement must be fixed, handheld, panning, moving_other, or unknown, got '{value}'"
+        ))),
     }
 }
 
@@ -704,19 +914,166 @@ fn calibrate_measurements(
         .collect()
 }
 
+fn measured_fps(clip: &DecodedClip) -> Option<f64> {
+    if clip.frames.len() <= 1 {
+        return None;
+    }
+    let duration_s =
+        clip.provenance.last_selected_timestamp_s - clip.provenance.first_selected_timestamp_s;
+    (duration_s > 0.0).then(|| (clip.frames.len() - 1) as f64 / duration_s)
+}
+
+fn recording_conditions(
+    args: &Args,
+    fixture: Option<&ManifestFixture>,
+    stream: &StreamProvenance,
+    clip: &DecodedClip,
+    plate_diameter_px: f64,
+) -> RecordingConditions {
+    let (
+        camera_view,
+        approx_yaw_deg,
+        approx_pitch_deg,
+        camera_roll_deg,
+        distance_m,
+        camera_movement,
+        nominal_fps,
+        lighting,
+        plate_visibility,
+        occlusion,
+        motion_blur,
+    ) = if let Some(fixture) = fixture {
+        (
+            fixture.camera.view,
+            fixture.camera.approx_yaw_deg,
+            fixture.camera.approx_pitch_deg,
+            None,
+            fixture.camera.distance_m,
+            fixture.camera.movement,
+            Some(fixture.video.nominal_fps),
+            fixture.conditions.lighting,
+            fixture.conditions.plate_visibility,
+            fixture.conditions.occlusion,
+            fixture.conditions.motion_blur,
+        )
+    } else {
+        (
+            args.camera_view
+                .expect("direct video metadata validated during argument parsing"),
+            args.approx_yaw_deg,
+            args.approx_pitch_deg,
+            args.camera_roll_deg,
+            args.camera_distance_m,
+            args.camera_movement
+                .expect("direct video metadata validated during argument parsing"),
+            None,
+            LightingCondition::Unknown,
+            PlateVisibilityCondition::Unknown,
+            OcclusionCondition::Unknown,
+            MotionBlurCondition::Unknown,
+        )
+    };
+
+    RecordingConditions {
+        camera_view,
+        approx_yaw_deg,
+        approx_pitch_deg,
+        camera_roll_deg,
+        distance_m,
+        camera_movement,
+        nominal_fps,
+        // Derivatives and validation are timestamp-authoritative, so report the rate observed
+        // from the decoded timestamps rather than preferring manifest-authored metadata.
+        measured_fps: measured_fps(clip),
+        width_px: stream.display_width_px,
+        height_px: stream.display_height_px,
+        plate_diameter_px: Some(plate_diameter_px),
+        lighting,
+        plate_visibility,
+        occlusion,
+        motion_blur,
+    }
+}
+
+fn calibration_quality_for_recording(conditions: &RecordingConditions) -> CalibrationQuality {
+    let mut warnings = vec![CalibrationWarning::GeometryUnassessed];
+
+    if conditions.approx_yaw_deg.is_some_and(|yaw| yaw != 0.0) {
+        warnings.push(CalibrationWarning::CameraYaw);
+        warnings.push(CalibrationWarning::PlateForeshortening);
+    }
+    if conditions
+        .approx_pitch_deg
+        .is_some_and(|pitch| pitch != 0.0)
+    {
+        warnings.push(CalibrationWarning::CameraPitchOrHeight);
+        warnings.push(CalibrationWarning::PerspectiveOrParallax);
+    }
+    if conditions.camera_roll_deg.is_some_and(|roll| roll != 0.0)
+        && !warnings.contains(&CalibrationWarning::PerspectiveOrParallax)
+    {
+        warnings.push(CalibrationWarning::PerspectiveOrParallax);
+    }
+
+    CalibrationQuality::new(CalibrationQualityStatus::Warning, warnings)
+}
+
+fn write_recording_support(
+    path: &Path,
+    support: &RecordingSupportAssessment,
+    force: bool,
+) -> CliResult<()> {
+    let serialized = serde_json::to_string_pretty(support).map_err(|error| {
+        CliError::output(format!(
+            "failed to serialize recording-support assessment: {error}"
+        ))
+    })?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| {
+                CliError::output(format!(
+                    "failed to create recording-support output directory '{}': {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if force {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options.open(path).map_err(|error| {
+        let hint = if !force && error.kind() == std::io::ErrorKind::AlreadyExists {
+            " (use --force to replace it)"
+        } else {
+            ""
+        };
+        CliError::output(format!(
+            "failed to open recording-support output '{}': {error}{hint}",
+            path.display()
+        ))
+    })?;
+    file.write_all(serialized.as_bytes())
+        .and_then(|()| file.write_all(b"\n"))
+        .map_err(|error| {
+            CliError::output(format!(
+                "failed to write recording-support output '{}': {error}",
+                path.display()
+            ))
+        })
+}
+
 fn video_metadata(
     clip: &DecodedClip,
     stream: &StreamProvenance,
     seed_timestamp_s: f64,
     selection: Option<MediaTimeRange>,
 ) -> VideoMetadata {
-    let measured_fps = if clip.frames.len() > 1 {
-        let duration_s =
-            clip.provenance.last_selected_timestamp_s - clip.provenance.first_selected_timestamp_s;
-        (duration_s > 0.0).then(|| (clip.frames.len() - 1) as f64 / duration_s)
-    } else {
-        None
-    };
+    let measured_fps = measured_fps(clip);
     let trim = selection.map_or_else(
         || TimeRange {
             start_s: clip
@@ -842,7 +1199,12 @@ fn write_analysis(path: &Path, analysis: &Analysis, force: bool) -> CliResult<()
         })
 }
 
-fn emit_diagnostics(args: &Args, analysis: &Analysis, clip: &DecodedClip) {
+fn emit_diagnostics(
+    args: &Args,
+    analysis: &Analysis,
+    clip: &DecodedClip,
+    recording_support: &RecordingSupportAssessment,
+) {
     if args.diagnostics == DiagnosticsVerbosity::Quiet {
         return;
     }
@@ -861,14 +1223,18 @@ fn emit_diagnostics(args: &Args, analysis: &Analysis, clip: &DecodedClip) {
         .iter()
         .filter(|sample| sample.tracking_state == TrackingState::Lost)
         .count();
-    let warning = low_confidence > 0
+    let warning = recording_support.status != RecordingSupportStatus::Supported
+        || low_confidence > 0
         || lost > 0
         || !clip.provenance.decoder_diagnostics.is_empty()
         || !analysis.calibration().quality().warnings().is_empty();
+    let support_reasons = recording_support.reason_codes().join(",");
     eprintln!(
-        "status={} output={} tracked={} low_confidence={} lost={} decoder_diagnostics={}",
+        "status={} output={} recording_support={} support_reasons={} tracked={} low_confidence={} lost={} decoder_diagnostics={}",
         if warning { "warning" } else { "success" },
         args.output.display(),
+        recording_support.status.as_str(),
+        support_reasons,
         tracked,
         low_confidence,
         lost,
@@ -1175,6 +1541,10 @@ mod tests {
         strings(&[
             "--video",
             "clip.mp4",
+            "--camera-view",
+            "side",
+            "--camera-movement",
+            "fixed",
             "--seed",
             "seed.json",
             "--plate-diameter-m",
@@ -1201,6 +1571,48 @@ mod tests {
         assert_eq!(parsed.filter, FilterConfig::Raw);
         assert_eq!(parsed.kinematics.max_gap_s, 0.2);
         assert_eq!(parsed.kinematics.min_confidence, 0.0);
+    }
+
+    #[test]
+    fn direct_video_requires_explicit_geometry_metadata() {
+        let mut args = base_args("analysis.json");
+        let view_index = args
+            .iter()
+            .position(|arg| arg == "--camera-view")
+            .expect("camera view flag");
+        args.drain(view_index..=view_index + 1);
+        let error = parse_args(args).expect_err("missing direct geometry must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--camera-view"));
+    }
+
+    #[test]
+    fn fixture_metadata_cannot_be_silently_overridden() {
+        let mut args = base_args("analysis.json");
+        args[0] = "--manifest".to_owned();
+        args[1] = "manifest.json".to_owned();
+        args.extend(strings(&["--fixture", "synthetic-clean-side-12"]));
+        let error = parse_args(args).expect_err("fixture camera override must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("cannot override fixture metadata"));
+    }
+
+    #[test]
+    fn output_paths_cannot_alias_explicit_inputs() {
+        let error = parse_args(base_args("seed.json"))
+            .expect_err("analysis output must not alias the seed input");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--output"));
+        assert!(error.to_string().contains("--seed"));
+
+        let mut args = base_args("analysis.json");
+        args.extend(strings(&["--recording-support-output", "seed.json"]));
+        let error = parse_args(args).expect_err("support output must not alias the seed input");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--recording-support-output"));
+        assert!(error.to_string().contains("--seed"));
     }
 
     #[test]
@@ -1326,12 +1738,23 @@ mod tests {
             "fixtures": [{
                 "id": "synthetic-clean-side-12",
                 "video": {
+                    "nominal_fps": 12.0,
                     "width_px": 999,
                     "height_px": 96,
                     "rotation_deg": 0
                 },
+                "camera": {
+                    "view": "side",
+                    "movement": "fixed"
+                },
                 "load": {
                     "plate_diameter_m": 0.45
+                },
+                "conditions": {
+                    "lighting": "good",
+                    "plate_visibility": "clear",
+                    "occlusion": "none",
+                    "motion_blur": "none"
                 }
             }]
         });
