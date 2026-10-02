@@ -38,7 +38,7 @@ the camera can record a file first and analysis can run after capture.
 
 ## Implementation boundary
 
-This workflow is defined from OpenBar's own product goals, measurement architecture, validation requirements, and user needs. Implementation should remain first-principles and validation-driven.
+This workflow is defined from OpenBar's product goals, measurement architecture, validation requirements, and user needs. Implementation should remain first-principles and validation-driven.
 
 ## Core design rule: exercise-aware workflow, exercise-agnostic measurement
 
