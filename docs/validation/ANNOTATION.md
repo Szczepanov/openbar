@@ -47,12 +47,20 @@ applied**.
 
 For v1:
 
-- origin: top-left corner of the display frame `(0, 0)`, matching the M0 manual-target seed convention;
+- integer coordinates are pixel centres: pixel `i` spans `i - 0.5 .. i + 0.5` (ADR-0007);
+- origin `(0, 0)`: the centre of the top-left pixel of the display frame, so the frame's
+  top-left corner is `(-0.5, -0.5)`. This matches the M0 manual-target seed and the trackers;
 - +X: right;
 - +Y: down;
 - fractional coordinates are allowed;
 - valid centre coordinates satisfy `0 <= x < width` and `0 <= y < height`;
 - `coordinate_system.rotation_applied` is always `true`.
+
+The validity window `0 <= x < width` is the v1 acceptance rule. It is not the raster extent,
+which is `-0.5 <= x < width - 0.5`. ADR-0007 explains why v1 keeps the window. Labelling tools
+should emit centres in `0 <= x < width - 0.5`, which is valid under both. The serialized
+`coordinate_system.origin` value `top_left` names the top-left pixel; it does not mean the
+outer corner.
 
 The fixture manifest's `video.width_px` / `video.height_px` describe the encoded raster.
 For 90° or 270° rotation metadata, annotation display width/height are therefore swapped.

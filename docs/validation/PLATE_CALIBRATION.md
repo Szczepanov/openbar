@@ -71,9 +71,13 @@ calibration shape.
 
 Manual seeds and raw tracker observations use the #6 display-space convention:
 
-- origin: top-left of the display-oriented frame;
+- origin: centre of the top-left pixel of the display-oriented frame (integer coordinates are
+  pixel centres, ADR-0007);
 - +X: right;
 - +Y: down.
+
+Calibration uses only coordinate differences and the seed diameter, so it gives the same result
+under any constant pixel offset. It still relies on seeds and observations sharing one convention.
 
 Raw observations remain raw pixels.
 

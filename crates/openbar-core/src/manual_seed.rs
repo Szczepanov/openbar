@@ -505,6 +505,8 @@ fn validate_coordinate(axis: PixelAxis, value: f64) -> Result<(), SeedValidation
     }
 }
 
+/// Checks the v1 window `[0, width) x [0, height)`. Integer coordinates are pixel centres, so this
+/// window is not the raster extent `[-0.5, width - 0.5]`; ADR-0007 records why v1 keeps it.
 fn validate_center_in_frame(
     center: PixelPoint,
     context: SeedValidationContext,
@@ -712,6 +714,57 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
+            SeedValidationError::TargetExtendsOutsideFrame { .. }
+        ));
+    }
+
+    #[test]
+    fn keeps_v1_frame_window_instead_of_pixel_centre_raster_extent() {
+        // ADR-0007: integer coordinates are pixel centres, so the raster spans
+        // [-0.5, width - 0.5]. v1 deliberately keeps the [0, width) point window and the
+        // [0, width] bounds window; these cases sit in the half-pixel border where they differ.
+        let ctx = context();
+        assert!(validate_center_in_frame(PixelPoint::new(1919.75, 1079.75), ctx).is_ok());
+        assert!(matches!(
+            validate_center_in_frame(PixelPoint::new(-0.25, 540.0), ctx),
+            Err(SeedValidationError::CoordinateOutsideFrame {
+                axis: PixelAxis::X,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_center_in_frame(PixelPoint::new(960.0, -0.25), ctx),
+            Err(SeedValidationError::CoordinateOutsideFrame {
+                axis: PixelAxis::Y,
+                ..
+            })
+        ));
+
+        let right_edge = ManualTargetSeed::try_new(
+            1.25,
+            None,
+            PlateTarget::new(PixelPoint::new(1820.0, 980.0), 100.0),
+            0,
+            None,
+            None,
+            ctx,
+        )
+        .unwrap();
+        assert_eq!(right_edge.target().bounding_box().right_px(), 1920.0);
+        assert_eq!(right_edge.target().bounding_box().bottom_px(), 1080.0);
+
+        let left_border = ManualTargetSeed::try_new(
+            1.25,
+            None,
+            PlateTarget::new(PixelPoint::new(99.75, 540.0), 100.0),
+            0,
+            None,
+            None,
+            ctx,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            left_border,
             SeedValidationError::TargetExtendsOutsideFrame { .. }
         ));
     }

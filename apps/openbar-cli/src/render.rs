@@ -5,7 +5,7 @@
 //! here.
 
 use crate::cli_error::{CliError, CliResult};
-use crate::diagnostic_svg::{render_svg, SourceFrame};
+use crate::diagnostic_svg::{render_svg, SourceFrame, RENDERER_ID, RENDERER_VERSION};
 use crate::media::{FrameSourceOptions, MediaError, ProbedVideo, TimeRange as MediaTimeRange};
 use openbar_core::analysis::{Analysis, TrackingState};
 use openbar_tracking::GrayscaleImage;
@@ -72,7 +72,7 @@ fn run(args: &Args) -> CliResult<()> {
         .filter(|sample| sample.tracking_state == TrackingState::LowConfidence)
         .count();
     eprintln!(
-        "status={} output={} renderer=diagnostic-svg@1 lost={} low_confidence={} source_frame={}",
+        "status={} output={} renderer={RENDERER_ID}@{RENDERER_VERSION} lost={} low_confidence={} source_frame={}",
         if lost > 0 || low_confidence > 0 {
             "warning"
         } else {

@@ -199,6 +199,7 @@ impl Analysis {
             }
             previous_timestamp = Some(observation.timestamp_s);
 
+            // v1 frame window, not the pixel-centre raster extent (ADR-0007).
             if let Some(measurement) = observation.measurement {
                 if measurement.x_px < 0.0
                     || measurement.x_px >= f64::from(self.video.display_width_px)
@@ -1299,6 +1300,36 @@ mod tests {
         let mut value = serde_json::to_value(analysis()).unwrap();
         value["raw_observations"][0]["target_bounds_px"]["left_px"] = serde_json::json!(-1.0);
         assert!(serde_json::from_value::<Analysis>(value).is_err());
+    }
+
+    #[test]
+    fn keeps_v1_frame_window_in_the_left_half_pixel_border() {
+        // ADR-0007: (-0.25, y) lies inside pixel 0 under the pixel-centre convention, but the v1
+        // window stays [0, width) for measurements and [0, width] for bounds.
+        let mut measurement_in_border = analysis();
+        measurement_in_border.raw_observations[0].target_bounds_px = None;
+        measurement_in_border.raw_observations[0]
+            .measurement
+            .as_mut()
+            .expect("fixture observation 0 is measured")
+            .x_px = -0.25;
+        let error = measurement_in_border.validate().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("measured centre lies outside the display-oriented frame"));
+
+        let mut bounds_in_border = analysis();
+        let bounds = bounds_in_border.raw_observations[0]
+            .target_bounds_px
+            .as_mut()
+            .expect("fixture observation 0 has bounds");
+        // Move only the left edge so the measured centre stays inside the bounds.
+        bounds.width_px += bounds.left_px + 0.25;
+        bounds.left_px = -0.25;
+        let error = bounds_in_border.validate().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("target bounds lie outside the display-oriented frame"));
     }
 
     #[test]

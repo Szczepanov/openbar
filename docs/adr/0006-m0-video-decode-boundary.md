@@ -15,7 +15,8 @@ The decode layer must satisfy contracts that already exist:
 
 - timestamps are decoder presentation timestamps (PTS) in seconds from media start, never
   `frame_index / nominal_fps` (`docs/validation/ANNOTATION.md`, `MANUAL_TARGET_SEED.md`);
-- pixel coordinates are display-oriented **after** rotation metadata is applied;
+- pixel coordinates are display-oriented **after** rotation metadata is applied, with integer
+  coordinates at pixel centres (ADR-0007);
 - variable-frame-rate phone footage must work;
 - identical inputs and pipeline version produce identical measurement output;
 - dependencies record source, licence, purpose, distribution compatibility and native

@@ -56,12 +56,20 @@ M0 uses one serialized coordinate convention:
 Its semantics are:
 
 - coordinates refer to the display-oriented frame **after** source rotation metadata is applied;
-- origin is the top-left corner;
+- integer coordinates are pixel centres: pixel `i` spans `i - 0.5 .. i + 0.5` (ADR-0007);
+- origin `(0, 0)` is the centre of the top-left pixel, so the frame's top-left corner is
+  `(-0.5, -0.5)`;
 - +X points right;
 - +Y points down;
 - pixel coordinates are continuous floating-point values;
 - a centre is inside the frame when `0 <= x < width` and `0 <= y < height`;
+- target bounds are inside the frame when `left >= 0`, `top >= 0`, `right <= width` and
+  `bottom <= height`;
 - validation frame width/height are the display-oriented dimensions.
+
+The two inside-the-frame rules are the v1 acceptance window, not the raster extent
+(`-0.5 .. width - 0.5`). ADR-0007 records why v1 keeps them. The name `display_top_left` refers
+to the top-left pixel, not its outer corner.
 
 `source_rotation_deg` records the source rotation metadata used to obtain that display
 orientation and must be one of 0, 90, 180, or 270. A seed is rejected when this does not
