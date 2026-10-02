@@ -173,6 +173,15 @@ class RecordingEnvelopeEvidenceTests(unittest.TestCase):
                 fixtures=[fixture("real-a", kind="synthetic")],
             )
 
+    def test_unknown_source_kind_cannot_support_boundary(self):
+        with self.assertRaisesRegex(
+            recording_envelope.EvidenceError, "non-synthetic provenance"
+        ):
+            self.build(
+                spec=study(requested="supported", minima=(1, 20)),
+                fixtures=[fixture("real-a", kind="unknown")],
+            )
+
     def test_development_fixture_is_ineligible(self):
         with self.assertRaisesRegex(
             recording_envelope.EvidenceError, "ineligible purpose"
@@ -182,10 +191,26 @@ class RecordingEnvelopeEvidenceTests(unittest.TestCase):
                 fixtures=[fixture("real-a", purpose="development")],
             )
 
+    def test_other_tracker_cases_do_not_poison_matching_candidate_evidence(self):
+        result = benchmark_result()
+        result["cases"].append({
+            "case_id": "case-other",
+            "fixture_id": "real-a",
+            "implementation": {"name": "other", "version": "1", "config": {}},
+            "metrics": metrics(100),
+            "warnings": [],
+        })
+        artifact = self.build(
+            spec=study(requested="supported", minima=(1, 20)),
+            result=result,
+        )
+        self.assertEqual(artifact["boundaries"][0]["classification"], "supported")
+        self.assertEqual(artifact["boundaries"][0]["evidence"]["benchmark_case_count"], 1)
+
     def test_candidate_mismatch_fails_closed(self):
         other = {"name": "other", "version": "1", "config": {}}
         with self.assertRaisesRegex(
-            recording_envelope.EvidenceError, "different tracker candidate"
+            recording_envelope.EvidenceError, "no benchmark case for the frozen tracker"
         ):
             self.build(
                 spec=study(requested="unsupported", minima=(1, 20)),
