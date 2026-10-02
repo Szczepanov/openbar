@@ -575,8 +575,10 @@ candidates were evaluated; none is NOT EVALUATED. Full tables are in §2 "Phase 
      plan/inventory described it as pinned. The committed aggregates above remain useful development evidence,
      but the exact historical package/VCS lock is not recoverable from committed artifacts. The runner now
      SHA-256-verifies every checkpoint and records critical installed package versions and pip direct-source/VCS
-     metadata when available. Before Phase 4 freeze, rerun the shortlisted SAM 2 candidates under an explicit,
-     retained environment lock. No historical metric is rewritten by this provenance correction.
+     metadata when available. This reviewed provenance/diagnostic runner is versioned `gpu-spike-3`; the
+     aggregate tables above remain explicitly historical `gpu-spike-2` evidence. Before Phase 4 freeze, rerun
+     the shortlisted SAM 2 candidates under an explicit, retained environment lock. No historical metric is
+     rewritten by this provenance correction.
 - **Error diagnosis (development labels, read-only, after scoring).** This analysis looked at labels, so it is
   development evidence only; nothing was tuned from it.
   - Most of the SAM 2 circle error is a shared offset, not scatter: the mean signed error is 49–69 % of MAE, in
