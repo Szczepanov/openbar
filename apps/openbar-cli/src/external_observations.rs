@@ -226,6 +226,7 @@ fn validate_and_adapt(
     let tracker_id = document.implementation.name.clone();
     let mut raw_observations = Vec::with_capacity(document.samples.len());
     let mut previous_timestamp_s = None;
+    let mut previous_frame_index = None;
     for (index, sample) in document.samples.into_iter().enumerate() {
         if !sample.timestamp_s.is_finite() || sample.timestamp_s < 0.0 {
             return Err(CliError::invalid_input(format!(
@@ -255,6 +256,14 @@ fn validate_and_adapt(
                 sample.timestamp_s
             )));
         }
+        if previous_frame_index.is_some_and(|previous| matched_frame.frame_index <= previous) {
+            return Err(CliError::invalid_input(format!(
+                "external observation {index} resolves to decoded frame {} after frame {}; each sample must map to a distinct, strictly advancing decoded frame",
+                matched_frame.frame_index,
+                previous_frame_index.expect("checked Some")
+            )));
+        }
+        previous_frame_index = Some(matched_frame.frame_index);
 
         let (tracking_state, measurement) = match sample.state {
             PredictionState::Tracked => {
@@ -356,6 +365,10 @@ fn parameter_value(value: serde_json::Value) -> CliResult<ParameterValue> {
         serde_json::Value::Number(value) => {
             if let Some(integer) = value.as_i64() {
                 Ok(ParameterValue::Integer(integer))
+            } else if value.as_u64().is_some() {
+                // analysis-v1 has an i64 integer parameter type. Preserve larger JSON integers
+                // exactly as decimal text rather than silently rounding them through f64.
+                Ok(ParameterValue::Text(value.to_string()))
             } else if let Some(float) = value.as_f64() {
                 if float.is_finite() {
                     Ok(ParameterValue::Float(float))
@@ -550,6 +563,16 @@ mod tests {
     }
 
     #[test]
+    fn multiple_samples_for_same_decoded_frame_are_rejected() {
+        let mut document = valid_document();
+        document.samples[1].timestamp_s = 0.0004;
+        let error = validate(document).expect_err("one decoded frame cannot back two samples");
+        assert!(error
+            .to_string()
+            .contains("distinct, strictly advancing decoded frame"));
+    }
+
+    #[test]
     fn stream_without_seed_sample_is_rejected() {
         let mut document = valid_document();
         document.samples.remove(0);
@@ -603,6 +626,24 @@ mod tests {
         let error = validate(document).expect_err("invalid id must fail");
         assert!(error.to_string().contains("external tracker identifier"));
         assert!(error.to_string().contains("opencv-csrt+lk"));
+    }
+
+    #[test]
+    fn large_unsigned_config_integer_is_preserved_without_f64_rounding() {
+        let mut document = valid_document();
+        document
+            .implementation
+            .config
+            .insert("large_counter".to_owned(), serde_json::json!(u64::MAX));
+        let imported = validate(document).expect("large unsigned integer remains valid provenance");
+        assert_eq!(
+            imported
+                .tracker_provenance
+                .implementation
+                .parameters
+                .get("large_counter"),
+            Some(&ParameterValue::Text(u64::MAX.to_string()))
+        );
     }
 
     #[test]
