@@ -331,16 +331,42 @@ def freeze_study(manifest_path: Path, output: Path) -> dict[str, Any]:
     return document
 
 
-def _nearest_prediction(
-    samples: list[dict[str, Any]], timestamp_s: float, tolerance_s: float
-) -> dict[str, Any] | None:
-    best: dict[str, Any] | None = None
-    best_delta = math.inf
-    for sample in samples:
-        delta = abs(float(sample["timestamp_s"]) - timestamp_s)
-        if delta < best_delta:
-            best, best_delta = sample, delta
-    return best if best is not None and best_delta <= tolerance_s else None
+def _match_timestamped_samples(
+    references: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+    tolerance_s: float,
+) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Chronologically match each sample at most once, mirroring Rust benchmark alignment."""
+    matches: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    sample_index = 0
+    for reference in references:
+        timestamp_s = float(reference["timestamp_s"])
+        while (
+            sample_index < len(samples)
+            and float(samples[sample_index]["timestamp_s"]) < timestamp_s - tolerance_s
+        ):
+            sample_index += 1
+
+        best_index: int | None = None
+        best_delta = math.inf
+        candidate_index = sample_index
+        while (
+            candidate_index < len(samples)
+            and float(samples[candidate_index]["timestamp_s"]) <= timestamp_s + tolerance_s
+        ):
+            delta = abs(float(samples[candidate_index]["timestamp_s"]) - timestamp_s)
+            if delta < best_delta:
+                best_index = candidate_index
+                best_delta = delta
+            candidate_index += 1
+
+        if best_index is None:
+            matches.append((reference, None))
+            continue
+
+        matches.append((reference, samples[best_index]))
+        sample_index = best_index + 1
+    return matches
 
 
 def false_track_diagnostics(
@@ -358,15 +384,15 @@ def false_track_diagnostics(
     worst_error = None
     examples: list[dict[str, float]] = []
 
-    for reference in annotation.get("samples", []):
-        if (
-            reference.get("annotation_state") != "labelled"
-            or reference.get("quality") == "unusable"
-        ):
-            continue
-        actual = _nearest_prediction(
-            prediction_samples, float(reference["timestamp_s"]), tolerance
-        )
+    references = [
+        reference
+        for reference in annotation.get("samples", [])
+        if reference.get("annotation_state") == "labelled"
+        and reference.get("quality") != "unusable"
+    ]
+    for reference, actual in _match_timestamped_samples(
+        references, prediction_samples, tolerance
+    ):
         if actual is None or actual.get("state") != "tracked":
             continue
         center = actual.get("center_px")
@@ -457,18 +483,6 @@ def analyze_with_filter(
     return load_json(output)
 
 
-def _match_metric_sample(
-    samples: list[dict[str, Any]], timestamp_s: float, tolerance_s: float
-) -> dict[str, Any] | None:
-    best = None
-    best_delta = math.inf
-    for sample in samples:
-        delta = abs(float(sample["timestamp_s"]) - timestamp_s)
-        if delta < best_delta:
-            best, best_delta = sample, delta
-    return best if best is not None and best_delta <= tolerance_s else None
-
-
 def filtered_position_metrics(
     annotation: dict[str, Any], analysis: dict[str, Any]
 ) -> dict[str, Any]:
@@ -484,15 +498,15 @@ def filtered_position_metrics(
     tolerance = float(annotation["timebase"]["decoder_match_tolerance_s"])
     errors: list[float] = []
 
-    for reference in annotation.get("samples", []):
-        if (
-            reference.get("annotation_state") != "labelled"
-            or reference.get("quality") == "unusable"
-        ):
-            continue
-        actual = _match_metric_sample(
-            samples, float(reference["timestamp_s"]), tolerance
-        )
+    references = [
+        reference
+        for reference in annotation.get("samples", [])
+        if reference.get("annotation_state") == "labelled"
+        and reference.get("quality") != "unusable"
+    ]
+    for reference, actual in _match_timestamped_samples(
+        references, samples, tolerance
+    ):
         if actual is None:
             continue
         center = reference["center_px"]
