@@ -1178,7 +1178,7 @@ Start with:
 - 5/10/20 m;
 - static camera;
 - calibrated virtual gates;
-- 120+ fps where supported and validated;
+- benchmark 60/120/240 fps capture modes where supported, then freeze the validated timing envelope;
 - photocell ground truth.
 
 ### Stage E — broad-jump research spike
