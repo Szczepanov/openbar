@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "study_id": "m0-recording-envelope-boundaries",
+  "fixture_manifest": "../fixtures/public/manifest.json",
+  "benchmark_results": [],
+  "measurement_evidence": [],
+  "frozen_candidate": {
+    "status": "not_frozen",
+    "git_commit": null,
+    "pipeline_version": "m0-benchmark-v1",
+    "tracker": null,
+    "filter": null,
+    "note": "Issue #53 depends on selecting and freezing a tracker/filter candidate after representative real evidence exists."
+  },
+  "evidence_policy": {
+    "eligible_purposes": [
+      "validation"
+    ],
+    "require_non_synthetic": true,
+    "minimum_distinct_held_out_fixtures_per_boundary": null,
+    "minimum_comparable_samples_per_boundary": null,
+    "note": "Evidence minima must be preregistered before any non-unknown boundary classification is requested."
+  },
+  "boundaries": [
+    {
+      "id": "yaw",
+      "dimension": "camera_geometry",
+      "variable": "approx_yaw_deg",
+      "unit": "deg",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "No controlled held-out real yaw sweep exists."
+    },
+    {
+      "id": "pitch",
+      "dimension": "camera_geometry",
+      "variable": "approx_pitch_deg",
+      "unit": "deg",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "No controlled held-out real pitch sweep exists."
+    },
+    {
+      "id": "camera-height",
+      "dimension": "camera_geometry",
+      "variable": "camera_height_m",
+      "unit": "m",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Camera-height boundary has not been measured."
+    },
+    {
+      "id": "camera-roll",
+      "dimension": "camera_geometry",
+      "variable": "camera_roll_deg",
+      "unit": "deg",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Camera-roll boundary has not been measured on held-out real footage."
+    },
+    {
+      "id": "distance",
+      "dimension": "camera_geometry",
+      "variable": "distance_m",
+      "unit": "m",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "No controlled held-out real distance sweep exists."
+    },
+    {
+      "id": "framing",
+      "dimension": "framing",
+      "variable": "minimum_plate_frame_margin_px",
+      "unit": "px",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Framing/cropping tolerance has not been quantified."
+    },
+    {
+      "id": "fps",
+      "dimension": "video_quality",
+      "variable": "measured_fps",
+      "unit": "fps",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "No held-out real FPS sweep exists."
+    },
+    {
+      "id": "resolution",
+      "dimension": "video_quality",
+      "variable": "display_resolution_px",
+      "unit": "px",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "No held-out real resolution sweep exists."
+    },
+    {
+      "id": "plate-size",
+      "dimension": "target_visibility",
+      "variable": "plate_diameter_px",
+      "unit": "px",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "No real plate-pixel-size boundary evidence exists."
+    },
+    {
+      "id": "contrast",
+      "dimension": "target_visibility",
+      "variable": "plate_background_contrast",
+      "unit": "defined_by_study_method",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Contrast metric and boundary must be preregistered and measured on real held-out clips."
+    },
+    {
+      "id": "motion-blur",
+      "dimension": "video_quality",
+      "variable": "exposure_or_blur_metric",
+      "unit": "defined_by_study_method",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Realistic shutter/motion-blur boundary has not been measured."
+    },
+    {
+      "id": "compression",
+      "dimension": "video_quality",
+      "variable": "compression_level",
+      "unit": "defined_by_study_method",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Compression boundary has not been measured."
+    },
+    {
+      "id": "occlusion",
+      "dimension": "target_visibility",
+      "variable": "max_consecutive_occlusion_duration_s",
+      "unit": "s",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Short/medium/long real occlusion spans have not been benchmarked."
+    },
+    {
+      "id": "camera-motion",
+      "dimension": "camera_stability",
+      "variable": "background_motion_metric",
+      "unit": "defined_by_study_method",
+      "tested_values": [],
+      "fixture_ids": [],
+      "requested_classification": "unknown",
+      "decision_rationale": "Minor handheld versus meaningful camera motion has not been quantified."
+    }
+  ]
+}
