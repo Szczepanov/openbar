@@ -1,7 +1,7 @@
 # VBT reference experiments — implementation plan
 
-Status: proposed execution plan  
-Related: #2, #57, #58, #53, ADR-0004, ADR-0008, `research/PLATE_TRACKING_PLAN.md`  
+Status: active — Phases 1–3 executed; findings recorded in docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md; Phases 4–5 deferred  
+Related: #2, #57, #58, #53, ADR-0004, ADR-0008, `research/PLATE_TRACKING_PLAN.md`, `docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`  
 Research basis: `docs/analysis/VBT_OPEN_SOURCE_REFERENCE_REVIEW.md`
 
 ## 1. Purpose
@@ -39,7 +39,20 @@ make explicit decision
 
 A successful experiment does not automatically justify changing production measurement behavior.
 
-## 2. Current state
+## 2. Execution status & phase dashboard
+
+Execution commenced per §6 and §21. Detailed empirical findings, distributions, and reproduction commands are recorded in [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md).
+
+| Phase / Work Package | Focus | Status | Implementation / Evidence Reference | Explicit Decision |
+|---|---|---|---|---|
+| **Phase 1** | Display coordinate invariant | **COMPLETED** | [`docs/validation/TRACKER_EXPERIMENTS.md`](docs/validation/TRACKER_EXPERIMENTS.md) | **DOCUMENTED (DOCS ONLY)** |
+| **Phase 2 (P2.0)** | Real-timestamp applicability survey | **COMPLETED** | [`research/vbt-experiments/timestamp_survey.py`](../../research/vbt-experiments/timestamp_survey.py), `target/research/butterworth/timestamp_survey_dev.json` | **GO** (1% low-jitter rule qualifies 80% dev, 83.3% val clips) |
+| **Phase 2 (P2.1–P2.4)** | Butterworth challenger implementation & grid | **COMPLETED** | [`crates/openbar-core/src/filtering.rs`](../../crates/openbar-core/src/filtering.rs), [`apps/openbar-cli/src/filter_experiment.rs`](../../apps/openbar-cli/src/filter_experiment.rs) | **CONTINUE RESEARCH / DEFER PROMOTION** (Savitzky-Golay superior on peak velocity attenuation; promotion deferred to #58) |
+| **Phase 3 (P3.0)** | Multi-frame calibration oracle study | **COMPLETED** | [`research/vbt-experiments/calibration_oracle_study.py`](../../research/vbt-experiments/calibration_oracle_study.py), `target/research/calibration/p3_annotation_oracle_study.json` | **REJECT ESTIMATOR PROMOTION / KEEP DIAGNOSTIC** (blur causes 3–12% plate shrinkage; S0 remains authoritative) |
+| **Phase 4** | Camera-geometry sensitivity | **DEFERRED** | Section 11 (stub retained) | **DEFERRED** (trigger conditions in §11 not met) |
+| **Phase 5** | Controlled marker reference | **DEFERRED** | Section 12 (stub retained) | **DEFERRED** (trigger conditions in §12 not met) |
+
+## 3. Current state at plan authoring
 
 At the time this plan was written:
 
@@ -246,7 +259,8 @@ not make P2–P4 blockers. Continue the existing M0 re-entry work first.
 
 Priority: **low now (document the invariant); high as soon as a transformed-frame consumer appears**  
 M0 blocker: **no**, unless a current research/production tracker performs transformed-frame
-inference and returns transformed coordinates.
+inference and returns transformed coordinates.  
+Status: **COMPLETED (DOCS ONLY)** — invariant recorded in [`docs/validation/TRACKER_EXPERIMENTS.md`](docs/validation/TRACKER_EXPERIMENTS.md).
 
 ## Rationale
 
@@ -365,7 +379,8 @@ state (see above).
 # 9. Phase 2 — Butterworth challenger experiment
 
 Priority: **medium/high after baseline reference data exists**  
-M0 blocker: **no by default**
+M0 blocker: **no by default**  
+Status: **CONTINUE RESEARCH / DEFER PROMOTION** — P2.0–P2.4 executed; findings in [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md).
 
 ## Rationale
 
@@ -381,6 +396,9 @@ apply to almost no real input, in which case the filter is not worth implementin
 cheap to answer and needs no #58 reference data, so it gates everything else in this phase.
 
 ## P2.0 — real-timestamp applicability survey (go/no-go)
+
+Status: **COMPLETED — DECISION: GO**.  
+Executed via [`research/vbt-experiments/timestamp_survey.py`](../../research/vbt-experiments/timestamp_survey.py); artifact in `target/research/butterworth/timestamp_survey_dev.json`. Findings: strict tick-exact regularity fails real phone clips due to ~0.1 ms sensor clock jitter; frozen 1% low-jitter rule qualifies 80.0% dev and 83.3% validation clips while rejecting VFR/dropped frames.
 
 Before implementing any filter:
 
@@ -406,6 +424,8 @@ threshold.
 
 ## P2.1 — define timestamp regularity
 
+Status: **COMPLETED** — implemented `assess_timestamp_regularity` and `TimestampRegularity` in [`crates/openbar-core/src/filtering.rs`](../../crates/openbar-core/src/filtering.rs). Evaluates median dt, min/max dt, max relative deviation, and coefficient of variation with fail-closed validation.
+
 Add a deterministic applicability calculation over each contiguous segment.
 
 For timestamp deltas `dt_i`, record at least:
@@ -429,6 +449,8 @@ The first experiment may declare Butterworth unsupported for all non-regular seq
 inventing a permissive threshold.
 
 ## P2.2 — implement experimental zero-phase filter
+
+Status: **COMPLETED** — implemented `ButterworthExperimentalConfig` and `apply_butterworth_filter` in [`crates/openbar-core/src/filtering.rs`](../../crates/openbar-core/src/filtering.rs). Cascaded biquad direct form II, bilinear transform with pre-warping, forward-backward zero-phase application, Winter cutoff correction, and reflected endpoint padding.
 
 Recommended approach:
 
@@ -477,6 +499,8 @@ separate experiment-only config/function rather than changing the public enum pr
 
 ## P2.3 — development grid
 
+Status: **COMPLETED** — 20-candidate grid evaluated via `apps/openbar-cli/src/filter_experiment.rs` (`--challenger butterworth`); selected winner: `zero-phase-butterworth-research@1` (effective order 8, design order 4, 4.0 Hz cutoff, uncorrected single pass, dev vel RMSE 0.0384 m/s).
+
 Predeclare a small grid before evaluating held-out scenarios.
 
 Suggested initial grid:
@@ -497,6 +521,8 @@ Selection rule should remain consistent with existing family selection:
 
 ## P2.4 — synthetic applicability/behavior tests
 
+Status: **COMPLETED** — deterministic test suite implemented in [`crates/openbar-core/src/filtering.rs`](../../crates/openbar-core/src/filtering.rs) (covering 30/60/120/240 Hz regularity, Nyquist rejection, invalid cutoffs, gaps, VFR rejection, zero phase delay, constant signal preservation, determinism).
+
 Required tests:
 
 - exactly regular 30/60/120/240 Hz;
@@ -513,6 +539,9 @@ Required tests:
 - sharp-peak attenuation and edge transient behavior are measured.
 
 ## P2.5 — real/reference evaluation
+
+Status: **EVALUATED — DECISION: CONTINUE RESEARCH / DEFER PROMOTION**.  
+Evaluated against development synthetic scenarios and phone captures (see [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md)). Findings: while Butterworth achieves zero phase delay and low vel RMSE on long loss spans (0.0312 m/s), Savitzky-Golay outperforms it on sharp peaks (0.5% vs 29.6% attenuation) and handles irregular/gap timestamps natively. Production promotion deferred until #58 physical reference evidence is acquired.
 
 Only after #58 provides suitable definition-matched reference data:
 
@@ -533,6 +562,9 @@ Only after #58 provides suitable definition-matched reference data:
 Report unsupported timestamp cases rather than excluding them silently.
 
 ## Promotion gate
+
+Status: **STOP CONDITION MET FOR PROMOTION — RETAIN AS RESEARCH CHALLENGER**.  
+Evidence does not justify replacing or adding Butterworth to canonical production defaults without physical reference evidence (#58). Existing 4 production filter families remain authoritative.
 
 Butterworth is eligible for production-candidate discussion only if:
 
@@ -561,7 +593,8 @@ Stop and retain the existing four families if any is true:
 # 10. Phase 3 — multi-frame calibration robustness
 
 Priority: **medium after tracker quality is adequate**  
-M0 blocker: **no by default**
+M0 blocker: **no by default**  
+Status: **COMPLETED — DECISION: REJECT ESTIMATOR PROMOTION / KEEP DIAGNOSTIC** (P3.0 oracle study findings in [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md)).
 
 ## Rationale
 
@@ -594,6 +627,9 @@ Do not add a new ML model or a size-measuring tracker just to run this study. If
 tracker is needed, it is tracker work owned by #57 and its candidate gates, not part of P3.
 
 ## P3.0 — annotation-oracle study (go/no-go)
+
+Status: **COMPLETED — DECISION: REJECT ESTIMATOR PROMOTION**.  
+Executed via [`research/vbt-experiments/calibration_oracle_study.py`](../../research/vbt-experiments/calibration_oracle_study.py); artifact in `target/research/calibration/p3_annotation_oracle_study.json`. Findings: human annotators dynamically adjust aiming rings during barbell motion blur to fit high-contrast cores, resulting in 3.2% to 12.5% diameter shrinkage relative to the stationary seed ($S_0$). Multi-frame median diameter ($S_1$) artificially inflates velocity and ROM. Stop condition met: P3.1–P3.4 stopped. `PlateDiameterCalibration@1` remains authoritative; visible diameter variation retained strictly as P3.5 diagnostic signal for blur/geometry tracking quality (#53).
 
 Before building any estimator harness, test the best case: perfect, human-measured per-frame
 diameters.
@@ -717,6 +753,9 @@ A diameter-variation diagnostic may be promoted independently if:
 
 ## Stop conditions
 
+Status: **STOP CONDITION MET — `PlateDiameterCalibration@1` RETAINED UNCHANGED**.  
+Oracle study demonstrated that multi-frame diameter averaging without blur deconvolution degrades accuracy. Estimator promotion rejected; diameter variation retained strictly for diagnostic analysis (#53).
+
 Keep `PlateDiameterCalibration@1` unchanged if:
 
 - S1/S2/S3 do not materially improve physical error;
@@ -734,7 +773,8 @@ validated.
 
 Priority: **medium/low until recording-envelope evidence indicates need**  
 M0 blocker: **no by default**  
-Detail level: **stub** — expand into full work packages only when the trigger below fires.
+Detail level: **stub** — expand into full work packages only when the trigger below fires.  
+Status: **DEFERRED** (trigger conditions in §11 not met; stub retained).
 
 ## Trigger
 
@@ -809,7 +849,8 @@ Do not add production camera calibration, perspective correction or stabilizatio
 
 Priority: **low / conditional**  
 M0 blocker: **no**  
-Detail level: **stub** — expand only when triggered.
+Detail level: **stub** — expand only when triggered.  
+Status: **DEFERRED** (trigger conditions in §12 not met; stub retained).
 
 ## Trigger
 
