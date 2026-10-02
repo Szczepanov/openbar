@@ -164,30 +164,27 @@ def compute_coverage_bins(inlier_points: np.ndarray, center_x: float, center_y: 
     return int(len(np.unique(bins)))
 
 
-def fit_circle_ransac(
+@dataclass(frozen=True)
+class CircleFitAttempt:
+    """Detailed internal outcome used to preserve Phase 2 diagnostics across the refactor."""
+
+    fit: tuple[float, float, float, np.ndarray] | None
+    failure_reason: str | None
+    best_inlier_count: int
+
+
+def _fit_circle_ransac_detailed(
     points: np.ndarray,
     r_ref: float,
     frame_index: int,
     num_iterations: int = 1000,
     inlier_tolerance: float = 1.5,
-) -> tuple[float, float, float, np.ndarray] | None:
-    """RANSAC + Taubin circle fit on 2D points.
-
-    Args:
-        points: (N, 2) array of coordinates.
-        r_ref: reference radius (used for degenerate circumradius check: c_r > 10 * r_ref).
-        frame_index: frame index for deterministic RNG seed [42, frame_index].
-        num_iterations: RANSAC iterations (default 1000).
-        inlier_tolerance: inlier distance threshold in pixels (default 1.5).
-
-    Returns:
-        (cx, cy, r, inlier_points) or None if fit failed.
-    """
+) -> CircleFitAttempt:
+    """RANSAC + Taubin circle fit with the original Phase 2 failure diagnostics."""
     n_points = points.shape[0]
     if n_points < 3:
-        return None
+        return CircleFitAttempt(None, "ransac_failed", 0)
 
-    # RANSAC with 1000 iterations and per-frame seed [42, frame_index]
     rng = np.random.default_rng([42, frame_index])
     best_inlier_mask: np.ndarray | None = None
     best_inlier_count = 0
@@ -202,7 +199,6 @@ def fit_circle_ransac(
         if cand_circle is None:
             continue
         c_cx, c_cy, c_r = cand_circle
-        # Degenerate check: circumradius > 10 * r_ref
         if c_r > 10.0 * r_ref:
             continue
         residuals = np.abs(np.hypot(points[:, 0] - c_cx, points[:, 1] - c_cy) - c_r)
@@ -213,22 +209,37 @@ def fit_circle_ransac(
             best_inlier_mask = inlier_mask
 
     if best_inlier_mask is None or best_inlier_count < 3:
-        return None
+        return CircleFitAttempt(None, "ransac_failed", best_inlier_count)
 
-    # Taubin refit on inliers
     try:
         refit_cx, refit_cy, refit_r = fit_circle_taubin(points[best_inlier_mask])
     except (ValueError, ZeroDivisionError):
-        return None
+        return CircleFitAttempt(None, "taubin_refit_failed", best_inlier_count)
 
-    # Recompute inliers against refit circle
     refit_residuals = np.abs(np.hypot(points[:, 0] - refit_cx, points[:, 1] - refit_cy) - refit_r)
-    final_inliers_mask = refit_residuals <= inlier_tolerance
-    final_inliers = points[final_inliers_mask]
-    if len(final_inliers) < 3:
-        return None
+    final_inliers = points[refit_residuals <= inlier_tolerance]
+    return CircleFitAttempt(
+        (refit_cx, refit_cy, refit_r, final_inliers),
+        None,
+        best_inlier_count,
+    )
 
-    return refit_cx, refit_cy, refit_r, final_inliers
+
+def fit_circle_ransac(
+    points: np.ndarray,
+    r_ref: float,
+    frame_index: int,
+    num_iterations: int = 1000,
+    inlier_tolerance: float = 1.5,
+) -> tuple[float, float, float, np.ndarray] | None:
+    """RANSAC + Taubin circle fit on 2D points; None means the fit did not complete."""
+    return _fit_circle_ransac_detailed(
+        points,
+        r_ref,
+        frame_index,
+        num_iterations=num_iterations,
+        inlier_tolerance=inlier_tolerance,
+    ).fit
 
 
 def refine_circle(
@@ -424,23 +435,23 @@ def refine_circle(
             base_confidence=base_confidence,
         )
 
-    fit_res = fit_circle_ransac(annulus_pts, r_prev, frame_index)
-    if fit_res is None:
+    fit_attempt = _fit_circle_ransac_detailed(annulus_pts, r_prev, frame_index)
+    if fit_attempt.fit is None:
         return RefinementResult(
             accepted=False,
             center_px=(base_cx, base_cy),
             radius_px=r_prev,
             confidence=round(base_confidence * 0.7, 4),
             fit_attempted=True,
-            reject_reasons=["ransac_failed"],
+            reject_reasons=[fit_attempt.failure_reason or "ransac_failed"],
             edge_count=edge_count,
-            inlier_count=0,
+            inlier_count=fit_attempt.best_inlier_count,
             canny_lower=round(lower, 2),
             canny_upper=round(upper, 2),
             base_confidence=base_confidence,
         )
 
-    refit_cx, refit_cy, refit_r, final_inliers = fit_res
+    refit_cx, refit_cy, refit_r, final_inliers = fit_attempt.fit
     final_inlier_count = int(len(final_inliers))
 
     # Coverage bins check: inliers must occupy >= 18 of 36 x 10-deg angular bins
