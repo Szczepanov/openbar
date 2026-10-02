@@ -575,23 +575,30 @@ At least two approaches should be benchmarked.
 
 #### A. Flight-time estimate
 
-If flight duration is (t_f):
+If flight duration is `t_f` and ballistic-flight assumptions are satisfied:
 
 ```text
-h = g * t_f² / 8
+h_flight = g * t_f² / 8
 ```
+
+This quantity should be named and documented as a **flight-time-derived height estimate**: the
+ballistic rise from centre-of-mass height at take-off to the flight apex. It is not automatically
+equivalent to standing-COM-to-apex displacement or to a force-plate take-off-velocity metric.
 
 Advantages:
 
 - simple;
-- limited dependence on spatial calibration;
+- no spatial calibration is required for the timing-only construct;
 - potentially robust with high-frame-rate capture.
 
 Limitations:
 
-- takeoff/landing event precision is critical;
-- body configuration at takeoff and landing can introduce bias;
-- frame rate strongly influences event resolution.
+- take-off/landing event precision is critical;
+- the method assumes equivalent centre-of-mass height at take-off and landing; landing posture,
+  ankle position, or lower-limb flexion can materially bias the estimate;
+- frame rate and timestamp quality influence event resolution;
+- uncertainty in both event times should be propagated into the reported height uncertainty rather
+  than hidden behind a single precise-looking value.
 
 #### B. Takeoff-velocity estimate
 
@@ -710,11 +717,17 @@ The chosen construct must be explicit and validated.
 
 ### Gate crossing
 
-Do not simply assign the nearest frame.
+Do not manufacture sub-frame precision.
 
-If the calibrated body trajectory crosses a gate between frames, interpolate the crossing time using actual timestamps.
+For the first event-only path, retain the bracketing frame timestamps (or an equivalent bounded
+event interval) and expose the temporal uncertainty when the crossing lies between frames.
 
-This avoids introducing unnecessary frame quantization.
+If a later calibrated body trajectory brackets a gate crossing, a sub-frame crossing time may be
+estimated from the actual timestamps and an explicit interpolation model. That interpolation policy
+must be versioned and validated against reference timing; linear interpolation is an assumption, not
+ground truth.
+
+This avoids both unnecessary frame quantization and plausible-looking fabricated precision.
 
 ### Start protocol
 
@@ -749,8 +762,10 @@ Nominal temporal resolution:
 ### Recommendation
 
 - barbell analysis: support ordinary frame rates where validation permits;
-- sprint/jump capture: prefer 120 fps;
-- use 240 fps when available and when image quality remains sufficient;
+- for jump/sprint timing, benchmark 60/120/240 fps (and device-specific alternatives) inside the
+  supported recording envelope rather than declaring one universal minimum in advance;
+- use the highest validated capture mode whose delivered timestamps, exposure/motion blur,
+  resolution, field of view, and sustained frame delivery remain acceptable;
 - always use actual frame timestamps rather than deriving time from nominal FPS.
 
 The existing OpenBar timestamp-over-nominal-FPS rule must remain authoritative.
