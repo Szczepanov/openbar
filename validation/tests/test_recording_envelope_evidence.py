@@ -84,7 +84,7 @@ def study(*, requested: str = "unknown", minima=(None, None), candidate_status: 
     }
 
 
-def benchmark_result(*, implementation=None, commit: str = "abc"):
+def benchmark_result(*, implementation=None, commit: str = "abc", pipeline: str = "m0-benchmark-v1"):
     implementation = implementation or {
         "name": "template-sad",
         "version": "1",
@@ -92,7 +92,7 @@ def benchmark_result(*, implementation=None, commit: str = "abc"):
     }
     return {
         "git_commit": commit,
-        "pipeline_version": "m0-benchmark-v1",
+        "pipeline_version": pipeline,
         "benchmark_metric_version": "benchmark-metrics-v1",
         "cases": [{
             "case_id": "case-a",
@@ -215,6 +215,15 @@ class RecordingEnvelopeEvidenceTests(unittest.TestCase):
             self.build(
                 spec=study(requested="unsupported", minima=(1, 20)),
                 result=benchmark_result(implementation=other),
+            )
+
+    def test_pipeline_mismatch_fails_closed(self):
+        with self.assertRaisesRegex(
+            recording_envelope.EvidenceError, "pipeline_version"
+        ):
+            self.build(
+                spec=study(requested="supported", minima=(1, 20)),
+                result=benchmark_result(pipeline="different"),
             )
 
     def test_commit_mismatch_fails_closed(self):
