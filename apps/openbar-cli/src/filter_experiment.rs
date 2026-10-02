@@ -1,6 +1,9 @@
 use openbar_core::analysis::ImplementationProvenance;
 use openbar_core::benchmark::{evaluate_filter_case, FilterBenchmarkParameters, FilterMetrics};
-use openbar_core::filtering::{apply_filter, FilterBehavior, FilterConfig};
+use openbar_core::filtering::{
+    apply_butterworth_filter, apply_filter, ButterworthExperimentalConfig, FilterBehavior,
+    FilterConfig, FilterError,
+};
 use openbar_core::trajectory::MetricPositionSample;
 use serde::Serialize;
 use std::env;
@@ -22,6 +25,65 @@ struct FilterExperimentArtifact {
     held_out_validation: Vec<ScenarioResult>,
     production_selection: ProductionSelection,
     limitations: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ButterworthExperimentArtifact {
+    schema_version: u32,
+    experiment_version: &'static str,
+    purpose: &'static str,
+    predeclared_grid_size: usize,
+    frozen_applicability_rule: FrozenApplicabilityRule,
+    development_policy: DevelopmentPolicy,
+    development_grid: Vec<ButterworthCandidateSummary>,
+    selected_candidate: ImplementationProvenance,
+    held_out_validation: Vec<ButterworthValidationCase>,
+    baseline_production_families: Vec<DevelopmentFamilyResult>,
+    decision: String,
+    decision_rationale: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct FrozenApplicabilityRule {
+    rule: &'static str,
+    max_relative_jitter_pct: f64,
+    max_coefficient_of_variation_pct: f64,
+    min_samples: usize,
+    dropped_frame_threshold_ratio: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct ButterworthCandidateSummary {
+    filter: ImplementationProvenance,
+    design_order: usize,
+    effective_order: usize,
+    cutoff_hz: f64,
+    cutoff_convention: &'static str,
+    applicable_scenarios_count: usize,
+    unsupported_scenarios_count: usize,
+    mean_position_rmse_m: f64,
+    mean_velocity_rmse_mps: f64,
+    scenarios: Vec<ScenarioResult>,
+    unsupported_scenarios: Vec<UnsupportedScenarioRecord>,
+}
+
+#[derive(Debug, Serialize)]
+struct UnsupportedScenarioRecord {
+    scenario: &'static str,
+    split: &'static str,
+    condition: &'static str,
+    noise_seed: u64,
+    rejection_reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ButterworthValidationCase {
+    scenario: &'static str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<ScenarioResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rejection_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +196,7 @@ const fn scenario_definition(
 pub fn run_cli() -> AnyResult<()> {
     let args = env::args().skip(2).collect::<Vec<_>>();
     let mut output_path: Option<PathBuf> = None;
+    let mut challenger: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -144,9 +207,17 @@ pub fn run_cli() -> AnyResult<()> {
                         .ok_or_else(|| data_error("--output requires a path"))?,
                 ));
             }
+            "--challenger" => {
+                index += 1;
+                challenger = Some(
+                    args.get(index)
+                        .ok_or_else(|| data_error("--challenger requires a name"))?
+                        .clone(),
+                );
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: openbar-cli filter-experiment [--output <path>]\n\
+                    "Usage: openbar-cli filter-experiment [--challenger <name>] [--output <path>]\n\
                      Tunes filter-family parameters only on deterministic development signals,\n\
                      then evaluates the selected configurations on held-out synthetic signals."
                 );
@@ -159,6 +230,27 @@ pub fn run_cli() -> AnyResult<()> {
             }
         }
         index += 1;
+    }
+
+    if let Some(ch) = challenger {
+        if ch == "butterworth" {
+            let artifact = run_butterworth_experiment()?;
+            eprintln!("{}", render_butterworth_summary(&artifact));
+            let serialized = serde_json::to_string_pretty(&artifact)?;
+            if let Some(path) = output_path {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(path, format!("{serialized}\n"))?;
+            } else {
+                println!("{serialized}");
+            }
+            return Ok(());
+        } else {
+            return Err(data_error(format!("unsupported challenger family '{ch}'")));
+        }
     }
 
     let artifact = run_experiment()?;
@@ -175,6 +267,344 @@ pub fn run_cli() -> AnyResult<()> {
         println!("{serialized}");
     }
     Ok(())
+}
+
+fn butterworth_grid() -> Vec<ButterworthExperimentalConfig> {
+    let mut grid = Vec::new();
+    for &design_order in &[2, 4] {
+        for &cutoff_correction in &[true, false] {
+            for &cutoff_hz in &[4.0, 6.0, 8.0, 10.0, 12.0] {
+                grid.push(ButterworthExperimentalConfig {
+                    design_order,
+                    cutoff_hz,
+                    cutoff_correction,
+                    max_gap_s: 0.05,
+                    max_relative_jitter: 0.01,
+                    max_coefficient_of_variation: 0.005,
+                });
+            }
+        }
+    }
+    grid
+}
+
+enum ButterworthScenarioOutcome {
+    Supported(Box<ScenarioResult>),
+    Unsupported { rejection_reason: String },
+}
+
+fn evaluate_butterworth_scenario(
+    scenario: &Scenario,
+    config: &ButterworthExperimentalConfig,
+) -> AnyResult<ButterworthScenarioOutcome> {
+    let started = Instant::now();
+    let run = match apply_butterworth_filter(&scenario.observed, config) {
+        Ok(run) => run,
+        Err(FilterError::UnsupportedTimestampJitter {
+            max_rel_dev,
+            max_allowed,
+        }) => {
+            return Ok(ButterworthScenarioOutcome::Unsupported {
+                rejection_reason: format!(
+                    "unsupported timestamp jitter: relative deviation {max_rel_dev:.6} exceeds threshold {max_allowed:.6}"
+                ),
+            });
+        }
+        Err(err) => return Err(Box::new(err)),
+    };
+    let runtime_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    let metrics = evaluate_filter_case(
+        &scenario.truth,
+        &run.trajectory.samples,
+        FilterBenchmarkParameters {
+            max_velocity_gap_s: 0.05,
+            evaluate_peak_metrics: scenario.peak_metrics_applicable,
+        },
+    )?;
+    let edge_position_mae_m = edge_position_mae(&scenario.truth, &run.trajectory.samples, 2);
+
+    Ok(ButterworthScenarioOutcome::Supported(Box::new(
+        ScenarioResult {
+            split: scenario.split,
+            scenario: scenario.name,
+            condition: scenario.condition,
+            noise_seed: scenario.noise_seed,
+            peak_metrics_applicable: scenario.peak_metrics_applicable,
+            filter: run.trajectory.filter,
+            behavior: run.behavior.into(),
+            metrics,
+            input_samples: scenario.observed.len(),
+            output_samples: run.trajectory.samples.len(),
+            filter_segment_count: run.segment_count,
+            max_input_gap_s: max_gap(&scenario.observed),
+            edge_position_mae_m,
+            runtime_ms,
+        },
+    )))
+}
+
+fn compute_butterworth_decision(
+    winning_config: &ButterworthExperimentalConfig,
+    winning_summary: &ButterworthCandidateSummary,
+    validation_cases: &[ButterworthValidationCase],
+) -> (String, Vec<String>) {
+    let mut rationale = Vec::new();
+
+    // 1. Grid boundary check
+    let min_grid_cutoff_hz = 4.0;
+    if winning_config.cutoff_hz <= min_grid_cutoff_hz {
+        rationale.push(format!(
+            "Grid boundary warning: selected cutoff ({:.1} Hz) is at the lower boundary of the evaluated grid [4.0, 12.0] Hz. Velocity RMSE improves monotonically with lower cutoff on smooth synthetic signals due to noise attenuation bias.",
+            winning_config.cutoff_hz
+        ));
+    }
+
+    // 2. Development support coverage
+    let dev_total =
+        winning_summary.applicable_scenarios_count + winning_summary.unsupported_scenarios_count;
+    rationale.push(format!(
+        "Development support coverage: {}/{} scenarios supported ({:.1}%). {} irregular-timestamp scenarios failed closed as unsupported.",
+        winning_summary.applicable_scenarios_count,
+        dev_total,
+        (winning_summary.applicable_scenarios_count as f64 / dev_total as f64) * 100.0,
+        winning_summary.unsupported_scenarios_count,
+    ));
+
+    // 3. Held-out validation coverage
+    let val_supported_count = validation_cases
+        .iter()
+        .filter(|c| c.status == "supported")
+        .count();
+    let val_total = validation_cases.len();
+    let unsupported_val_names: Vec<&str> = validation_cases
+        .iter()
+        .filter(|c| c.status == "unsupported")
+        .map(|c| c.scenario)
+        .collect();
+
+    if !unsupported_val_names.is_empty() {
+        rationale.push(format!(
+            "Held-out validation coverage: {}/{} scenarios supported ({:.1}%). Scenarios [{}] were rejected because timestamp continuity / jitter violated frozen regularity thresholds.",
+            val_supported_count,
+            val_total,
+            (val_supported_count as f64 / val_total as f64) * 100.0,
+            unsupported_val_names.join(", ")
+        ));
+    } else {
+        rationale.push(format!(
+            "Held-out validation coverage: all {}/{} scenarios supported.",
+            val_supported_count, val_total
+        ));
+    }
+
+    // 4. Feature distortion / peak attenuation check
+    let sharp_peak_case = validation_cases.iter().find(|c| c.scenario == "sharp-peak");
+    if let Some(case) = sharp_peak_case {
+        if let Some(ref res) = case.result {
+            if let Some(att) = res.metrics.peak_attenuation_fraction {
+                rationale.push(format!(
+                    "Dynamic feature distortion: sharp-peak velocity attenuation is {:.1}%, indicating heavy smoothing dampens true velocity peaks at {:.1} Hz cutoff.",
+                    att * 100.0,
+                    winning_config.cutoff_hz
+                ));
+            }
+        }
+    }
+
+    // 5. Decision synthesis
+    let decision =
+        if val_supported_count < val_total || winning_summary.unsupported_scenarios_count > 0 {
+            "DO_NOT_PROMOTE".to_string()
+        } else {
+            "PROCEED_WITH_FURTHER_BENCHMARKING".to_string()
+        };
+
+    rationale.push(
+        "Production promotion rejected: fixed-interval digital Butterworth cannot natively handle frame dropouts or VFR capture, and heavy smoothing attenuates velocity peaks. Timestamp-aware Savitzky-Golay and Kalman remain preferred production candidates.".to_string(),
+    );
+    rationale.push(
+        "Critical path reminder: resolving tracker candidate freeze (#57) and physical ground truth reference data (#58) outranks further challenger filter tuning.".to_string(),
+    );
+
+    (decision, rationale)
+}
+
+fn run_butterworth_experiment() -> AnyResult<ButterworthExperimentArtifact> {
+    let scenarios = scenarios();
+    let development_scenarios = scenarios
+        .iter()
+        .filter(|scenario| scenario.split == "development")
+        .collect::<Vec<_>>();
+    let validation_scenarios = scenarios
+        .iter()
+        .filter(|scenario| scenario.split == "held_out_validation")
+        .collect::<Vec<_>>();
+
+    let grid = butterworth_grid();
+    let mut candidate_summaries = Vec::new();
+
+    for config in &grid {
+        let mut scenario_results = Vec::new();
+        let mut unsupported_scenarios = Vec::new();
+        let mut applicable_count = 0;
+        let mut unsupported_count = 0;
+
+        for scenario in &development_scenarios {
+            match evaluate_butterworth_scenario(scenario, config)? {
+                ButterworthScenarioOutcome::Supported(res) => {
+                    applicable_count += 1;
+                    scenario_results.push(*res);
+                }
+                ButterworthScenarioOutcome::Unsupported { rejection_reason } => {
+                    unsupported_count += 1;
+                    unsupported_scenarios.push(UnsupportedScenarioRecord {
+                        scenario: scenario.name,
+                        split: scenario.split,
+                        condition: scenario.condition,
+                        noise_seed: scenario.noise_seed,
+                        rejection_reason,
+                    });
+                }
+            }
+        }
+
+        let mean_position_rmse_m = mean_metric(&scenario_results, |m| m.position_rmse_m)
+            .ok_or_else(|| data_error("development position RMSE unexpectedly unavailable"))?;
+        let mean_velocity_rmse_mps = mean_metric(&scenario_results, |m| m.velocity_rmse_mps)
+            .ok_or_else(|| data_error("development velocity RMSE unexpectedly unavailable"))?;
+
+        candidate_summaries.push(ButterworthCandidateSummary {
+            filter: config.candidate_provenance(),
+            design_order: config.design_order,
+            effective_order: config.design_order * 2,
+            cutoff_hz: config.cutoff_hz,
+            cutoff_convention: if config.cutoff_correction {
+                "winter_double_pass_corrected"
+            } else {
+                "uncorrected_single_pass"
+            },
+            applicable_scenarios_count: applicable_count,
+            unsupported_scenarios_count: unsupported_count,
+            mean_position_rmse_m,
+            mean_velocity_rmse_mps,
+            scenarios: scenario_results,
+            unsupported_scenarios,
+        });
+    }
+
+    let mut best_index = 0;
+    for (index, candidate) in candidate_summaries.iter().enumerate() {
+        let incumbent = &candidate_summaries[best_index];
+        let velocity_better =
+            candidate.mean_velocity_rmse_mps < incumbent.mean_velocity_rmse_mps - 1.0e-12;
+        let velocity_tied =
+            (candidate.mean_velocity_rmse_mps - incumbent.mean_velocity_rmse_mps).abs() <= 1.0e-12;
+        let position_better =
+            candidate.mean_position_rmse_m < incumbent.mean_position_rmse_m - 1.0e-12;
+        if velocity_better || (velocity_tied && position_better) {
+            best_index = index;
+        }
+    }
+
+    let winning_config = grid[best_index];
+    let selected_provenance = winning_config.candidate_provenance();
+
+    let mut held_out_validation = Vec::new();
+    for scenario in validation_scenarios {
+        let case = match evaluate_butterworth_scenario(scenario, &winning_config)? {
+            ButterworthScenarioOutcome::Supported(res) => ButterworthValidationCase {
+                scenario: scenario.name,
+                status: "supported",
+                result: Some(*res),
+                rejection_reason: None,
+            },
+            ButterworthScenarioOutcome::Unsupported { rejection_reason } => {
+                ButterworthValidationCase {
+                    scenario: scenario.name,
+                    status: "unsupported",
+                    result: None,
+                    rejection_reason: Some(rejection_reason),
+                }
+            }
+        };
+        held_out_validation.push(case);
+    }
+
+    let baseline_artifact = run_experiment()?;
+    let (decision, decision_rationale) = compute_butterworth_decision(
+        &winning_config,
+        &candidate_summaries[best_index],
+        &held_out_validation,
+    );
+
+    Ok(ButterworthExperimentArtifact {
+        schema_version: 1,
+        experiment_version: "m0-butterworth-challenger-v1",
+        purpose: "Evaluation of zero-phase Butterworth digital filtering as a challenger family under timestamp regularity constraints.",
+        predeclared_grid_size: grid.len(),
+        frozen_applicability_rule: FrozenApplicabilityRule {
+            rule: "max relative jitter <= 1.0%, CV <= 0.5%, no dropped frames (gap within 0.5x..1.5x median dt)",
+            max_relative_jitter_pct: 1.0,
+            max_coefficient_of_variation_pct: 0.5,
+            min_samples: 2,
+            dropped_frame_threshold_ratio: 1.5,
+        },
+        development_policy: DevelopmentPolicy {
+            split: "Synthetic development grid evaluated across 20 configurations; held-out validation evaluated only once on winning configuration.",
+            selection_rule: "Minimize mean development velocity RMSE; tie-break on mean position RMSE across applicable development scenarios.",
+            note: "Irregular-timestamp development scenarios fail closed and are reported as unsupported.",
+        },
+        development_grid: candidate_summaries,
+        selected_candidate: selected_provenance,
+        held_out_validation,
+        baseline_production_families: baseline_artifact.development,
+        decision,
+        decision_rationale,
+    })
+}
+
+fn render_butterworth_summary(artifact: &ButterworthExperimentArtifact) -> String {
+    let mut lines = vec![
+        "=== M0 Zero-Phase Butterworth Challenger Experiment ===".to_owned(),
+        format!(
+            "Predeclared grid size: {} candidates",
+            artifact.predeclared_grid_size
+        ),
+        format!(
+            "Selected candidate: {}@{} {:?}",
+            artifact.selected_candidate.implementation,
+            artifact.selected_candidate.version,
+            artifact.selected_candidate.parameters
+        ),
+        "Held-out validation results:".to_owned(),
+    ];
+    for case in &artifact.held_out_validation {
+        if let Some(ref result) = case.result {
+            lines.push(format!(
+                "  {:>18} | SUPPORTED   | pos_rmse={} m | vel_rmse={} m/s | peak_att={} | shift={} s | edge_mae={} m | samples={}/{} | segments={}",
+                case.scenario,
+                display_option(result.metrics.position_rmse_m),
+                display_option(result.metrics.velocity_rmse_mps),
+                display_option(result.metrics.peak_attenuation_fraction),
+                display_option(result.metrics.peak_timing_shift_s),
+                display_option(result.edge_position_mae_m),
+                result.output_samples,
+                result.input_samples,
+                result.filter_segment_count,
+            ));
+        } else {
+            lines.push(format!(
+                "  {:>18} | UNSUPPORTED | rejected: {}",
+                case.scenario,
+                case.rejection_reason.as_deref().unwrap_or("unknown reason"),
+            ));
+        }
+    }
+    lines.push(format!("Decision: {}", artifact.decision));
+    for rat in &artifact.decision_rationale {
+        lines.push(format!("  - {rat}"));
+    }
+    lines.join("\n")
 }
 
 fn run_experiment() -> AnyResult<FilterExperimentArtifact> {

@@ -64,6 +64,9 @@ pub enum FilterError {
     InvalidInitialVelocityVariance { value: f64 },
     InvalidConfidenceWindow { value: usize },
     SingularPolynomialFit,
+    InvalidCutoffFrequency { value: f64, reason: &'static str },
+    UnsupportedTimestampJitter { max_rel_dev: f64, max_allowed: f64 },
+    UnsupportedButterworthOrder { order: usize },
 }
 
 impl fmt::Display for FilterError {
@@ -118,6 +121,21 @@ impl fmt::Display for FilterError {
             ),
             Self::SingularPolynomialFit => formatter.write_str(
                 "timestamp-aware polynomial fit became singular for a validated timestamp window",
+            ),
+            Self::InvalidCutoffFrequency { value, reason } => write!(
+                formatter,
+                "cutoff frequency {value} is invalid: {reason}"
+            ),
+            Self::UnsupportedTimestampJitter {
+                max_rel_dev,
+                max_allowed,
+            } => write!(
+                formatter,
+                "timestamp relative jitter {max_rel_dev} exceeds the maximum allowed threshold {max_allowed}"
+            ),
+            Self::UnsupportedButterworthOrder { order } => write!(
+                formatter,
+                "butterworth design order {order} is unsupported (supported: 2, 4)"
             ),
         }
     }
@@ -756,6 +774,12 @@ fn kalman_segmented(
     }
     output
 }
+
+pub mod butterworth_experimental;
+pub use butterworth_experimental::{
+    apply_butterworth_filter, assess_timestamp_regularity, ButterworthExperimentalConfig,
+    TimestampRegularity,
+};
 
 #[cfg(test)]
 mod tests {

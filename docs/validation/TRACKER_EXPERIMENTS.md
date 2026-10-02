@@ -27,6 +27,11 @@ or depend on containers, codecs, cameras, Flutter, or platform media APIs.
 ADR-0005 records this separation. It lets a future native/video layer provide decoded image views
 without moving measurement logic into the UI or making nominal FPS authoritative.
 
+All tracker observations, seeds, annotations and bounds are in decoded display-oriented pixel
+coordinates after rotation, per ADR-0007. A tracker that runs on a transformed frame must
+map its output back before emitting observations.
+
+
 ## Common output
 
 Every `TrackerRun` records tracker ID, implementation, version, effective configuration,
