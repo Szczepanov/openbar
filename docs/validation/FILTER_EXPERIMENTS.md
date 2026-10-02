@@ -147,3 +147,41 @@ Before choosing a production default:
 
 Do not promote the moving-average baseline, Savitzky–Golay, or Kalman filter merely because its
 overlay looks smoother.
+
+
+## Research candidate: zero-phase Butterworth
+
+A reviewed public VBT project uses a fourth-order zero-lag Butterworth low-pass filter with an
+8 Hz cutoff. That observation is sufficient to justify a research candidate, but not to adopt its
+parameters or implementation.
+
+OpenBar's current four M0 filter families remain unchanged until a separately reviewed experiment is
+implemented. Any Butterworth experiment must preserve the existing measurement contract:
+
+- authoritative timestamps remain authoritative;
+- raw samples are preserved;
+- no missing timestamp is fabricated;
+- irregular/VFR input must not be silently treated as uniformly sampled;
+- any resampling/interpolation, if ever evaluated, requires a separately versioned method and
+  explicit provenance;
+- cutoff/order tuning uses development data only;
+- the selected configuration is frozen before held-out evaluation.
+
+The experiment should compare at least:
+
+- multiple plausible cutoff frequencies rather than assuming 8 Hz is transferable;
+- fourth order versus any additional order only when the grid is pre-declared;
+- position MAE/RMSE;
+- downstream mean/peak velocity error;
+- peak attenuation and timing shift;
+- edge/transient behaviour;
+- gap/loss behaviour;
+- sensitivity to timestamp jitter;
+- runtime.
+
+The first implementation should include a fail-closed timestamp-regularity policy. A simple
+frequency-domain/digital filter that requires regular spacing must report unsupported input when
+measured timestamp jitter exceeds its documented assumption rather than substituting nominal FPS.
+
+Promotion to a production candidate still requires the same held-out real/reference evidence as the
+existing families.
