@@ -29,6 +29,7 @@ covers pixel columns x .. x+w-1, so its centre is x + (w - 1) / 2.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import subprocess
@@ -46,9 +47,140 @@ import label_package  # noqa: E402  (shared probe/decode contract with the label
 
 SPIKE_VERSION = "spike-1"
 SEED_TOLERANCE_S = 0.0005
+MODELS_DIR = Path(__file__).resolve().parent / "models"
+FALLBACK_MODELS_DIR = ROOT / "validation" / "private" / "models"
+
+MODELS: dict[str, dict[str, Any]] = {
+    "vit": {
+        "license": "Apache-2.0",
+        "description": "ViTTrack (Vision Transformer Tracker)",
+        "files": [
+            {
+                "role": "net",
+                "filename": "object_tracking_vittrack_2023sep.onnx",
+                "sha256": "2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d",
+                "source": "https://huggingface.co/opencv/object_tracking_vittrack/resolve/main/object_tracking_vittrack_2023sep.onnx",
+                "upstream": "opencv/opencv_zoo",
+            }
+        ],
+    },
+    "nano": {
+        "license": "Unconfirmed / all rights reserved (not shippable without confirmation)",
+        "description": "NanoTrack v2",
+        "files": [
+            {
+                "role": "backbone",
+                "filename": "nanotrack_backbone_sim.onnx",
+                "sha256": "530bdd0cd00f19afab79a863e71ba71e3312395a5dc9151af675082bdaaa2fc4",
+                "source": "https://github.com/HonglinChu/SiamTrackers/raw/master/NanoTrack/models/nanotrackv2/nanotrack_backbone_sim.onnx",
+                "upstream": "HonglinChu/SiamTrackers",
+            },
+            {
+                "role": "neckhead",
+                "filename": "nanotrack_head_sim.onnx",
+                "sha256": "0d8c0637be849f092cc7236cae02e55c8b9455ebe37ba50601d6115db4247cd9",
+                "source": "https://github.com/HonglinChu/SiamTrackers/raw/master/NanoTrack/models/nanotrackv2/nanotrack_head_sim.onnx",
+                "upstream": "HonglinChu/SiamTrackers",
+            },
+        ],
+    },
+    "dasiamrpn": {
+        "license": "MIT",
+        "description": "DaSiamRPN",
+        "files": [
+            {
+                "role": "model",
+                "filename": "dasiamrpn_model.onnx",
+                "sha256": "e88370b85cbad914a5eb414d9d9e0820f87fd0cd89b65205a766174206c35719",
+                "source": "https://files.kde.org/kdenlive/motion-tracker/DaSiamRPN/dasiamrpn_model.onnx",
+                "upstream": "foolwood/DaSiamRPN",
+            },
+            {
+                "role": "kernel_r1",
+                "filename": "dasiamrpn_kernel_r1.onnx",
+                "sha256": "082c85d231b88b97a1b2a50e73b640a332c5d98d7c1d80b5da9ab534fa7a9e5b",
+                "source": "https://files.kde.org/kdenlive/motion-tracker/DaSiamRPN/dasiamrpn_kernel_r1.onnx",
+                "upstream": "foolwood/DaSiamRPN",
+            },
+            {
+                "role": "kernel_cls1",
+                "filename": "dasiamrpn_kernel_cls1.onnx",
+                "sha256": "d85b03e2aeded6cc9be945dfdc3ed6b8f4151f101e485037b6c5d5b36a6c4204",
+                "source": "https://files.kde.org/kdenlive/motion-tracker/DaSiamRPN/dasiamrpn_kernel_cls1.onnx",
+                "upstream": "foolwood/DaSiamRPN",
+            },
+        ],
+    },
+}
+
+
+def resolve_model_file(filename: str, expected_sha256: str) -> Path:
+    candidates = [MODELS_DIR / filename, FALLBACK_MODELS_DIR / filename]
+    for path in candidates:
+        if path.is_file():
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+            digest = h.hexdigest().lower()
+            if digest != expected_sha256.lower():
+                raise SpikeError(f"model file {path} SHA-256 mismatch: expected {expected_sha256}, got {digest}")
+            return path
+    raise SpikeError(
+        f"model file {filename!r} not found in {MODELS_DIR} or {FALLBACK_MODELS_DIR}. Run download_models.py first."
+    )
+
+
+def create_csrt() -> cv2.Tracker:
+    return cv2.TrackerCSRT.create()
+
+
+def create_kcf() -> cv2.Tracker:
+    return cv2.TrackerKCF.create()
+
+
+def create_vit() -> cv2.Tracker:
+    spec = MODELS["vit"]
+    f = spec["files"][0]
+    path = resolve_model_file(f["filename"], f["sha256"])
+    params = cv2.TrackerVit_Params()
+    params.net = str(path)
+    return cv2.TrackerVit.create(params)
+
+
+def create_nano() -> cv2.Tracker:
+    spec = MODELS["nano"]
+    backbone_f = next(f for f in spec["files"] if f["role"] == "backbone")
+    head_f = next(f for f in spec["files"] if f["role"] == "neckhead")
+    bb_path = resolve_model_file(backbone_f["filename"], backbone_f["sha256"])
+    head_path = resolve_model_file(head_f["filename"], head_f["sha256"])
+    params = cv2.TrackerNano_Params()
+    params.backbone = str(bb_path)
+    params.neckhead = str(head_path)
+    return cv2.TrackerNano.create(params)
+
+
+def create_dasiamrpn() -> cv2.Tracker:
+    spec = MODELS["dasiamrpn"]
+    m_f = next(f for f in spec["files"] if f["role"] == "model")
+    r1_f = next(f for f in spec["files"] if f["role"] == "kernel_r1")
+    cls1_f = next(f for f in spec["files"] if f["role"] == "kernel_cls1")
+    m_path = resolve_model_file(m_f["filename"], m_f["sha256"])
+    r1_path = resolve_model_file(r1_f["filename"], r1_f["sha256"])
+    cls1_path = resolve_model_file(cls1_f["filename"], cls1_f["sha256"])
+    params = cv2.TrackerDaSiamRPN_Params()
+    params.model = str(m_path)
+    params.kernel_r1 = str(r1_path)
+    params.kernel_cls1 = str(cls1_path)
+    return cv2.TrackerDaSiamRPN.create(params)
+
+
 TRACKERS = {
-    "csrt": cv2.TrackerCSRT.create,
-    "kcf": cv2.TrackerKCF.create,
+    "csrt": create_csrt,
+    "kcf": create_kcf,
+    "vit": create_vit,
+    "nano": create_nano,
+    "dasiamrpn": create_dasiamrpn,
 }
 DECODE_ARGS = ["-map", "0:v:0", "-fps_mode", "passthrough", "-enc_time_base", "demux",
                "-pix_fmt", "bgr24", "-f", "rawvideo", "-"]
@@ -190,19 +322,55 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
             template = gray[y:y + h, x:x + w].copy()
             current = box
             ok = True
+            conf = 1.0
         else:
             ok, current = tracker.update(frame)
+            if ok:
+                if hasattr(tracker, "getTrackingScore"):
+                    raw_score = float(tracker.getTrackingScore())
+                    conf = min(1.0, max(0.0, raw_score)) if math.isfinite(raw_score) else 0.0
+                else:
+                    conf = appearance_confidence(gray, current, template)
+            else:
+                conf = 0.0
         if ok and valid_box(current, width, height):
             cx, cy = box_center(current)
             samples.append({"timestamp_s": round(t, 6), "state": "tracked",
                             "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
-                            "confidence": round(appearance_confidence(gray, current, template), 4)})
+                            "confidence": round(conf, 4)})
         else:
             samples.append({"timestamp_s": round(t, 6), "state": "lost"})
         processing_wall_s = time.perf_counter() - started
 
     if not samples or processing_wall_s is None:
         raise SpikeError("selected range produced no tracker samples")
+
+    config: dict[str, Any] = {
+        "opencv_version": cv2.__version__,
+        "numpy_version": np.__version__,
+        "tracker": tracker_name,
+        "init_box": "seed circle bounding box",
+        "confidence": "model_tracking_score_clamped" if tracker_name in MODELS else "ncc_to_seed_template_clamped",
+        "threads": 1,
+        "seed_timestamp_s": seed_timestamp_s,
+        "end_s": last_s,
+        "decode_validation": "full_clip_count_and_ffmpeg_exit_status",
+    }
+    if tracker_name in MODELS:
+        spec = MODELS[tracker_name]
+        config["license"] = spec["license"]
+        config["models"] = [
+            {
+                "role": f["role"],
+                "filename": f["filename"],
+                "sha256": f["sha256"],
+                "source": f["source"],
+                "upstream": f["upstream"],
+            }
+            for f in spec["files"]
+        ]
+    else:
+        config["license"] = "Apache-2.0"
 
     return {
         "schema_version": 1,
@@ -212,17 +380,7 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
         "implementation": {
             "name": f"opencv-{tracker_name}",
             "version": SPIKE_VERSION,
-            "config": {
-                "opencv_version": cv2.__version__,
-                "numpy_version": np.__version__,
-                "tracker": tracker_name,
-                "init_box": "seed circle bounding box",
-                "confidence": "ncc_to_seed_template_clamped",
-                "threads": 1,
-                "seed_timestamp_s": seed_timestamp_s,
-                "end_s": last_s,
-                "decode_validation": "full_clip_count_and_ffmpeg_exit_status",
-            },
+            "config": config,
         },
         "runtime": {"processing_wall_s": processing_wall_s},
         "samples": samples,

@@ -85,6 +85,34 @@ CANDIDATE_REGISTRY: dict[str, CandidateProducer] = {
         script=TRACK,
         extra_args=["--tracker", "kcf"],
     ),
+    "opencv-vit": CandidateProducer(
+        name="opencv-vit",
+        interpreter=sys.executable,
+        script=TRACK,
+        extra_args=["--tracker", "vit"],
+    ),
+    "opencv-nano": CandidateProducer(
+        name="opencv-nano",
+        interpreter=sys.executable,
+        script=TRACK,
+        extra_args=["--tracker", "nano"],
+    ),
+    "opencv-dasiamrpn": CandidateProducer(
+        name="opencv-dasiamrpn",
+        interpreter=sys.executable,
+        script=TRACK,
+        extra_args=["--tracker", "dasiamrpn"],
+    ),
+}
+
+TRACKER_LICENSES: dict[str, str] = {
+    "template-sad-v1": "PolyForm Shield 1.0.0",
+    "local-contrast-centroid-v1": "PolyForm Shield 1.0.0",
+    "opencv-csrt": "Apache-2.0",
+    "opencv-kcf": "Apache-2.0",
+    "opencv-vit": "Apache-2.0",
+    "opencv-dasiamrpn": "MIT",
+    "opencv-nano": "Unconfirmed / all rights reserved (not shippable without confirmation)",
 }
 
 
@@ -232,6 +260,10 @@ def generate_summary(
         for p_file in pred_files:
             pred = json.loads(p_file.read_text(encoding="utf-8"))
             t_name = pred.get("implementation", {}).get("name") or p_file.stem.removeprefix(f"{fid}.").removesuffix(".prediction-v1")
+            t_license = (
+                pred.get("implementation", {}).get("config", {}).get("license")
+                or TRACKER_LICENSES.get(t_name, "unknown")
+            )
             pred_samples = pred.get("samples", [])
 
             m_all = compute_metrics(all_refs, pred_samples, tol)
@@ -245,6 +277,7 @@ def generate_summary(
 
             tracker_summaries.append({
                 "tracker": t_name,
+                "license": t_license,
                 "all_samples": m_all,
                 "seed_excluded": m_no_seed,
             })
@@ -268,8 +301,8 @@ def generate_summary(
         "",
         "## 1. Overall Results (All labelled frames)",
         "",
-        "| Clip | Tracker | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Clip | Tracker | License | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for f in summary_fixtures:
         for t in f["trackers"]:
@@ -280,15 +313,15 @@ def generate_summary(
             p90_str = f"{m['p90_px']:.1f}" if m['p90_px'] is not None else "N/A"
             max_str = f"{m['max_px']:.1f}" if m['max_px'] is not None else "N/A"
             md_lines.append(
-                f"| `{f['fixture_id']}` | {t['tracker']} | {avail_str} | {mae_str} | {p50_str} | {p90_str} | {max_str} | {m['max_consecutive_loss']} | {m['false_track_count']} |"
+                f"| `{f['fixture_id']}` | {t['tracker']} | {t['license']} | {avail_str} | {mae_str} | {p50_str} | {p90_str} | {max_str} | {m['max_consecutive_loss']} | {m['false_track_count']} |"
             )
 
     md_lines.extend([
         "",
         "## 2. Seed-Excluded Results (Fair tracking performance)",
         "",
-        "| Clip | Tracker | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Clip | Tracker | License | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for f in summary_fixtures:
         for t in f["trackers"]:
@@ -299,15 +332,15 @@ def generate_summary(
             p90_str = f"{m['p90_px']:.1f}" if m['p90_px'] is not None else "N/A"
             max_str = f"{m['max_px']:.1f}" if m['max_px'] is not None else "N/A"
             md_lines.append(
-                f"| `{f['fixture_id']}` | {t['tracker']} | {avail_str} | {mae_str} | {p50_str} | {p90_str} | {max_str} | {m['max_consecutive_loss']} | {m['false_track_count']} |"
+                f"| `{f['fixture_id']}` | {t['tracker']} | {t['license']} | {avail_str} | {mae_str} | {p50_str} | {p90_str} | {max_str} | {m['max_consecutive_loss']} | {m['false_track_count']} |"
             )
 
     md_lines.extend([
         "",
         "## 3. Seed Impact (MAE Difference)",
         "",
-        "| Clip | Tracker | MAE All px | MAE No-Seed px | Delta px | Delta % |",
-        "|---|---|---:|---:|---:|---:|",
+        "| Clip | Tracker | License | MAE All px | MAE No-Seed px | Delta px | Delta % |",
+        "|---|---|---|---:|---:|---:|---:|",
     ])
     for f in summary_fixtures:
         for t in f["trackers"]:
@@ -317,7 +350,7 @@ def generate_summary(
                 delta = m_no["mae_px"] - m_all["mae_px"]
                 pct = (delta / m_all["mae_px"]) * 100 if m_all["mae_px"] > 0 else 0.0
                 md_lines.append(
-                    f"| `{f['fixture_id']}` | {t['tracker']} | {m_all['mae_px']:.2f} | {m_no['mae_px']:.2f} | +{delta:.2f} | +{pct:.1f} % |"
+                    f"| `{f['fixture_id']}` | {t['tracker']} | {t['license']} | {m_all['mae_px']:.2f} | {m_no['mae_px']:.2f} | +{delta:.2f} | +{pct:.1f} % |"
                 )
 
     md_lines.append("")

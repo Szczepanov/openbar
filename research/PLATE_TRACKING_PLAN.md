@@ -25,47 +25,72 @@ Research only. Nothing here goes into the Rust workspace or the product without 
 
 Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confidence` 0:
 
-### All labelled frames
+#### All labelled frames
 
-| Clip | Tracker | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `self-back-squat-side-002` | opencv-csrt | 100.0 % | 3.1 | 3.2 | 5.0 | 5.8 | 0 | 5 |
-| | opencv-kcf | 72.0 % | 19.6 | 4.3 | 88.4 | 89.2 | 7 | 4 |
-| | template-sad-v1 (OpenBar) | 100.0 % | 52.2 | 10.3 | 166.0 | 178.3 | 0 | 13 |
-| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 108.9 | 75.3 | 251.5 | 281.6 | 0 | 24 |
-| `self-clean-jerk-side-002` | opencv-csrt | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 2 |
-| | opencv-kcf | 85.7 % | 231.2 | 65.3 | 509.8 | 520.5 | 3 | 3 |
-| | template-sad-v1 (OpenBar) | 100.0 % | 198.8 | 199.4 | 423.3 | 439.8 | 0 | 18 |
-| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 746.1 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
-| `self-snatch-side-002` | opencv-csrt | 100.0 % | 7.2 | 7.8 | 10.3 | 11.4 | 0 | 3 |
-| | opencv-kcf | 87.0 % | 17.9 | 11.5 | 23.0 | 127.2 | 3 | 0 |
-| | template-sad-v1 (OpenBar) | 95.7 % | 32.9 | 8.2 | 119.3 | 243.0 | 1 | 19 |
-| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 57.3 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+| Clip | Tracker | License | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 3.1 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 6.7 | 4.6 | 21.5 | 30.7 | 0 | 17 |
+| | opencv-dasiamrpn | MIT | 100.0 % | 10.4 | 10.2 | 21.2 | 25.4 | 0 | 22 |
+| | opencv-kcf | Apache-2.0 | 72.0 % | 19.6 | 4.3 | 88.4 | 89.2 | 7 | 4 |
+| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 52.2 | 10.3 | 166.0 | 178.3 | 0 | 13 |
+| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 108.9 | 75.3 | 251.5 | 281.6 | 0 | 24 |
+| | opencv-vit | Apache-2.0 | 80.0 % | 133.6 | 27.7 | 326.4 | 384.0 | 5 | 0 |
+| `self-clean-jerk-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 21.7 | 22.5 | 44.3 | 46.9 | 0 | 9 |
+| | opencv-dasiamrpn | MIT | 100.0 % | 25.7 | 22.5 | 48.0 | 50.9 | 0 | 19 |
+| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 198.8 | 199.4 | 423.3 | 439.8 | 0 | 18 |
+| | opencv-kcf | Apache-2.0 | 85.7 % | 231.2 | 65.3 | 509.8 | 520.5 | 3 | 3 |
+| | opencv-vit | Apache-2.0 | 100.0 % | 231.6 | 87.7 | 516.8 | 552.3 | 0 | 0 |
+| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 746.1 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
+| `self-snatch-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 7.2 | 7.8 | 10.3 | 11.4 | 0 | 3 |
+| | opencv-dasiamrpn | MIT | 100.0 % | 15.9 | 9.0 | 26.1 | 77.8 | 0 | 18 |
+| | opencv-kcf | Apache-2.0 | 87.0 % | 17.9 | 11.5 | 23.0 | 127.2 | 3 | 0 |
+| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 95.7 % | 32.9 | 8.2 | 119.3 | 243.0 | 1 | 19 |
+| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 57.3 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+| | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 60.5 | 60.6 | 121.1 | 233.6 | 0 | 0 |
+| | opencv-vit | Apache-2.0 | 100.0 % | 103.2 | 63.2 | 185.4 | 660.6 | 0 | 0 |
 
 ### Excluding seed frame (true tracking performance)
 
-| Clip | Tracker | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `self-back-squat-side-002` | opencv-csrt | 100.0 % | 3.2 | 3.2 | 5.0 | 5.8 | 0 | 5 |
-| | opencv-kcf | 70.8 % | 20.8 | 4.5 | 88.4 | 89.2 | 7 | 4 |
-| | template-sad-v1 (OpenBar) | 100.0 % | 54.3 | 10.3 | 166.0 | 178.3 | 0 | 13 |
-| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 113.4 | 75.3 | 251.5 | 281.6 | 0 | 24 |
-| `self-clean-jerk-side-002` | opencv-csrt | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 2 |
-| | opencv-kcf | 85.0 % | 244.8 | 82.3 | 509.8 | 520.5 | 3 | 3 |
-| | template-sad-v1 (OpenBar) | 100.0 % | 208.7 | 199.4 | 423.3 | 439.8 | 0 | 18 |
-| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 783.4 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
-| `self-snatch-side-002` | opencv-csrt | 100.0 % | 7.5 | 7.8 | 10.3 | 11.4 | 0 | 3 |
-| | opencv-kcf | 86.4 % | 18.8 | 12.2 | 31.8 | 127.2 | 3 | 0 |
-| | template-sad-v1 (OpenBar) | 95.5 % | 34.5 | 8.3 | 119.3 | 243.0 | 1 | 19 |
-| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 59.9 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+| Clip | Tracker | License | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 3.2 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 7.0 | 4.6 | 21.5 | 30.7 | 0 | 17 |
+| | opencv-dasiamrpn | MIT | 100.0 % | 10.8 | 10.2 | 21.2 | 25.4 | 0 | 22 |
+| | opencv-kcf | Apache-2.0 | 70.8 % | 20.8 | 4.5 | 88.4 | 89.2 | 7 | 4 |
+| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 54.3 | 10.3 | 166.0 | 178.3 | 0 | 13 |
+| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 113.4 | 75.3 | 251.5 | 281.6 | 0 | 24 |
+| | opencv-vit | Apache-2.0 | 79.2 % | 140.6 | 28.7 | 361.6 | 384.0 | 5 | 0 |
+| `self-clean-jerk-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 22.8 | 22.5 | 44.3 | 46.9 | 0 | 9 |
+| | opencv-dasiamrpn | MIT | 100.0 % | 27.0 | 22.5 | 48.0 | 50.9 | 0 | 19 |
+| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 208.7 | 199.4 | 423.3 | 439.8 | 0 | 18 |
+| | opencv-vit | Apache-2.0 | 100.0 % | 243.2 | 87.7 | 516.8 | 552.3 | 0 | 0 |
+| | opencv-kcf | Apache-2.0 | 85.0 % | 244.8 | 82.3 | 509.8 | 520.5 | 3 | 3 |
+| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 783.4 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
+| `self-snatch-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 7.5 | 7.8 | 10.3 | 11.4 | 0 | 3 |
+| | opencv-dasiamrpn | MIT | 100.0 % | 16.6 | 9.0 | 26.1 | 77.8 | 0 | 18 |
+| | opencv-kcf | Apache-2.0 | 86.4 % | 18.8 | 12.2 | 31.8 | 127.2 | 3 | 0 |
+| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 95.5 % | 34.5 | 8.3 | 119.3 | 243.0 | 1 | 19 |
+| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 59.9 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+| | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 63.2 | 60.6 | 121.1 | 233.6 | 0 | 0 |
+| | opencv-vit | Apache-2.0 | 100.0 % | 107.9 | 63.2 | 185.4 | 660.6 | 0 | 0 |
 
 Reading: OpenBar's trackers report "tracked" on every frame while hundreds of pixels off. That is the
-silent false-track failure ADR-0008 lists as a blocker. CSRT stays on the plate; its error grows in the fast
-pull (3 px on squat, 6–8 px on clean and snatch). Manual-label repeatability on `self-back-squat-side-001` is
-2.06 px mean (2.45 px RMSE) between two passes, so a perfect tracker would still score about 1.5–2 px MAE
-against these labels.
+silent false-track failure ADR-0008 lists as a blocker. CSRT remains the clear leader across all three lifts:
+it keeps 100% availability with 3.2 px MAE on the squat, and 6.4–7.5 px on clean and snatch.
+The neural-network trackers evaluated in Phase 1 (ViTTrack, NanoTrack v2, DaSiamRPN) did not outperform CSRT:
+- NanoTrack v2 is second best on squat (7.0 px) but degrades to 22.8 px on clean and 63.2 px on snatch, and
+  its model has an unconfirmed license (all rights reserved upstream, not shippable without confirmation).
+- DaSiamRPN (MIT) maintains 100% availability but achieves 10.8 px on squat, 27.0 px on clean, 16.6 px on snatch.
+- ViTTrack (Apache-2.0) loses tracking on squat (79.2% availability, 140.6 px MAE) and drifts heavily on clean and snatch.
+None of the off-the-shelf OpenCV neural trackers meets the < 3 px MAE gate on fast lifts. Fast lifts require
+the next phases: geometric circle-fit refinement (Phase 2) and SAM 2 (Phase 3).
+Manual-label repeatability on `self-back-squat-side-001` is 2.06 px mean (2.45 px RMSE) between two passes,
+so a perfect tracker would still score about 1.5–2 px MAE against these labels.
 
-Reproduce: `research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --output-dir target/opencv-spike/dev-compare-3clips --visual-qa`
+Reproduce: `research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --output-dir target/opencv-spike/phase1-compare`
 
 ## 3. Non-negotiable rules
 
@@ -219,7 +244,11 @@ Add `vit`, `nano` and `dasiamrpn` to `track.py` (skip GOTURN: an old Caffe model
   returns false. Do not add thresholds tuned on the labels in this phase; tuning belongs to Phase 4.
 
 Acceptance: all three run on the development clips, their predictions pass the schema check, and the
-comparison table includes them with licences listed.
+comparison table includes them with licences listed. **Status: completed** (see Section 2 for results).
+None of the three neural trackers beat CSRT or satisfied the < 3 px target on fast lifts. NanoTrack v2
+showed promise on the squat (7.0 px) but degraded on fast lifts and has an unconfirmed license;
+DaSiamRPN maintained 100% availability but had 10.8–27.0 px error; ViTTrack lost tracking. Phase 2
+(plate-geometry refinement) is the next focus.
 
 ### Phase 2: plate-geometry refinement on top of a box tracker (medium)
 
