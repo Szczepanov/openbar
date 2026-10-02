@@ -173,7 +173,7 @@ def fit_circle_from_mask(
         return MaskCircleFitResult(
             accepted=False,
             center_px=centroid,
-            radius_px=r_seed,
+            radius_px=r_fit,
             coverage_bins=coverage_bins,
             inlier_count=final_inlier_count,
             reject_reasons=reject_reasons,
