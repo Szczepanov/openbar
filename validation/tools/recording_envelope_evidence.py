@@ -253,6 +253,12 @@ def assess_boundary(
                     f"benchmark result {item['path']} git_commit {item.get('git_commit')!r} "
                     f"does not match frozen {frozen_commit!r}"
                 )
+            if item.get("pipeline_version") != frozen.get("pipeline_version"):
+                blockers.append(
+                    f"benchmark result {item['path']} pipeline_version "
+                    f"{item.get('pipeline_version')!r} does not match frozen "
+                    f"{frozen.get('pipeline_version')!r}"
+                )
 
     distinct_eligible = len({fixture["id"] for fixture in eligible_fixtures})
     comparable_total = sum(
