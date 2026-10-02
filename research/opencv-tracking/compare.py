@@ -20,6 +20,7 @@ import argparse
 from dataclasses import dataclass, field
 import json
 import math
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -656,6 +657,8 @@ def main(argv: list[str] | None = None) -> int:
         start_s = max(0.0, seed_s - TIMESTAMP_TOLERANCE_S)
         end_s_tolerant = end_s + TIMESTAMP_TOLERANCE_S
         predictions_dir = out / fixture_id
+        # Evidence-producing runs must not consume stale predictions or geometry sidecars.
+        shutil.rmtree(predictions_dir, ignore_errors=True)
 
         # Always run OpenBar baseline trackers
         execute(["cargo", "run", "--locked", "--release", "-q", "-p", "openbar-cli", "--", "tracker-run",
