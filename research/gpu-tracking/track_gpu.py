@@ -18,6 +18,7 @@ run (--sibling-output).
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.metadata
 import json
 import math
@@ -89,6 +90,7 @@ TRACKER_IMPORT_BY_CANDIDATE = {
 }
 
 
+@functools.lru_cache(maxsize=None)
 def require_verified_model(model_key: str) -> Path:
     """Return a checkpoint only after verifying it against the committed SHA-256."""
     spec = download_models.MODEL_SPECS[model_key]
@@ -165,6 +167,7 @@ def model_provenance(candidate_name: str) -> dict[str, str]:
         "filename": spec["filename"],
         "source_url": spec["url"],
         "sha256": spec["sha256"],
+        "sha256_verified": True,
     }
 
 
@@ -850,6 +853,11 @@ def track(
         if name not in CANDIDATES:
             raise GpuTrackerError(f"unknown candidate {name!r}; choices: {CANDIDATES}")
 
+    # Verify model identity before timing so processing_wall_s stays comparable to the
+    # historical runner and does not include checksum I/O added by provenance hardening.
+    for model_key in sorted({MODEL_KEY_BY_CANDIDATE[name] for name in candidate_names}):
+        require_verified_model(model_key)
+
     started = time.perf_counter()
     fixture, media, seed_doc = load_inputs(manifest_path, fixture_id, seed_path, allow_held_out)
     probed = label_package.probe(media)
@@ -927,7 +935,7 @@ def track(
         if actual_bootstapir_res is not None:
             config["model_resolution"] = [actual_bootstapir_res, actual_bootstapir_res]
 
-        implementation = {"name": name, "version": "gpu-spike-2", "config": config}
+        implementation = {"name": name, "version": "gpu-spike-3", "config": config}
         prediction: dict[str, Any] = {
             "schema_version": 1,
             "fixture_id": fixture_id,
