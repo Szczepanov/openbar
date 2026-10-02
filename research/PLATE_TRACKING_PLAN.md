@@ -674,17 +674,14 @@ Prerequisite: pass B done for all six validation clips, with `annotations.py rep
    configuration matches `freeze.json` before scoring. Report the gates per candidate, with seed-excluded
    metrics, false tracks and repeatability context. Do not change anything after seeing the results; a
    failure is a valid outcome (#57 decision option 3).
-2. **#57 study integration.** `tracker_filter_selection.py` runs trackers through `openbar-cli tracker-run`
-   and evaluates filters through `openbar-cli analyze --tracker template|contrast`, so external predictions
-   cannot enter it as is. Options, for the owner to choose:
-   - **(a) Engine change:** add `analyze --observations <tracker-prediction-v1>` so the canonical pipeline
-     (calibration, filtering, kinematics) consumes an external tracker's stream, with its implementation id,
-     version and config carried into the Analysis provenance. This crosses the tracker frame boundary: read
-     ADR-0005, `docs/validation/CLI_PIPELINE.md` and `docs/validation/TRACKER_EXPERIMENTS.md` first, and expect
-     a contract and version change (stop and ask before changing a schema or a `*_VERSION` constant).
-   - **(b) Position-level only (recommended first):** extend the study to accept frozen external prediction
-     files as tracker candidates for the MAE, availability and false-track gates, leaving filter evaluation to
-     follow once (a) exists.
+2. **#57 study integration — engine boundary implemented by #78.** `openbar-cli analyze
+   --observations <tracker-prediction-v1>` now validates an external prediction stream and routes its raw
+   observations through the same canonical calibration, filtering and kinematics pipeline used by
+   `--tracker template|contrast`. External implementation identity/version/config and the exact prediction-file
+   SHA-256 are retained in existing Analysis tracker provenance. This fit `analysis-v1` without a serialized
+   shape or schema/version change. The remaining study work is to teach `tracker_filter_selection.py` to invoke
+   this input mode for frozen external candidates when Phase 5 resumes; position-level scoring remains available
+   independently.
 
 ### Phase 6: production path (decision only, not in this plan)
 

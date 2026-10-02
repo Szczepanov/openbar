@@ -14,6 +14,7 @@ in `openbar-core`.
 video
   -> ADR-0006 ffprobe/ffmpeg frame source
   -> explicitly selected manual-seed tracker
+     OR validated external tracker-prediction-v1 observations
   -> raw observations, including explicit low-confidence/lost state
   -> plate-diameter calibration
   -> explicitly selected filter
@@ -35,6 +36,63 @@ cargo run --locked -p openbar-cli -- analyze \
   --kinematics-min-confidence 0 \
   --output target/analyze-smoke.json
 ```
+
+
+The same canonical pipeline can consume an already-produced `tracker-prediction-v1` stream.
+Exactly one of `--tracker` and `--observations` is required:
+
+```bash
+cargo run --locked -p openbar-cli -- analyze \
+  --manifest validation/fixtures/public/manifest.json \
+  --fixture synthetic-clean-side-12 \
+  --seed validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json \
+  --plate-diameter-m 0.45 \
+  --observations validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json \
+  --filter raw \
+  --kinematics-max-gap-s 0.2 \
+  --kinematics-min-confidence 0 \
+  --output target/analyze-external-smoke.json
+```
+
+`--observations` is an ingestion boundary, not a second measurement implementation. The CLI
+validates and adapts the stream, then the existing `openbar-core` calibration, filtering and
+kinematics code produces the derived layers. The CLI does not invoke Python/OpenCV or add a CV/ML
+runtime dependency.
+
+Before any analysis or recording-support output is written, an external prediction must satisfy
+all of the following:
+
+- `schema_version` is 1 and `coordinate_space` is `decoded_display_pixels`;
+- `source_video_sha256` is present and matches the media OpenBar probed;
+- in fixture mode, `fixture_id` matches the selected fixture;
+- samples are strictly timestamp-increasing and every timestamp matches a selected decoded frame
+  within the same 0.5 ms tolerance used for the manual seed; each sample must resolve to a distinct,
+  strictly advancing decoded frame;
+- the first sample matches the manual-seed timestamp;
+- tracked centres are finite and inside the ADR-0007 display window, with finite confidence in
+  `[0, 1]`;
+- lost samples carry neither a centre nor confidence;
+- the external implementation name already satisfies the canonical tracker identifier grammar.
+  OpenBar does not rewrite names such as `opencv-csrt+lk` into a different identity.
+
+Tracked coordinates, timestamps and confidence values are preserved as canonical raw
+observations. Lost samples remain lost and contribute no position; import never interpolates or
+revives them. The matched decoded frame index is attached to each canonical raw observation. If a
+prediction timestamp represents the first or last selected decoded frame but differs from that
+frame's exact probe timestamp only by the accepted decoder tolerance (for example a fixture timestamp
+rounded to six decimals), the external-analysis `video.trim` envelope is widened only enough to
+contain the preserved imported boundary timestamp. The built-in `--tracker` path keeps its existing
+exact decoded-media trim bytes unchanged.
+
+External provenance uses the existing `analysis-v1` tracker provenance shape. The prediction
+implementation name becomes the tracker id/implementation, its version is preserved, and each
+config entry is retained in `provenance.tracker.implementation.parameters`. Scalar config values
+use the native canonical parameter type when exactly representable; unsigned integers above the
+canonical i64 range, plus object/array/null values, are retained as deterministic compact text rather
+than rounded through a lossy floating-point conversion. OpenBar also records
+`prediction_sha256`, the SHA-256 of the exact prediction-file bytes. Tracker runtime is validated
+when present but intentionally does not enter canonical analysis output, so wall-clock timing
+cannot make repeated analysis non-deterministic.
 
 A direct media path may be supplied with `--video`. In fixture mode, `--video` is an explicit
 media override and the decoded source is still checked against the fixture's hash/encoded
@@ -60,11 +118,15 @@ non-synthetic accuracy evidence. `oblique_45`, front, rear, unknown view, and
 handheld/panning/moving/unknown camera stability are rejected with exit code 4 before canonical
 analysis is written. See [RECORDING_ENVELOPE.md](RECORDING_ENVELOPE.md).
 
-There is deliberately **no default tracker or production filter**. The caller must choose both.
-Filtering evidence from #10 explicitly deferred a production winner; the CLI therefore cannot
-silently promote a candidate. Filter-specific parameters are required where applicable and
-irrelevant parameters are rejected. Tracker family defaults may be used after the family itself is
-selected, and the complete effective tracker configuration is persisted in analysis provenance.
+There is deliberately **no default observation source or production filter**. The caller must
+choose either an internal tracker family with `--tracker` or a validated external prediction with
+`--observations`, and must also choose the filter. Filtering evidence from #10 explicitly deferred
+a production winner; the CLI therefore cannot silently promote a candidate. Filter-specific
+parameters are required where applicable and irrelevant parameters are rejected. Internal tracker
+family defaults may be used after the family itself is selected, and the complete effective
+tracker configuration is persisted in analysis provenance. Tracker-specific CLI options are
+rejected when `--observations` is selected because the imported stream already owns its tracker
+configuration.
 
 The kinematics continuity threshold and minimum-confidence threshold are also required explicitly.
 
@@ -99,6 +161,7 @@ The output therefore preserves:
 - plate-diameter calibration and the manual seed used to define it;
 - source SHA-256 and video/display geometry;
 - effective tracker, filter and kinematics implementations/versions/parameters;
+- for imported observations, the external tracker configuration and exact prediction-file SHA-256;
 - deterministic FFmpeg frame-source provenance.
 
 No wall-clock runtime or generated run identifier enters canonical analysis JSON. Repeated
@@ -153,12 +216,17 @@ use `benchmark`.
 
 ## Validation
 
-The public synthetic fixture is exercised end to end in Rust tests and CI. The integration test
-runs the same analysis twice and compares bytes, round-trips the output through the canonical
-reader, verifies the no-overwrite default, renders an SVG with a verified source frame, and proves
-rendering leaves canonical analysis bytes unchanged. A second render fixture preserves explicit
-lost/low-confidence state while filtered and kinematic layers are absent. CI additionally validates
-the generated analysis artifact against `validation/schema/analysis-v1.schema.json` and uploads
-both success and failure SVG diagnostics.
+The public synthetic fixture is exercised end to end in Rust tests and CI. The internal-tracker
+integration test runs the same analysis twice and compares bytes, round-trips the output through
+the canonical reader, verifies the no-overwrite default, renders an SVG with a verified source
+frame, and proves rendering leaves canonical analysis bytes unchanged. The external-observation
+integration path likewise analyzes the committed `synthetic-perfect.prediction-v1.json` twice and
+requires byte-identical canonical output; invalid imported media identity is also proven to leave
+no analysis output. Focused importer tests cover wrong video hash, unmatched/non-monotonic
+timestamps, duplicate decoded-frame bindings, missing seed sample, non-finite coordinates,
+out-of-range confidence, invalid lost samples, unknown schema versions, invalid tracker identifiers,
+and lossless preservation of large unsigned provenance integers. A second render fixture
+preserves explicit lost/low-confidence state while filtered and kinematic layers are absent. CI
+additionally validates generated/committed JSON against the versioned schemas.
 
 FFmpeg remains an external runtime prerequisite under ADR-0006; no Cargo dependency is added.

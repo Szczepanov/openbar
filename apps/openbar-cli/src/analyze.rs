@@ -4,6 +4,9 @@
 //! canonical validation and serialization remain in openbar-core.
 
 use crate::cli_error::{CliError, CliErrorKind, CliResult};
+use crate::external_observations::{
+    load_external_observations, DecodedTimelineFrame, ImportedObservations,
+};
 use crate::media::{
     DecodedClip, FrameSourceOptions, MediaError, ProbedVideo, StreamProvenance,
     TimeRange as MediaTimeRange,
@@ -42,7 +45,8 @@ const DEFAULT_MAX_FRAME_MEMORY_MIB: u64 = 2048;
 const SEED_TIMESTAMP_TOLERANCE_S: f64 = 0.0005;
 
 const USAGE: &str = "Usage: openbar-cli analyze (--video <path> | --manifest <path> --fixture <id> [--video <override>]) --seed <path>\n\
-     \x20      --plate-diameter-m <m> --tracker <template|contrast> --filter <raw|moving-average|savitzky-golay|kalman>\n\
+     \x20      --plate-diameter-m <m> (--tracker <template|contrast> | --observations <tracker-prediction-v1.json>)\n\
+     \x20      --filter <raw|moving-average|savitzky-golay|kalman>\n\
      \x20      --kinematics-max-gap-s <s> --kinematics-min-confidence <0..1> --output <analysis.json>\n\
      \x20      [--start-s <s> --end-s <s>] [--max-frame-memory-mib <MiB>] [--tracker-search-radius-px <px>]\n\
      \x20      [tracker-specific options] [filter-specific options] [--diagnostics <quiet|normal|verbose>]\n\
@@ -95,7 +99,8 @@ struct Args {
     camera_distance_m: Option<f64>,
     seed: PathBuf,
     plate_diameter_m: f64,
-    tracker: TrackerChoice,
+    tracker: Option<TrackerChoice>,
+    observations: Option<PathBuf>,
     tracker_search_radius_px: Option<u32>,
     template_low_confidence_nmad: Option<f64>,
     template_max_nmad: Option<f64>,
@@ -189,7 +194,10 @@ fn run(args: &Args) -> CliResult<()> {
     }
     let media_path = resolve_media_path(args, fixture.as_ref())?;
     let seed = read_seed(&args.seed, args.fixture_id.as_deref())?;
-    let tracker = build_tracker(args)?;
+    let tracker = args
+        .tracker
+        .map(|choice| build_tracker(choice, args))
+        .transpose()?;
 
     let probed = ProbedVideo::open(&media_path).map_err(classify_media_error)?;
     let stream = probed.stream();
@@ -210,6 +218,31 @@ fn run(args: &Args) -> CliResult<()> {
     // and, when requested, persisted into a misleading support sidecar.
     validate_seed(&seed, &stream, args.selection, &clip)?;
 
+    let imported_observations = args
+        .observations
+        .as_deref()
+        .map(|path| {
+            let timeline = clip
+                .frames
+                .iter()
+                .map(|frame| DecodedTimelineFrame {
+                    timestamp_s: frame.timestamp_s,
+                    frame_index: frame.frame_index,
+                })
+                .collect::<Vec<_>>();
+            load_external_observations(
+                path,
+                args.fixture_id.as_deref(),
+                &source_sha256,
+                stream.display_width_px,
+                stream.display_height_px,
+                &timeline,
+                seed.seed().timestamp_s(),
+                SEED_TIMESTAMP_TOLERANCE_S,
+            )
+        })
+        .transpose()?;
+
     let recording_conditions = recording_conditions(
         args,
         fixture.as_ref(),
@@ -229,9 +262,8 @@ fn run(args: &Args) -> CliResult<()> {
         )));
     }
 
-    let tracker_run = tracker
-        .track(&clip.frame_samples(), seed.seed())
-        .map_err(|error| CliError::tracking(format!("selected tracker failed: {error}")))?;
+    let (raw_observations, tracker_provenance) =
+        measurement_observations(imported_observations, tracker, &clip, &seed)?;
 
     let calibration = PlateDiameterCalibration::try_from_manual_seed(
         args.plate_diameter_m,
@@ -240,7 +272,6 @@ fn run(args: &Args) -> CliResult<()> {
     )
     .map_err(|error| CliError::seed_calibration(format!("invalid plate calibration: {error}")))?;
 
-    let raw_observations = canonical_raw_observations(&tracker_run)?;
     let calibrated_samples = calibrate_measurements(&raw_observations, &calibration)?;
     let filter_run = apply_filter(&calibrated_samples, args.filter).map_err(|error| {
         CliError::invalid_input(format!("invalid filter configuration/input: {error}"))
@@ -263,7 +294,13 @@ fn run(args: &Args) -> CliResult<()> {
             fixture_id: fixture.as_ref().map(|fixture| fixture.id.clone()),
             source_sha256: Some(source_sha256),
         },
-        video_metadata(&clip, &stream, seed.seed().timestamp_s(), args.selection),
+        analysis_video_metadata(
+            &clip,
+            &stream,
+            seed.seed().timestamp_s(),
+            args.selection,
+            args.observations.is_some().then_some(&raw_observations),
+        ),
         seed.seed().clone(),
         calibration,
         raw_observations,
@@ -274,7 +311,7 @@ fn run(args: &Args) -> CliResult<()> {
             filtered: Some(filter_run.trajectory),
             kinematics: Some(kinematic),
         },
-        analysis_provenance(&tracker_run.tracker, &clip)?,
+        analysis_provenance(tracker_provenance, &clip)?,
     )
     .map_err(|error| {
         CliError::internal(format!(
@@ -327,10 +364,35 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     let seed = PathBuf::from(required(&mut values, "--seed")?);
     let output = PathBuf::from(required(&mut values, "--output")?);
     let recording_support_output = take_path(&mut values, "--recording-support-output");
+    let observations = take_path(&mut values, "--observations");
+    let tracker_value = values.remove("--tracker");
+    let tracker = match (tracker_value.as_deref(), observations.as_ref()) {
+        (Some(_), Some(_)) => {
+            return Err(CliError::invalid_input(
+                "--tracker and --observations are mutually exclusive; provide exactly one",
+            ));
+        }
+        (None, None) => {
+            return Err(CliError::invalid_input(
+                "analyze requires exactly one of --tracker <template|contrast> or --observations <path>",
+            ));
+        }
+        (Some(value), None) => Some(match value {
+            "template" => TrackerChoice::Template,
+            "contrast" => TrackerChoice::Contrast,
+            value => {
+                return Err(CliError::invalid_input(format!(
+                    "--tracker must be 'template' or 'contrast', got '{value}'"
+                )));
+            }
+        }),
+        (None, Some(_)) => None,
+    };
     validate_output_paths(
         video.as_ref(),
         manifest.as_ref(),
         &seed,
+        observations.as_ref(),
         &output,
         recording_support_output.as_ref(),
     )?;
@@ -344,15 +406,6 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         ));
     }
 
-    let tracker = match required(&mut values, "--tracker")?.as_str() {
-        "template" => TrackerChoice::Template,
-        "contrast" => TrackerChoice::Contrast,
-        value => {
-            return Err(CliError::invalid_input(format!(
-                "--tracker must be 'template' or 'contrast', got '{value}'"
-            )));
-        }
-    };
     let tracker_search_radius_px = take_parsed(&mut values, "--tracker-search-radius-px")?;
     let template_low_confidence_nmad = take_parsed(&mut values, "--template-low-confidence-nmad")?;
     let template_max_nmad = take_parsed(&mut values, "--template-max-nmad")?;
@@ -362,6 +415,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         take_parsed(&mut values, "--contrast-low-confidence-mass-ratio")?;
     validate_tracker_specific_options(
         tracker,
+        tracker_search_radius_px,
         template_low_confidence_nmad,
         template_max_nmad,
         contrast_min_seed_contrast,
@@ -445,6 +499,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         seed,
         plate_diameter_m,
         tracker,
+        observations,
         tracker_search_radius_px,
         template_low_confidence_nmad,
         template_max_nmad,
@@ -509,6 +564,7 @@ fn is_known_value_flag(flag: &str) -> bool {
             | "--seed"
             | "--plate-diameter-m"
             | "--tracker"
+            | "--observations"
             | "--tracker-search-radius-px"
             | "--template-low-confidence-nmad"
             | "--template-max-nmad"
@@ -587,6 +643,7 @@ fn validate_output_paths(
     video: Option<&PathBuf>,
     manifest: Option<&PathBuf>,
     seed: &Path,
+    observations: Option<&PathBuf>,
     output: &Path,
     recording_support_output: Option<&PathBuf>,
 ) -> CliResult<()> {
@@ -600,6 +657,7 @@ fn validate_output_paths(
         ("--video", video.map(PathBuf::as_path)),
         ("--manifest", manifest.map(PathBuf::as_path)),
         ("--seed", Some(seed)),
+        ("--observations", observations.map(PathBuf::as_path)),
     ];
     for (output_flag, destination) in [
         ("--output", Some(output)),
@@ -650,7 +708,8 @@ fn parse_camera_movement(value: &str) -> CliResult<CameraMovement> {
 }
 
 fn validate_tracker_specific_options(
-    tracker: TrackerChoice,
+    tracker: Option<TrackerChoice>,
+    search_radius: Option<u32>,
     template_low: Option<f64>,
     template_max: Option<f64>,
     contrast_seed: Option<f64>,
@@ -658,14 +717,25 @@ fn validate_tracker_specific_options(
     contrast_low: Option<f64>,
 ) -> CliResult<()> {
     match tracker {
-        TrackerChoice::Template
+        None if search_radius.is_some()
+            || template_low.is_some()
+            || template_max.is_some()
+            || contrast_seed.is_some()
+            || contrast_min.is_some()
+            || contrast_low.is_some() =>
+        {
+            Err(CliError::invalid_input(
+                "tracker-specific options cannot be used with --observations",
+            ))
+        }
+        Some(TrackerChoice::Template)
             if contrast_seed.is_some() || contrast_min.is_some() || contrast_low.is_some() =>
         {
             Err(CliError::invalid_input(
                 "contrast-specific options cannot be used with --tracker template",
             ))
         }
-        TrackerChoice::Contrast if template_low.is_some() || template_max.is_some() => {
+        Some(TrackerChoice::Contrast) if template_low.is_some() || template_max.is_some() => {
             Err(CliError::invalid_input(
                 "template-specific options cannot be used with --tracker contrast",
             ))
@@ -791,8 +861,11 @@ fn reject_present_filter_options(options: &[(&str, &Option<String>)]) -> CliResu
     Ok(())
 }
 
-fn build_tracker(args: &Args) -> CliResult<Box<dyn ManualSeedTracker>> {
-    match args.tracker {
+fn build_tracker(
+    tracker_choice: TrackerChoice,
+    args: &Args,
+) -> CliResult<Box<dyn ManualSeedTracker>> {
+    match tracker_choice {
         TrackerChoice::Template => {
             let defaults = TemplateMatchConfig::default();
             let tracker = TemplateMatchTracker::try_new(TemplateMatchConfig {
@@ -835,6 +908,25 @@ fn build_tracker(args: &Args) -> CliResult<Box<dyn ManualSeedTracker>> {
             Ok(Box::new(tracker))
         }
     }
+}
+
+fn measurement_observations(
+    imported: Option<ImportedObservations>,
+    tracker: Option<Box<dyn ManualSeedTracker>>,
+    clip: &DecodedClip,
+    seed: &ManualTargetSeedDocument,
+) -> CliResult<(Vec<RawObservation>, TrackerProvenance)> {
+    if let Some(imported) = imported {
+        return Ok((imported.raw_observations, imported.tracker_provenance));
+    }
+
+    let tracker = tracker.expect("parse_args guarantees a tracker when observations are absent");
+    let tracker_run = tracker
+        .track(&clip.frame_samples(), seed.seed())
+        .map_err(|error| CliError::tracking(format!("selected tracker failed: {error}")))?;
+    let tracker_provenance = canonical_tracker_provenance(&tracker_run.tracker);
+    let raw_observations = canonical_raw_observations(&tracker_run)?;
+    Ok((raw_observations, tracker_provenance))
 }
 
 fn canonical_raw_observations(run: &TrackerRun) -> CliResult<Vec<RawObservation>> {
@@ -1067,6 +1159,25 @@ fn write_recording_support(
         })
 }
 
+fn analysis_video_metadata(
+    clip: &DecodedClip,
+    stream: &StreamProvenance,
+    seed_timestamp_s: f64,
+    selection: Option<MediaTimeRange>,
+    external_observations: Option<&[RawObservation]>,
+) -> VideoMetadata {
+    let mut video = video_metadata(clip, stream, seed_timestamp_s, selection);
+    if let Some(observations) = external_observations {
+        if let Some(first) = observations.first() {
+            video.trim.start_s = video.trim.start_s.min(first.timestamp_s);
+        }
+        if let Some(last) = observations.last() {
+            video.trim.end_s = video.trim.end_s.max(last.timestamp_s);
+        }
+    }
+    video
+}
+
 fn video_metadata(
     clip: &DecodedClip,
     stream: &StreamProvenance,
@@ -1105,10 +1216,7 @@ fn video_metadata(
     }
 }
 
-fn analysis_provenance(
-    tracker: &TrackerIdentity,
-    clip: &DecodedClip,
-) -> CliResult<AnalysisProvenance> {
+fn canonical_tracker_provenance(tracker: &TrackerIdentity) -> TrackerProvenance {
     let mut parameters = Configuration::new();
     for (key, value) in &tracker.config {
         parameters.insert(key.clone(), parameter_value(value));
@@ -1117,6 +1225,20 @@ fn analysis_provenance(
         "confidence_semantics".to_owned(),
         ParameterValue::Text(tracker.confidence_semantics.clone()),
     );
+    TrackerProvenance {
+        id: tracker.id.clone(),
+        implementation: ImplementationProvenance {
+            implementation: tracker.implementation.clone(),
+            version: tracker.version.clone(),
+            parameters,
+        },
+    }
+}
+
+fn analysis_provenance(
+    tracker: TrackerProvenance,
+    clip: &DecodedClip,
+) -> CliResult<AnalysisProvenance> {
     let decoder = serde_json::to_string(&clip.provenance).map_err(|error| {
         CliError::output(format!("failed to serialize decoder provenance: {error}"))
     })?;
@@ -1126,14 +1248,7 @@ fn analysis_provenance(
             openbar_version: env!("CARGO_PKG_VERSION").to_owned(),
             git_commit: option_env!("OPENBAR_GIT_COMMIT").map(str::to_owned),
         },
-        tracker: TrackerProvenance {
-            id: tracker.id.clone(),
-            implementation: ImplementationProvenance {
-                implementation: tracker.implementation.clone(),
-                version: tracker.version.clone(),
-                parameters,
-            },
-        },
+        tracker,
         model: None,
         environment: Some(EnvironmentProvenance {
             os: None,
@@ -1567,10 +1682,49 @@ mod tests {
         let parsed = parse_args(base_args("analysis.json"))
             .expect("arguments parse")
             .expect("not help");
-        assert_eq!(parsed.tracker, TrackerChoice::Template);
+        assert_eq!(parsed.tracker, Some(TrackerChoice::Template));
+        assert!(parsed.observations.is_none());
         assert_eq!(parsed.filter, FilterConfig::Raw);
         assert_eq!(parsed.kinematics.max_gap_s, 0.2);
         assert_eq!(parsed.kinematics.min_confidence, 0.0);
+    }
+
+    #[test]
+    fn tracker_and_observations_are_exactly_one_required() {
+        let mut both = base_args("analysis.json");
+        both.extend(strings(&["--observations", "prediction.json"]));
+        let error = parse_args(both).expect_err("both measurement sources must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("mutually exclusive"));
+
+        let mut neither = base_args("analysis.json");
+        let tracker_index = neither
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        neither.drain(tracker_index..=tracker_index + 1);
+        let error = parse_args(neither).expect_err("missing measurement source must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("exactly one"));
+    }
+
+    #[test]
+    fn observations_reject_internal_tracker_options() {
+        let mut args = base_args("analysis.json");
+        let tracker_index = args
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        args.splice(
+            tracker_index..=tracker_index + 1,
+            strings(&["--observations", "prediction.json"]),
+        );
+        args.extend(strings(&["--tracker-search-radius-px", "20"]));
+        let error = parse_args(args).expect_err("external observations own tracker configuration");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("tracker-specific options cannot be used with --observations"));
     }
 
     #[test]
@@ -1613,6 +1767,23 @@ mod tests {
         assert_eq!(error.kind(), CliErrorKind::InvalidInput);
         assert!(error.to_string().contains("--recording-support-output"));
         assert!(error.to_string().contains("--seed"));
+    }
+
+    #[test]
+    fn output_paths_cannot_alias_external_observations() {
+        let mut args = base_args("prediction.json");
+        let tracker_index = args
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        args.splice(
+            tracker_index..=tracker_index + 1,
+            strings(&["--observations", "prediction.json"]),
+        );
+        let error =
+            parse_args(args).expect_err("analysis output must not alias observations input");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--observations"));
     }
 
     #[test]
@@ -1773,13 +1944,104 @@ mod tests {
         assert_eq!(error.kind(), CliErrorKind::Unsupported);
 
         let mut tracking = fixture_args(&output);
-        tracking.tracker = TrackerChoice::Contrast;
+        tracking.tracker = Some(TrackerChoice::Contrast);
         tracking.contrast_min_seed_contrast = Some(1.0e9);
         let error = run(&tracking).expect_err("impossible seed contrast must fail tracking");
         assert_eq!(error.kind(), CliErrorKind::Tracking);
 
         let _ = fs::remove_file(manifest);
         let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn external_observations_public_fixture_is_deterministic() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output_a = scratch_file("external-analysis-a.json");
+        let output_b = scratch_file("external-analysis-b.json");
+        let _ = fs::remove_file(&output_a);
+        let _ = fs::remove_file(&output_b);
+
+        let prediction = repo_path(
+            "validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json",
+        );
+        let args_a = external_fixture_args(&output_a, &prediction);
+        let args_b = external_fixture_args(&output_b, &prediction);
+        run(&args_a).expect("first external analysis succeeds");
+        run(&args_b).expect("second external analysis succeeds");
+
+        let bytes_a = fs::read(&output_a).expect("first output");
+        let bytes_b = fs::read(&output_b).expect("second output");
+        assert_eq!(bytes_a, bytes_b, "external analysis must be deterministic");
+
+        let parsed = Analysis::from_json(
+            std::str::from_utf8(&bytes_a).expect("analysis JSON must be UTF-8"),
+        )
+        .expect("external output round-trips through canonical model");
+        assert_eq!(parsed.schema_version(), 1);
+        assert_eq!(parsed.provenance().tracker.id, "synthetic-perfect");
+        assert_eq!(parsed.raw_observations().len(), 10);
+        assert_eq!(parsed.raw_observations()[0].timestamp_s, 0.0);
+        assert_eq!(
+            parsed.raw_observations()[0]
+                .measurement
+                .expect("first sample tracked")
+                .x_px,
+            100.0
+        );
+        assert!(parsed
+            .provenance()
+            .tracker
+            .implementation
+            .parameters
+            .contains_key("prediction_sha256"));
+        assert!(parsed.derived().filtered.is_some());
+        assert!(parsed.derived().kinematics.is_some());
+
+        let _ = fs::remove_file(output_a);
+        let _ = fs::remove_file(output_b);
+    }
+
+    #[test]
+    fn invalid_external_observations_write_no_analysis() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output = scratch_file("external-invalid-output.json");
+        let prediction = scratch_file("external-invalid-hash.prediction-v1.json");
+        let _ = fs::remove_file(&output);
+        let _ = fs::remove_file(&prediction);
+
+        let source = repo_path(
+            "validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json",
+        );
+        let mut document: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(source).expect("read public prediction"))
+                .expect("parse public prediction");
+        document["source_video_sha256"] = serde_json::Value::String(
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
+        );
+        fs::write(
+            &prediction,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&document).expect("serialize prediction")
+            ),
+        )
+        .expect("write invalid prediction");
+
+        let args = external_fixture_args(&output, &prediction);
+        let error = run(&args).expect_err("wrong source hash must fail before output");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("does not match decoded media"));
+        assert!(
+            !output.exists(),
+            "invalid prediction must not create analysis output"
+        );
+
+        let _ = fs::remove_file(output);
+        let _ = fs::remove_file(prediction);
     }
 
     #[test]
@@ -1816,6 +2078,44 @@ mod tests {
 
         let _ = fs::remove_file(output_a);
         let _ = fs::remove_file(output_b);
+    }
+
+    fn external_fixture_args(output: &Path, observations: &Path) -> Args {
+        let values = vec![
+            "--manifest".to_owned(),
+            repo_path("validation/fixtures/public/manifest.json")
+                .display()
+                .to_string(),
+            "--fixture".to_owned(),
+            "synthetic-clean-side-12".to_owned(),
+            "--video".to_owned(),
+            repo_path("validation/fixtures/public/synthetic-clean-side-12.mp4")
+                .display()
+                .to_string(),
+            "--seed".to_owned(),
+            repo_path(
+                "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+            )
+            .display()
+            .to_string(),
+            "--plate-diameter-m".to_owned(),
+            "0.45".to_owned(),
+            "--observations".to_owned(),
+            observations.display().to_string(),
+            "--filter".to_owned(),
+            "raw".to_owned(),
+            "--kinematics-max-gap-s".to_owned(),
+            "0.2".to_owned(),
+            "--kinematics-min-confidence".to_owned(),
+            "0".to_owned(),
+            "--output".to_owned(),
+            output.display().to_string(),
+            "--diagnostics".to_owned(),
+            "quiet".to_owned(),
+        ];
+        parse_args(values)
+            .expect("external fixture args parse")
+            .expect("not help")
     }
 
     fn fixture_args(output: &Path) -> Args {
