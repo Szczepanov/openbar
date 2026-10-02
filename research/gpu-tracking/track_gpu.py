@@ -161,7 +161,7 @@ def runtime_dependency_provenance(candidate_name: str) -> dict[str, Any]:
     }
 
 
-def model_provenance(candidate_name: str) -> dict[str, str]:
+def model_provenance(candidate_name: str) -> dict[str, Any]:
     spec = download_models.MODEL_SPECS[MODEL_KEY_BY_CANDIDATE[candidate_name]]
     return {
         "filename": spec["filename"],
