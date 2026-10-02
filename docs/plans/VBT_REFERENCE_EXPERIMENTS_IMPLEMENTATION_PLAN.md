@@ -14,7 +14,8 @@ This plan covers five follow-up areas:
 1. image-coordinate transform correctness;
 2. zero-phase Butterworth filtering as a challenger family;
 3. multi-frame plate-size calibration robustness;
-4. camera-intrinsic/lens-distortion sensitivity;
+4. camera-geometry sensitivity (camera perpendicularity, plate-plane depth, video stabilization and
+   lens distortion);
 5. controlled marker/fiducial tracking as an optional reference aid.
 
 The plan deliberately separates:
@@ -82,11 +83,12 @@ Does robust multi-frame visible plate-diameter estimation improve independently 
 position/ROM accuracy over the existing explicit single-seed calibration, or is visible-diameter
 variation more useful as a geometry-quality diagnostic?
 
-### G4 — Lens distortion
+### G4 — Camera geometry
 
-Does lens distortion materially harm measurements inside the intended side-view recording envelope,
-and does calibrated undistortion improve those measurements enough to justify operational or runtime
-complexity?
+Which camera-geometry error sources — camera yaw/tilt away from perpendicular, depth mismatch between
+the plate and the calibrated plane, electronic video stabilization, and lens distortion — materially
+harm measurements inside the intended side-view recording envelope? Is any of them better handled by
+correction than by a tighter recording envelope?
 
 ### G5 — Controlled marker reference
 
@@ -168,8 +170,8 @@ The recommended sequence is:
               +-----------------+-----------------+
               |                 |                 |
               v                 v                 v
-       P2 Butterworth    P3 multi-frame      P4 distortion
-          challenger       calibration         sensitivity
+       P2 Butterworth    P3 multi-frame      P4 camera
+          challenger       calibration         geometry
               |                 |                 |
               +-----------------+-----------------+
                                 |
@@ -186,6 +188,13 @@ Important sequencing rule:
 
 > P2–P4 must not automatically delay #57/#58. They are challengers/follow-ups. Promote them onto the
 > critical path only when existing evidence exposes a problem they are likely to solve.
+
+Work that does **not** wait for #58 and can run from the current repository state:
+
+- P1 invariant documentation (no code);
+- P2.0 real-timestamp applicability survey (go/no-go for all further P2 work);
+- P2.2–P2.4 synthetic implementation and tests, only if P2.0 passes;
+- P3.0 annotation-oracle study, if annotated per-frame plate diameters exist.
 
 ## 7. Phase 0 — freeze and record the baseline
 
@@ -235,7 +244,7 @@ not make P2–P4 blockers. Continue the existing M0 re-entry work first.
 
 # 8. Phase 1 — coordinate-transform correctness
 
-Priority: **high**  
+Priority: **low now (document the invariant); high as soon as a transformed-frame consumer appears**  
 M0 blocker: **no**, unless a current research/production tracker performs transformed-frame
 inference and returns transformed coordinates.
 
@@ -248,6 +257,29 @@ into the canonical coordinate space.
 The current repository search found no general crop/resize/letterbox coordinate-transform
 abstraction. Do not add a broad abstraction unless an actual consumer needs it; implement the
 smallest reusable representation required by the first transformed-frame path.
+
+## Current state: stop condition already met
+
+At the time of writing no measurement path emits transformed coordinates:
+
+- the Rust `template` and `contrast` trackers operate on full decoded frames;
+- the OpenCV research trackers (CSRT, KCF, ViTTrack, NanoTrack, DaSiamRPN) resize internally for
+  inference but return boxes in the coordinates of the frame they were given;
+- `cv2.resize` in `research/opencv-tracking/track.py` only rescales a template patch for a QA
+  similarity score and does not produce measurement coordinates;
+- display rotation, the one transform that does exist, is already handled: the FFmpeg decode
+  boundary records `rotation_deg` and emits display-oriented frames (`apps/openbar-cli/src/media/`,
+  ADR-0006), and the Python tooling uses `display_size` in `validation/tools/label_package.py`.
+
+Immediate action is therefore **documentation only**: record the invariant
+
+> All tracker observations, seeds, annotations and bounds are in decoded display-oriented pixel
+> coordinates after rotation, per ADR-0007. A tracker that runs on a transformed frame must
+> map its output back before emitting observations.
+
+in `docs/validation/TRACKER_EXPERIMENTS.md`. P1.1–P1.3 below apply only once a
+consumer that crops, resizes or letterboxes before producing coordinates is introduced. Rotation in
+P1.1 means reusing the existing decode-boundary rotation, not reimplementing it.
 
 ## P1.1 — define the coordinate-transform contract
 
@@ -325,7 +357,8 @@ needs it. Until then, contract/tests may remain local to the adapter.
 ## Stop condition
 
 If no current path resizes/crops/letterboxes before producing measurement coordinates, document the
-invariant and defer implementation rather than creating unused framework code.
+invariant and defer implementation rather than creating unused framework code. This is the current
+state (see above).
 
 ---
 
@@ -342,6 +375,34 @@ A reviewed public VBT project uses a fourth-order zero-phase Butterworth low-pas
 Unlike the existing timestamp-aware Savitzky-Golay and Kalman candidates, a conventional digital
 Butterworth implementation assumes regular sample spacing. OpenBar must explicitly test that
 assumption rather than substituting nominal FPS.
+
+Phone video is commonly variable-frame-rate. If the applicability rule is strict, Butterworth may
+apply to almost no real input, in which case the filter is not worth implementing. That question is
+cheap to answer and needs no #58 reference data, so it gates everything else in this phase.
+
+## P2.0 — real-timestamp applicability survey (go/no-go)
+
+Before implementing any filter:
+
+1. implement the P2.1 regularity metric (a small, pure function; no filter code yet);
+2. run it over the authoritative decoded frame timestamps of every available real development clip
+   (public fixtures and private development material decoded through the ADR-0006 FFmpeg boundary,
+   e.g. via `tracker-run`), per contiguous tracked segment;
+3. report the distribution of the metric per device/recording mode, and the fraction of clips and
+   of tracked segments that would be applicable under the strict rule (exactly regular after
+   container time-base rounding) and under any candidate low-jitter rule;
+4. freeze the applicability rule from development clips only; held-out clips are classified only
+   after the freeze.
+
+Decision:
+
+- if the applicable fraction of realistic intended inputs is negligible under any defensible rule,
+  record **REJECT** (or **DEFER** pending different capture settings) and stop P2 here;
+- otherwise continue to P2.1–P2.5 with the frozen rule.
+
+Container time-base rounding can make constant-rate video look slightly irregular. Account for it
+explicitly in the metric (e.g. compare deltas in time-base ticks) rather than loosening the
+threshold.
 
 ## P2.1 — define timestamp regularity
 
@@ -382,6 +443,24 @@ Recommended approach:
 - define short-segment/padding/edge behavior explicitly;
 - reject invalid normalized cutoff values.
 
+### Order and cutoff definition
+
+"Fourth-order zero-phase Butterworth" is ambiguous and must be pinned before the grid is run:
+
+- **design order** — the order of the single-pass digital filter that is designed;
+- **effective order** — forward/backward application doubles it (a 2nd-order design applied
+  forward and backward has 4th-order effective magnitude roll-off; a 4th-order design has 8th);
+- **cutoff correction** — double-pass application squares the magnitude response, so the −3 dB
+  point of the combined filter falls below the single-pass design cutoff. Either design with the
+  standard double-pass correction (Winter, *Biomechanics and Motor Control of Human Movement*,
+  low-pass filter cutoff correction for multiple passes) so the stated cutoff is the effective
+  −3 dB cutoff, or state that the cutoff is the uncorrected single-pass value.
+
+Provenance must record design order, number of passes, effective order, the cutoff convention used
+and the sampling interval derived from accepted timestamps. When comparing with the reviewed
+external project, first establish which convention its "fourth-order, 8 Hz" refers to; if that
+cannot be established, include both interpretations in the grid rather than guessing.
+
 ### Integration strategy
 
 Avoid exposing Butterworth through canonical `analyze --filter` initially.
@@ -402,8 +481,9 @@ Predeclare a small grid before evaluating held-out scenarios.
 
 Suggested initial grid:
 
-- order: 4;
-- cutoff: 4, 6, 8, 10, 12 Hz where valid for the measured sampling frequency;
+- effective order: 4 (2nd-order design, forward/backward), plus effective order 8 only if the
+  external reference turns out to mean a 4th-order design (see "Order and cutoff definition");
+- effective cutoff: 4, 6, 8, 10, 12 Hz where valid for the measured sampling frequency;
 - `max_gap_s`: keep aligned with the existing experiment unless evidence requires a separate
   development grid.
 
@@ -469,7 +549,8 @@ pre-invented percentage.
 
 Stop and retain the existing four families if any is true:
 
-- Butterworth is not applicable to realistic timestamp distributions;
+- Butterworth is not applicable to realistic timestamp distributions (decided at P2.0, before any
+  filter implementation);
 - held-out improvement is negligible relative to reference/annotation uncertainty;
 - peak/edge behavior is worse without a compensating benefit;
 - a current family performs equivalently with fewer assumptions;
@@ -499,8 +580,38 @@ The second may be useful even if the first is rejected.
 
 A tracker/reference process capable of producing per-frame plate-size evidence is required.
 
-The current tracker contract primarily measures centre/bounds according to candidate behavior. Reuse
-existing bounds/radius evidence where trustworthy; do not add a new ML model just to run this study.
+**No current production tracker measures plate size.** Both Rust trackers emit `target_bounds_px`
+built from the fixed seed radius around the tracked centre (`bounds_for_center(center,
+seed.target().radius_px())` in `crates/openbar-tracking/src/template.rs` and `contrast.rs`). Their
+bounds therefore always have the seed's size, and S1 over them would trivially reproduce S0.
+Tracker bounds must not be used as diameter evidence.
+
+The OpenCV research trackers do emit variable `(w, h)` boxes, but box size is a tracker-specific
+quantity (search-window/regression behaviour), not a measured plate diameter. Use it only after it
+has been validated against annotated diameters, and never as the only evidence.
+
+Do not add a new ML model or a size-measuring tracker just to run this study. If a size-measuring
+tracker is needed, it is tracker work owned by #57 and its candidate gates, not part of P3.
+
+## P3.0 — annotation-oracle study (go/no-go)
+
+Before building any estimator harness, test the best case: perfect, human-measured per-frame
+diameters.
+
+- Source: the optional per-sample `target_size` (`radius_px`, `diameter_px` or box) in
+  `annotation-v1` (`validation/schema/annotation-v1.schema.json`, `docs/validation/ANNOTATION.md`).
+- Caveat: the annotation tool carries the aiming-ring radius forward from the previous frame, so a
+  recorded radius is not necessarily an independent per-frame measurement. Use only frames whose
+  radius was deliberately fitted, or annotate a small dedicated development subset with every
+  radius fitted; record which convention was used.
+- Compute S1/S2 from those diameters and compare them with S0 using the scale-ratio method in P3.4.
+
+Decision:
+
+- if even oracle per-frame diameters do not improve physical error over the single seed by more
+  than reference uncertainty, record **REJECT** for the calibration estimator and keep only the
+  P3.5 diagnostic question open;
+- if they do, P3 continues only once a validated source of per-frame size exists (see above).
 
 ## P3.1 — define candidate estimators
 
@@ -546,15 +657,23 @@ Do not overwrite canonical analysis with research estimates.
 
 ## P3.4 — independent-reference comparison
 
-Against #58-compatible physical/reference cases compare each estimator on:
+Every estimator in this study produces one constant metres-per-pixel scale per case. Changing the
+scale multiplies every calibrated position, ROM, mean velocity and peak velocity by the same ratio
+`k = scale_candidate / scale_reference`. The primary comparison is therefore one number per case:
 
-- calibrated position error;
-- vertical ROM error;
-- horizontal ROM/error when geometry makes it meaningful;
-- mean/peak velocity effect where scaling affects the definition;
-- sensitivity to plate position in frame;
-- sensitivity to fast movement/blur;
-- sensitivity to foreshortening/depth change.
+- **relative scale error** `k − 1` for each estimator, where `scale_reference` comes from the
+  independent physical reference (a known rig distance, or reference ROM divided by the pixel
+  displacement over the same matched interval).
+
+Full-pipeline metric runs are not needed to rank estimators; ROM/velocity error contributed by
+calibration follows directly from `k`. Report full-pipeline errors only for the final shortlisted
+estimator, to confirm that nothing outside the scale changed.
+
+Stratify `k − 1` by:
+
+- plate position in frame;
+- fast movement/blur;
+- foreshortening/depth change.
 
 Use the same raw tracker observations for every calibration estimator so the study isolates
 calibration effects.
@@ -611,135 +730,76 @@ validated.
 
 ---
 
-# 11. Phase 4 — lens-distortion sensitivity
+# 11. Phase 4 — camera-geometry sensitivity
 
 Priority: **medium/low until recording-envelope evidence indicates need**  
-M0 blocker: **no by default**
+M0 blocker: **no by default**  
+Detail level: **stub** — expand into full work packages only when the trigger below fires.
+
+## Trigger
+
+Start P4 when #53/#58 evidence shows position/ROM error that varies with camera setup or field
+position beyond reference uncertainty, or when #53 needs evidence to set framing/setup limits.
 
 ## Rationale
 
-OpenBar already records lens distortion as a calibration limitation. The question is not whether
-distortion exists, but whether it materially affects OpenBar's intended measurement envelope.
+`PlateDiameterCalibration@1` assumes the plate moves in a plane parallel to the image plane at the
+depth where the seed diameter was measured. Several error sources violate that assumption. Lens
+distortion is only one of them, and on the main lens of current phones it is often already corrected
+in the camera pipeline. The likely larger sources are:
 
-## P4.1 — research tooling boundary
+- **G4a — camera yaw/tilt**: camera not perpendicular to the plane of bar motion (perspective);
+- **G4b — plate-plane depth mismatch**: plate moves toward/away from the camera, or the measured
+  plate face is not in the plane the bar path is assumed to lie in (parallax/scale change);
+- **G4c — electronic video stabilization (EIS)**: per-frame warp/crop that changes the effective
+  pixel geometry over time and invalidates any fixed camera calibration;
+- **G4d — lens distortion**: radial/tangential distortion, mainly near field edges and on
+  wide-angle lenses.
 
-Preferred approach:
+## Approach
 
-- keep camera calibration/undistortion in research tooling;
-- use independently licensed OpenCV tooling (Python research environment is acceptable);
-- do not add OpenCV to the Rust workspace merely for this experiment;
-- pin OpenCV/package versions and record licence/source.
+- Prefer a controlled geometric rig with an independent physical reference (known distances) over
+  athlete motion; this may run before the full #58 athlete study.
+- Vary one factor at a time against a perpendicular, stabilization-off, standard-lens, centred
+  baseline: yaw/tilt angles, plate depth offsets, stabilization on/off, field position (centre,
+  edges, corners), and wide-angle lens only if product use might permit it.
+- Evaluate with the P3.4 scale-ratio method where the error is a pure scale change, and with
+  position/X-Y ROM error where it is not (perspective, distortion, EIS).
+- Record per capture: device model, lens/camera mode, resolution, stabilization and zoom state,
+  measured camera angle/distance, and plate-plane offset.
+- For G4d only: keep camera calibration/undistortion in research tooling (pinned, licence-recorded
+  OpenCV in a Python research environment, reusing `research/opencv-tracking/` only if version
+  isolation stays clear); do not add OpenCV to the Rust workspace. Record calibration target,
+  coverage, camera matrix, distortion coefficients and reprojection error. If undistortion changes
+  the pixel coordinate system or crop, it is a P1 transform consumer and must map outputs back.
 
-Reuse the existing research OpenCV environment only if dependency/version isolation remains clear;
-otherwise create a small dedicated `research/camera-calibration/` environment.
+## Report
 
-## P4.2 — intrinsic calibration capture
-
-For each representative device/lens mode:
-
-- record device model;
-- selected lens/camera mode;
-- resolution;
-- stabilization/zoom state;
-- calibration target type and printed/measured dimensions where applicable;
-- number and coverage of calibration images;
-- camera matrix/distortion coefficients;
-- calibration reprojection error;
-- exact tooling/version.
-
-Use chessboard or ChArUco according to the selected OpenCV method. The target choice itself is not a
-product requirement.
-
-## P4.3 — sensitivity fixture design
-
-Capture controlled plate/reference positions across the image field:
-
-- centre;
-- left/right;
-- upper/lower;
-- near useful envelope edges.
-
-Prefer a controlled geometric rig/reference where source position is known. If using barbell motion,
-keep camera and movement plane fixed and use independent reference data.
-
-Test at least:
-
-- ordinary/standard phone lens used by intended workflow;
-- wide-angle only if product use might permit it.
-
-## P4.4 — two-path comparison
-
-For each case:
-
-```text
-original decoded frame
-        |
-        +--> unchanged OpenBar measurement
-        |
-        +--> calibrated undistortion
-                 |
-                 v
-          same measurement logic
-```
-
-Keep tracker/filter/calibration settings otherwise matched.
-
-If undistortion changes the pixel coordinate system/crop, record the transform and map outputs
-consistently.
-
-## P4.5 — report
-
-Stratify by normalized field position and report:
-
-- plate-centre/reference position error;
-- physical position error;
-- X/Y ROM error;
-- mean/peak velocity error where reference-aligned;
-- distortion correction residual/reprojection diagnostics;
-- runtime;
-- setup burden;
-- effective field-of-view/cropping changes.
+Per factor, stratified by normalized field position: physical position error, X/Y ROM error,
+mean/peak velocity error where reference-aligned, the factor's measured magnitude, and the cost of
+avoiding it (setup burden, field-of-view loss, runtime).
 
 ## Decision outcomes
 
-The study must end in one of these explicit outcomes:
+Each factor ends in one of:
 
-### D1 — negligible inside envelope
-
-Action:
-
-- keep production pipeline unchanged;
-- document evidence in #53/recording guidance;
-- reject production undistortion.
-
-### D2 — material only near edges
-
-Action:
-
-- prefer a tighter supported recording/framing envelope;
-- no production correction unless tighter framing is operationally unacceptable.
-
-### D3 — material throughout useful envelope and correction reliably helps
-
-Action:
-
-- open a separate architecture/implementation decision for device calibration/undistortion;
-- evaluate how production obtains trustworthy intrinsics;
-- evaluate mobile runtime/binary/dependency cost.
-
-### D4 — correction is inconsistent or creates new failure modes
-
-Action:
-
-- reject correction;
-- retain warning/envelope guidance.
+- **D1 — negligible inside envelope**: no production change; document evidence in #53.
+- **D2 — material only outside a tighter setup/framing rule**: tighten the supported recording
+  envelope (e.g. maximum camera angle, stabilization off, keep the bar path away from field edges);
+  no production correction unless the tighter rule is operationally unacceptable.
+- **D3 — material throughout the useful envelope and correction reliably helps**: open a separate
+  ADR/implementation decision covering how production obtains trustworthy camera parameters,
+  coordinate-transform integration, and mobile runtime/dependency cost.
+- **D4 — correction is inconsistent or creates new failure modes**: reject correction; keep
+  envelope guidance and warnings.
 
 ## Stop conditions
 
-Do not add production camera calibration if:
+Do not add production camera calibration, perspective correction or stabilization compensation if:
 
 - error is below practical/reference uncertainty inside the accepted envelope;
-- correction benefit is limited to conditions already classed unsupported;
+- benefit is limited to conditions already classed unsupported;
+- recording guidance (D2) solves the observed problem more cheaply;
 - per-device calibration burden is disproportionate;
 - correction requires unverifiable metadata or introduces unstable transforms.
 
@@ -748,78 +808,42 @@ Do not add production camera calibration if:
 # 12. Phase 5 — controlled marker/fiducial reference tracker
 
 Priority: **low / conditional**  
-M0 blocker: **no**
+M0 blocker: **no**  
+Detail level: **stub** — expand only when triggered.
 
 ## Trigger
 
-Implement this only if one of these becomes true:
+Implement only if one of these becomes true; otherwise do not implement it:
 
 - manual plate-centre annotation is a significant bottleneck;
 - #58/reference acquisition needs a cheap independent secondary trajectory;
 - tracker experiments need a controlled target to isolate calibration/kinematics error from
   appearance-based tracking error.
 
-If none is true, do not implement it.
+## Question
 
-## P5.1 — choose the simplest controlled target
+Can a deliberately distinctive marker (one method only: a chroma circular marker, or one
+licensed/open fiducial family already supported by research tooling) give a reference trajectory
+accurate enough to replace manual digitisation for its supported conditions?
 
-Start with one method:
+## Approach
 
-- highly distinctive chroma circular marker; or
-- a licensed/open fiducial marker family already supported by research tooling.
+- Implement independently from generic/public algorithm documentation or licensed dependencies;
+  never from an unlicensed repository.
+- Fail explicitly: no acceptable target means a lost observation, not a guessed coordinate.
+- Validate against manual digitisation on development clips: centre MAE/RMSE, availability/loss,
+  high-confidence false tracks, and sensitivity to blur, lighting, occlusion and target scale; then
+  estimate annotation-time savings.
 
-Do not evaluate many marker families initially.
+## Promotion and stop conditions
 
-## P5.2 — independent implementation
+May be promoted as a **validation aid** (never the athlete-facing production tracker) if it is
+materially more accurate/reliable than the annotation burden it replaces, has a narrow documented
+envelope, makes failures explicit, and does not contaminate held-out evaluation through tuning.
 
-Implement from generic/public algorithm documentation or licensed dependencies.
-
-For a chroma baseline:
-
-- deterministic color-space threshold;
-- morphology parameters;
-- connected-component/contour selection;
-- circle/centroid estimate;
-- explicit loss when no acceptable target exists;
-- confidence/quality diagnostic based on documented geometric/color evidence.
-
-Do not copy implementation from an unlicensed repository.
-
-## P5.3 — validation against manual digitisation
-
-Use controlled development clips and compare:
-
-- centre MAE/RMSE;
-- availability/loss;
-- high-confidence false tracks;
-- blur sensitivity;
-- lighting sensitivity;
-- occlusion sensitivity;
-- target scale/distance;
-- runtime.
-
-Then estimate annotation-time savings if the purpose is reference generation.
-
-## Promotion decision
-
-This tool may be promoted as a **validation aid** if it:
-
-- is materially more accurate/reliable than the annotation burden it replaces;
-- has a narrow documented recording envelope;
-- makes failures explicit;
-- does not contaminate held-out evaluation through tuning.
-
-It does not become the athlete-facing production tracker merely because it performs well with a
-special marker.
-
-## Stop conditions
-
-Do not continue if:
-
-- manual annotation remains manageable;
-- marker placement adds more operational burden than it saves;
-- error is not comfortably below the tracker accuracy being evaluated;
-- lighting/color sensitivity makes the reference unreliable.
+Stop if manual annotation remains manageable, marker placement costs more than it saves, its error
+is not comfortably below the tracker accuracy being evaluated, or lighting/colour sensitivity makes
+it unreliable.
 
 ---
 
@@ -835,6 +859,8 @@ This plan interacts with it as follows.
 Allowed:
 
 - P1 coordinate-transform correctness if required by a tracker;
+- P2.0 real-timestamp survey and P3.0 annotation-oracle study, since neither depends on tracker
+  output (development material only);
 - P5 marker reference on development data if annotation effort requires it.
 
 Do not:
@@ -868,8 +894,9 @@ Recommended order:
 5. record deltas relative to baseline;
 6. decide whether any challenger merits promotion.
 
-Lens-distortion P4 may use a controlled geometric rig even before the full athlete #58 study if the
-rig itself provides an independent physical reference.
+Camera-geometry P4 may use a controlled geometric rig even before the full athlete #58 study if the
+rig itself provides an independent physical reference. The P2.0 timestamp survey and the P3.0
+annotation-oracle study need no #58 data.
 
 Do not use agreement with another software app as the sole basis for changing M0 kinematic gates.
 
@@ -887,7 +914,7 @@ target/
   research/
     butterworth/
     calibration/
-    distortion/
+    camera-geometry/
     marker/
 
 docs/
@@ -898,6 +925,17 @@ docs/
   analysis/
     ... findings / interpreted results when worth retaining
 ```
+
+`target/` is scratch space: `cargo clean` deletes it and CI does not keep it. An experiment result
+counts as retained evidence only once it is committed outside `target/`:
+
+- at every decision point (P2.0, P3.0, each phase's final REJECT / DEFER / CONTINUE RESEARCH /
+  CANDIDATE FOR PROMOTION), commit the interpreted findings to `docs/analysis/` together with the
+  exact commands, commit and parameters needed to regenerate the `target/research/` outputs;
+- commit the machine-readable summary itself (aggregate metrics, applicability fractions, decision)
+  only when it is privacy-safe and small; per-frame outputs stay regenerable rather than committed;
+- results derived from private material keep only privacy-safe identifiers and aggregates in the
+  committed record.
 
 For private fixtures, keep source media, extracted frames, labels and identifying predictions under
 the existing private/git-ignored boundaries.
@@ -930,18 +968,22 @@ cargo build --locked --workspace --all-targets --all-features
 cargo test --locked --workspace --all-targets --all-features
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py
+cargo deny --all-features --locked check
 ```
 
 Run tracker/filter/analyze/benchmark smoke commands when the work touches those surfaces.
+`cargo deny` matters whenever a work package touches `Cargo.toml`/`Cargo.lock`; research tooling
+outside the Rust workspace (e.g. a pinned Python OpenCV environment for P4) must still record source,
+version and licence as required by §5.
 
 ## Experiment-specific minimums
 
 | Experiment | Deterministic synthetic tests | Development evidence | Held-out/reference evidence |
 | --- | --- | --- | --- |
-| P1 coordinate transforms | required | when integrated | not normally required |
-| P2 Butterworth | required | required | required before promotion |
-| P3 multi-frame calibration | required for estimator math | required | independent reference required before promotion |
-| P4 lens distortion | calibration-tool tests where practical | required | controlled/reference evidence required for product decision |
+| P1 coordinate transforms | required once a consumer exists; invariant doc only until then | when integrated | not normally required |
+| P2 Butterworth | required (regularity metric first, filter only after P2.0 passes) | P2.0 real-timestamp survey, then grid | required before promotion |
+| P3 multi-frame calibration | required for estimator math | P3.0 annotation oracle | independent reference required before promotion |
+| P4 camera geometry | calibration-tool tests where practical | required | controlled-rig/reference evidence required for product decision |
 | P5 marker tracker | required | required | only if promoted as formal reference aid |
 
 ---
@@ -979,7 +1021,9 @@ Require:
 - exact provenance for contributing frames/estimator;
 - migration/backward compatibility decision.
 
-### Lens correction
+### Camera-geometry correction
+
+Applies only to a D3 outcome; D1/D2/D4 change recording guidance (#53), not code.
 
 Require:
 
@@ -1006,7 +1050,8 @@ These rules are intentionally stronger than "keep experimenting until something 
 2. Do not change a persisted schema for research-only output.
 3. Do not add automatic resampling to make a regular-sampling filter applicable.
 4. Do not replace a transparent calibration method when independent error does not improve.
-5. Do not add camera undistortion when recording guidance solves the observed problem more cheaply.
+5. Do not add camera undistortion, perspective correction or stabilization compensation when
+   recording guidance solves the observed problem more cheaply.
 6. Do not make controlled markers part of the normal athlete workflow unless a separate product
    decision explicitly chooses that trade-off.
 7. Do not let P2–P5 postpone the #57/#58 re-entry decision when the existing evidence is already
@@ -1028,6 +1073,11 @@ Suggested issue breakdown:
 
 ### Issue A — geometry transform contract
 
+Now (docs only): `[Docs] Record the display-coordinate invariant for tracker observations`
+
+- invariant text in `docs/validation/TRACKER_EXPERIMENTS.md` (see Phase 1, "Current state").
+
+Only when a transformed-frame consumer appears:
 `[Research] Prove coordinate transforms for resized/cropped inference`
 
 Deliverables:
@@ -1044,7 +1094,8 @@ Deliverables:
 Deliverables:
 
 - applicability metric;
-- research-only filter implementation;
+- P2.0 real-timestamp survey and go/no-go decision (stop here on REJECT);
+- research-only filter implementation with pinned order/cutoff convention;
 - development parameter grid;
 - synthetic evidence artifact;
 - later held-out/reference result and explicit decision.
@@ -1055,21 +1106,23 @@ Deliverables:
 
 Deliverables:
 
-- offline estimator harness;
+- P3.0 annotation-oracle study and go/no-go decision (stop here on REJECT);
+- offline estimator harness, once a validated per-frame size source exists;
 - robust diameter diagnostics;
-- independent-reference comparison;
+- independent-reference comparison via relative scale error;
 - separate calibration-vs-quality conclusions.
 
-### Issue D — lens distortion
+### Issue D — camera geometry
 
-`[Research] Quantify camera lens-distortion impact on the M0 recording envelope`
+Create only when triggered (see Phase 4):
+
+`[Research] Quantify camera-geometry error sources on the M0 recording envelope`
 
 Deliverables:
 
-- pinned calibration tooling;
-- representative device calibration;
-- field-position study;
-- explicit D1/D2/D3/D4 decision.
+- controlled-rig study of camera yaw/tilt, plate-plane depth, stabilization and field position;
+- pinned calibration tooling and representative device calibration, for lens distortion only;
+- explicit D1/D2/D3/D4 decision per factor.
 
 ### Issue E — marker reference
 
@@ -1100,15 +1153,19 @@ Revisit these only after the M0 measurement chain and rep/event semantics are va
 Given the repository state when this plan was authored:
 
 1. continue the existing `research/PLATE_TRACKING_PLAN.md` / #57 work;
-2. implement P1 only where current/future tracker preprocessing actually needs coordinate mapping;
-3. acquire/complete enough #58 independent reference evidence to establish a baseline;
-4. run P2 Butterworth as the first challenger because it is relatively isolated and directly affects
-   velocity accuracy;
-5. run P3 multi-frame calibration if per-frame plate-size evidence is trustworthy;
-6. run P4 lens-distortion sensitivity if #53/reference evidence indicates field-position/calibration
-   error worth explaining;
-7. implement P5 only if manual reference generation becomes a meaningful bottleneck;
-8. make explicit promotion/rejection decisions before adding any production surface.
+2. document the P1 display-coordinate invariant now; implement P1.1–P1.3 only when tracker
+   preprocessing actually needs coordinate mapping;
+3. run the P2.0 real-timestamp applicability survey first: it is cheap, needs no #58 data, and
+   decides whether any Butterworth implementation is worth doing;
+4. run the P3.0 annotation-oracle study when enough deliberately fitted per-frame diameters exist;
+5. acquire/complete enough #58 independent reference evidence to establish a baseline;
+6. if P2.0 passed, run P2 Butterworth as the first full challenger because it is relatively isolated
+   and directly affects velocity accuracy;
+7. if P3.0 passed and a validated per-frame size source exists, run P3 multi-frame calibration;
+8. run P4 camera-geometry sensitivity if #53/reference evidence indicates setup- or field-position-
+   dependent error worth explaining;
+9. implement P5 only if manual reference generation becomes a meaningful bottleneck;
+10. make explicit promotion/rejection decisions before adding any production surface.
 
 The default outcome is allowed to be **no production change**. The goal is better evidence, not
 feature accumulation.

@@ -1,6 +1,9 @@
 use openbar_core::analysis::ImplementationProvenance;
 use openbar_core::benchmark::{evaluate_filter_case, FilterBenchmarkParameters, FilterMetrics};
-use openbar_core::filtering::{apply_filter, FilterBehavior, FilterConfig};
+use openbar_core::filtering::{
+    apply_butterworth_filter, apply_filter, ButterworthExperimentalConfig, FilterBehavior,
+    FilterConfig, FilterError,
+};
 use openbar_core::trajectory::MetricPositionSample;
 use serde::Serialize;
 use std::env;
@@ -22,6 +25,45 @@ struct FilterExperimentArtifact {
     held_out_validation: Vec<ScenarioResult>,
     production_selection: ProductionSelection,
     limitations: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ButterworthExperimentArtifact {
+    schema_version: u32,
+    experiment_version: &'static str,
+    purpose: &'static str,
+    predeclared_grid_size: usize,
+    frozen_applicability_rule: FrozenApplicabilityRule,
+    development_policy: DevelopmentPolicy,
+    development_grid: Vec<ButterworthCandidateSummary>,
+    selected_candidate: ImplementationProvenance,
+    held_out_validation: Vec<ScenarioResult>,
+    baseline_production_families: Vec<DevelopmentFamilyResult>,
+    decision: &'static str,
+    decision_rationale: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct FrozenApplicabilityRule {
+    rule: &'static str,
+    max_relative_jitter_pct: f64,
+    max_coefficient_of_variation_pct: f64,
+    min_samples: usize,
+    dropped_frame_threshold_ratio: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct ButterworthCandidateSummary {
+    filter: ImplementationProvenance,
+    design_order: usize,
+    effective_order: usize,
+    cutoff_hz: f64,
+    cutoff_convention: &'static str,
+    applicable_scenarios_count: usize,
+    unsupported_scenarios_count: usize,
+    mean_position_rmse_m: f64,
+    mean_velocity_rmse_mps: f64,
+    scenarios: Vec<ScenarioResult>,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,6 +176,7 @@ const fn scenario_definition(
 pub fn run_cli() -> AnyResult<()> {
     let args = env::args().skip(2).collect::<Vec<_>>();
     let mut output_path: Option<PathBuf> = None;
+    let mut challenger: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -144,9 +187,17 @@ pub fn run_cli() -> AnyResult<()> {
                         .ok_or_else(|| data_error("--output requires a path"))?,
                 ));
             }
+            "--challenger" => {
+                index += 1;
+                challenger = Some(
+                    args.get(index)
+                        .ok_or_else(|| data_error("--challenger requires a name"))?
+                        .clone(),
+                );
+            }
             "--help" | "-h" => {
                 println!(
-                    "Usage: openbar-cli filter-experiment [--output <path>]\n\
+                    "Usage: openbar-cli filter-experiment [--challenger <name>] [--output <path>]\n\
                      Tunes filter-family parameters only on deterministic development signals,\n\
                      then evaluates the selected configurations on held-out synthetic signals."
                 );
@@ -159,6 +210,27 @@ pub fn run_cli() -> AnyResult<()> {
             }
         }
         index += 1;
+    }
+
+    if let Some(ch) = challenger {
+        if ch == "butterworth" {
+            let artifact = run_butterworth_experiment()?;
+            eprintln!("{}", render_butterworth_summary(&artifact));
+            let serialized = serde_json::to_string_pretty(&artifact)?;
+            if let Some(path) = output_path {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(path, format!("{serialized}\n"))?;
+            } else {
+                println!("{serialized}");
+            }
+            return Ok(());
+        } else {
+            return Err(data_error(format!("unsupported challenger family '{ch}'")));
+        }
     }
 
     let artifact = run_experiment()?;
@@ -175,6 +247,213 @@ pub fn run_cli() -> AnyResult<()> {
         println!("{serialized}");
     }
     Ok(())
+}
+
+fn butterworth_grid() -> Vec<ButterworthExperimentalConfig> {
+    let mut grid = Vec::new();
+    for &design_order in &[2, 4] {
+        for &cutoff_correction in &[true, false] {
+            for &cutoff_hz in &[4.0, 6.0, 8.0, 10.0, 12.0] {
+                grid.push(ButterworthExperimentalConfig {
+                    design_order,
+                    cutoff_hz,
+                    cutoff_correction,
+                    max_gap_s: 0.05,
+                    max_relative_jitter: 0.01,
+                    max_coefficient_of_variation: 0.005,
+                });
+            }
+        }
+    }
+    grid
+}
+
+fn evaluate_butterworth_scenario(
+    scenario: &Scenario,
+    config: &ButterworthExperimentalConfig,
+) -> AnyResult<Option<ScenarioResult>> {
+    let started = Instant::now();
+    let run = match apply_butterworth_filter(&scenario.observed, config) {
+        Ok(run) => run,
+        Err(FilterError::UnsupportedTimestampJitter { .. }) => {
+            return Ok(None);
+        }
+        Err(err) => return Err(Box::new(err)),
+    };
+    let runtime_ms = started.elapsed().as_secs_f64() * 1_000.0;
+    let metrics = evaluate_filter_case(
+        &scenario.truth,
+        &run.trajectory.samples,
+        FilterBenchmarkParameters {
+            max_velocity_gap_s: 0.05,
+            evaluate_peak_metrics: scenario.peak_metrics_applicable,
+        },
+    )?;
+    let edge_position_mae_m = edge_position_mae(&scenario.truth, &run.trajectory.samples, 2);
+
+    Ok(Some(ScenarioResult {
+        split: scenario.split,
+        scenario: scenario.name,
+        condition: scenario.condition,
+        noise_seed: scenario.noise_seed,
+        peak_metrics_applicable: scenario.peak_metrics_applicable,
+        filter: run.trajectory.filter,
+        behavior: run.behavior.into(),
+        metrics,
+        input_samples: scenario.observed.len(),
+        output_samples: run.trajectory.samples.len(),
+        filter_segment_count: run.segment_count,
+        max_input_gap_s: max_gap(&scenario.observed),
+        edge_position_mae_m,
+        runtime_ms,
+    }))
+}
+
+fn run_butterworth_experiment() -> AnyResult<ButterworthExperimentArtifact> {
+    let scenarios = scenarios();
+    let development_scenarios = scenarios
+        .iter()
+        .filter(|scenario| scenario.split == "development")
+        .collect::<Vec<_>>();
+    let validation_scenarios = scenarios
+        .iter()
+        .filter(|scenario| scenario.split == "held_out_validation")
+        .collect::<Vec<_>>();
+
+    let grid = butterworth_grid();
+    let mut candidate_summaries = Vec::new();
+
+    for config in &grid {
+        let mut scenario_results = Vec::new();
+        let mut applicable_count = 0;
+        let mut unsupported_count = 0;
+
+        for scenario in &development_scenarios {
+            match evaluate_butterworth_scenario(scenario, config)? {
+                Some(res) => {
+                    applicable_count += 1;
+                    scenario_results.push(res);
+                }
+                None => {
+                    unsupported_count += 1;
+                }
+            }
+        }
+
+        let mean_position_rmse_m = mean_metric(&scenario_results, |m| m.position_rmse_m)
+            .ok_or_else(|| data_error("development position RMSE unexpectedly unavailable"))?;
+        let mean_velocity_rmse_mps = mean_metric(&scenario_results, |m| m.velocity_rmse_mps)
+            .ok_or_else(|| data_error("development velocity RMSE unexpectedly unavailable"))?;
+
+        candidate_summaries.push(ButterworthCandidateSummary {
+            filter: config.provenance(1.0 / 60.0),
+            design_order: config.design_order,
+            effective_order: config.design_order * 2,
+            cutoff_hz: config.cutoff_hz,
+            cutoff_convention: if config.cutoff_correction {
+                "winter_double_pass_corrected"
+            } else {
+                "uncorrected_single_pass"
+            },
+            applicable_scenarios_count: applicable_count,
+            unsupported_scenarios_count: unsupported_count,
+            mean_position_rmse_m,
+            mean_velocity_rmse_mps,
+            scenarios: scenario_results,
+        });
+    }
+
+    let mut best_index = 0;
+    for (index, candidate) in candidate_summaries.iter().enumerate() {
+        let incumbent = &candidate_summaries[best_index];
+        let velocity_better =
+            candidate.mean_velocity_rmse_mps < incumbent.mean_velocity_rmse_mps - 1.0e-12;
+        let velocity_tied =
+            (candidate.mean_velocity_rmse_mps - incumbent.mean_velocity_rmse_mps).abs() <= 1.0e-12;
+        let position_better =
+            candidate.mean_position_rmse_m < incumbent.mean_position_rmse_m - 1.0e-12;
+        if velocity_better || (velocity_tied && position_better) {
+            best_index = index;
+        }
+    }
+
+    let winning_config = grid[best_index];
+    let selected_provenance = candidate_summaries[best_index].filter.clone();
+
+    let mut held_out_validation = Vec::new();
+    for scenario in validation_scenarios {
+        if let Some(res) = evaluate_butterworth_scenario(scenario, &winning_config)? {
+            held_out_validation.push(res);
+        }
+    }
+
+    let baseline_artifact = run_experiment()?;
+
+    Ok(ButterworthExperimentArtifact {
+        schema_version: 1,
+        experiment_version: "m0-butterworth-challenger-v1",
+        purpose: "Evaluation of zero-phase Butterworth digital filtering as a challenger family under timestamp regularity constraints.",
+        predeclared_grid_size: grid.len(),
+        frozen_applicability_rule: FrozenApplicabilityRule {
+            rule: "max relative jitter <= 1.0%, CV <= 0.5%, no dropped frames (gap within 0.5x..1.5x median dt)",
+            max_relative_jitter_pct: 1.0,
+            max_coefficient_of_variation_pct: 0.5,
+            min_samples: 2,
+            dropped_frame_threshold_ratio: 1.5,
+        },
+        development_policy: DevelopmentPolicy {
+            split: "Synthetic development grid evaluated across 20 configurations; held-out validation evaluated only once on winning configuration.",
+            selection_rule: "Minimize mean development velocity RMSE; tie-break on mean position RMSE across applicable development scenarios.",
+            note: "Irregular-timestamp development scenarios fail closed and are reported as unsupported.",
+        },
+        development_grid: candidate_summaries,
+        selected_candidate: selected_provenance,
+        held_out_validation,
+        baseline_production_families: baseline_artifact.development,
+        decision: "CONTINUE_RESEARCH",
+        decision_rationale: vec![
+            "Butterworth filter satisfies zero phase delay and achieves competitive velocity RMSE on regular signals.",
+            "Timestamp survey (P2.0) demonstrated applicability to 80% of development phone clips and 83.3% of validation phone clips under the 1% jitter rule.",
+            "However, digital Butterworth strictly fails on VFR clips (e.g. Xiaomi Android 11 with 16.8% jitter) and cannot process irregular sequences without resampling.",
+            "Production promotion requires definition-matched independent physical reference data (#58) to prove real-world accuracy advantage over timestamp-aware Savitzky-Golay and Kalman.",
+        ],
+    })
+}
+
+fn render_butterworth_summary(artifact: &ButterworthExperimentArtifact) -> String {
+    let mut lines = vec![
+        "=== M0 Zero-Phase Butterworth Challenger Experiment ===".to_owned(),
+        format!(
+            "Predeclared grid size: {} candidates",
+            artifact.predeclared_grid_size
+        ),
+        format!(
+            "Selected candidate: {}@{} {:?}",
+            artifact.selected_candidate.implementation,
+            artifact.selected_candidate.version,
+            artifact.selected_candidate.parameters
+        ),
+        "Held-out validation results:".to_owned(),
+    ];
+    for result in &artifact.held_out_validation {
+        lines.push(format!(
+            "  {:>18} | pos_rmse={} m | vel_rmse={} m/s | peak_att={} | shift={} s | edge_mae={} m | samples={}/{} | segments={}",
+            result.scenario,
+            display_option(result.metrics.position_rmse_m),
+            display_option(result.metrics.velocity_rmse_mps),
+            display_option(result.metrics.peak_attenuation_fraction),
+            display_option(result.metrics.peak_timing_shift_s),
+            display_option(result.edge_position_mae_m),
+            result.output_samples,
+            result.input_samples,
+            result.filter_segment_count,
+        ));
+    }
+    lines.push(format!("Decision: {}", artifact.decision));
+    for rat in &artifact.decision_rationale {
+        lines.push(format!("  - {rat}"));
+    }
+    lines.join("\n")
 }
 
 fn run_experiment() -> AnyResult<FilterExperimentArtifact> {
