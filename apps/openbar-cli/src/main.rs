@@ -2,6 +2,7 @@ mod analyze;
 mod benchmark;
 mod cli_error;
 mod diagnostic_svg;
+mod external_observations;
 mod filter_experiment;
 mod kinematic_reference;
 mod media;
