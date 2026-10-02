@@ -1,5 +1,5 @@
 use openbar_core::analysis::{
-    Analysis, AnalysisProvenance, ImplementationProvenance, KinematicsInput, TrackerProvenance,
+    Analysis, AnalysisProvenance, ImplementationProvenance, KinematicsInput,
 };
 use openbar_core::calibration::{
     CalibrationMethod, MetricCoordinateConvention, PlateDiameterCalibration,
