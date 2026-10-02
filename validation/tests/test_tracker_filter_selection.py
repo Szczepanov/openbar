@@ -137,6 +137,22 @@ class ScopeTests(unittest.TestCase):
             )
 
 
+class TimestampMatchingTests(unittest.TestCase):
+    def test_one_actual_sample_cannot_match_two_reference_labels(self):
+        references = [
+            {"timestamp_s": 1.0000},
+            {"timestamp_s": 1.0004},
+        ]
+        samples = [{"timestamp_s": 1.0002}]
+
+        matches = selection._match_timestamped_samples(
+            references, samples, tolerance_s=0.0005
+        )
+
+        self.assertIsNotNone(matches[0][1])
+        self.assertIsNone(matches[1][1])
+
+
 class FalseTrackTests(unittest.TestCase):
     def test_high_confidence_wrong_target_is_counted(self):
         annotation = {
