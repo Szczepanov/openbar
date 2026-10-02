@@ -19,6 +19,7 @@ import argparse
 import bisect
 import hashlib
 import json
+import math
 import re
 import subprocess
 import sys
@@ -46,31 +47,85 @@ def display_size(width_px: int, height_px: int, rotation_deg: int) -> tuple[int,
 
 
 def parse_probe(text: str) -> dict[str, Any]:
-    """Validate ffprobe JSON with the same rules as the Rust frame source (media/probe.rs)."""
-    document = json.loads(text)
+    """Validate ffprobe JSON against the M0 geometry/time rules used by the Rust frame source."""
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise PackageError(f"ffprobe returned invalid JSON: {error}") from error
+
     streams, frames = document.get("streams") or [], document.get("frames") or []
     if not streams or not frames:
         raise PackageError("ffprobe found no video stream or no frames")
     stream = streams[0]
-    if stream.get("sample_aspect_ratio") not in (None, "1:1", "0:1"):
-        raise PackageError(f"unsupported sample aspect ratio {stream['sample_aspect_ratio']}")
-    rotation = next((side["rotation"] for side in stream.get("side_data_list", []) if "rotation" in side), 0)
-    if not float(rotation).is_integer() or abs(rotation) > 360 or rotation % 90 != 0:
+    if not isinstance(stream, dict):
+        raise PackageError("ffprobe video stream metadata must be an object")
+
+    sample_aspect_ratio = stream.get("sample_aspect_ratio")
+    if sample_aspect_ratio not in (None, "1:1", "0:1"):
+        raise PackageError(f"unsupported sample aspect ratio {sample_aspect_ratio}")
+
+    rotation = next(
+        (side["rotation"] for side in stream.get("side_data_list", []) if isinstance(side, dict) and "rotation" in side),
+        0,
+    )
+    try:
+        rotation_value = float(rotation)
+    except (TypeError, ValueError) as error:
+        raise PackageError(f"unsupported rotation {rotation!r}") from error
+    if (
+        not math.isfinite(rotation_value)
+        or not rotation_value.is_integer()
+        or abs(rotation_value) > 360
+        or rotation_value % 90 != 0
+    ):
         raise PackageError(f"unsupported rotation {rotation}")
-    if any("pts" not in frame for frame in frames):
-        raise PackageError("a decoded frame has no pts")
-    pts = [int(frame["pts"]) for frame in frames]
-    start_pts, time_base = int(stream["start_pts"]), Fraction(stream["time_base"])
+
+    width_px, height_px = stream.get("width"), stream.get("height")
+    if (
+        not isinstance(width_px, int)
+        or isinstance(width_px, bool)
+        or width_px <= 0
+        or not isinstance(height_px, int)
+        or isinstance(height_px, bool)
+        or height_px <= 0
+    ):
+        raise PackageError(f"invalid video dimensions {width_px!r}x{height_px!r}")
+
+    try:
+        start_pts = int(stream["start_pts"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise PackageError("video stream is missing a valid start_pts") from error
+    try:
+        time_base = Fraction(stream["time_base"])
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as error:
+        raise PackageError("video stream is missing a valid time_base") from error
+    if time_base <= 0:
+        raise PackageError(f"invalid time_base {stream['time_base']!r}; it must be positive")
+
+    pts: list[int] = []
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict) or "pts" not in frame:
+            raise PackageError(f"decoded frame {index} has no pts")
+        try:
+            pts.append(int(frame["pts"]))
+        except (TypeError, ValueError) as error:
+            raise PackageError(f"decoded frame {index} has invalid pts {frame['pts']!r}") from error
+
     if any(value < start_pts for value in pts):
         raise PackageError("a frame pts precedes the stream start")
     if any(later <= earlier for earlier, later in zip(pts, pts[1:])):
         raise PackageError("frame pts are not strictly increasing")
+
+    timestamps_s = [float((value - start_pts) * time_base) for value in pts]
+    if any(not math.isfinite(value) for value in timestamps_s):
+        raise PackageError("decoded timestamps are not finite")
+
     return {
         "pts": pts,
-        "timestamps_s": [float((value - start_pts) * time_base) for value in pts],
-        "width_px": int(stream["width"]),
-        "height_px": int(stream["height"]),
-        "rotation_deg": int(rotation) % 360,
+        "timestamps_s": timestamps_s,
+        "width_px": width_px,
+        "height_px": height_px,
+        "rotation_deg": int(rotation_value) % 360,
     }
 
 
@@ -78,8 +133,19 @@ def select_frames(
     timestamps_s: list[float], start_s: float, end_s: float, step_s: float, include: list[int]
 ) -> list[int]:
     """Indices of the decoded frames nearest to each grid time, plus any explicitly included frame."""
+    if not timestamps_s or any(not math.isfinite(value) for value in timestamps_s):
+        raise PackageError("decoded timestamps must be a non-empty finite sequence")
+    if any(later <= earlier for earlier, later in zip(timestamps_s, timestamps_s[1:])):
+        raise PackageError("decoded timestamps must be strictly increasing")
+    if not all(math.isfinite(value) for value in (start_s, end_s, step_s)):
+        raise PackageError("grid start/end/step must be finite")
     if step_s <= 0 or end_s < start_s:
         raise PackageError("grid needs step > 0 and end >= start")
+    if start_s < timestamps_s[0] or end_s > timestamps_s[-1]:
+        raise PackageError(
+            f"grid window {start_s:.6f}-{end_s:.6f} s is outside decoded media range "
+            f"{timestamps_s[0]:.6f}-{timestamps_s[-1]:.6f} s"
+        )
     if any(index < 0 or index >= len(timestamps_s) for index in include):
         raise PackageError(f"--include-frame must be within 0..{len(timestamps_s) - 1}")
     chosen = set(include)
@@ -171,6 +237,24 @@ def require_media_hash(fixture: dict[str, Any], media: Path) -> None:
         raise PackageError(f"{media} does not match the manifest sha256 for {fixture['id']}")
 
 
+def require_fixture_probe_match(fixture: dict[str, Any], probed: dict[str, Any]) -> None:
+    """Bind the package coordinate system to the same encoded raster/rotation recorded in the fixture."""
+    video = fixture.get("video")
+    if not isinstance(video, dict):
+        raise PackageError(f"{fixture.get('id', '<unknown>')} has no valid video metadata")
+    expected = (
+        video.get("width_px"),
+        video.get("height_px"),
+        video.get("rotation_deg", 0),
+    )
+    actual = (probed["width_px"], probed["height_px"], probed["rotation_deg"])
+    if expected != actual:
+        raise PackageError(
+            f"fixture video metadata {expected[0]}x{expected[1]} rotation={expected[2]} "
+            f"does not match probe {actual[0]}x{actual[1]} rotation={actual[2]}"
+        )
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         completed = subprocess.run(
@@ -199,7 +283,7 @@ def extract(media: Path, indices: list[int], expected_pts: list[int], frames_dir
     select = "+".join(f"eq(n\\,{index})" for index in indices)
     completed = run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "info", "-autorotate", "-i", str(media),
                      "-map", "0:v:0", "-vf", f"select='{select}',showinfo", "-fps_mode", "passthrough",
-                     str(frames_dir / "tmp_%06d.png")])
+                     "-enc_time_base", "demux", str(frames_dir / "tmp_%06d.png")])
     require_aligned(parse_showinfo(completed.stderr), expected_pts)
     produced = sorted(frames_dir.glob("tmp_*.png"))
     if len(produced) != len(indices):
@@ -230,6 +314,7 @@ def build(args: argparse.Namespace) -> Path:
     media = ROOT / fixture["media"]["repository_path"]
     require_media_hash(fixture, media)
     probed = probe(media)
+    require_fixture_probe_match(fixture, probed)
     timestamps = probed["timestamps_s"]
     end_s = timestamps[-1] if args.end_s is None else args.end_s
     indices = select_frames(timestamps, args.start_s, end_s, args.step_s, args.include_frame)

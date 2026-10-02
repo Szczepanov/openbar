@@ -55,8 +55,9 @@
     <b>Wheel</b> zoom &middot; <b>Right/middle-drag</b> pan &middot; <kbd>&larr;</kbd><kbd>&rarr;</kbd> frames &middot;
     <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> quality high/med/low &middot; <kbd>O</kbd> partially occluded &middot;
     <kbd>U</kbd> unlabelable &middot; <kbd>F</kbd> fully occluded &middot; <kbd>S</kbd> skip (not annotated).<br>
-    Label the geometric centre of the plate face, not the bar end. If you cannot place it reliably,
-    mark it unlabelable instead of guessing. Coordinates use pixel-centre convention (pixel <i>i</i> spans
+    Label the geometric centre of the plate face, not the bar end. For every labelled centre, explicitly
+    choose high/medium/low quality; CSV download is blocked until quality is assessed. If you cannot place
+    the centre reliably, mark it unlabelable instead of guessing. Coordinates use pixel-centre convention (pixel <i>i</i> spans
     <i>i</i>&minus;0.5&hellip;<i>i</i>+0.5). Progress autosaves in this browser.
   </div>
   <textarea id="csv" rows="4" readonly></textarea>
@@ -78,7 +79,7 @@ const stage = document.getElementById("stage");
 
 function rec() {
   const ts = CONFIG.frames[cur].timestamp_s;
-  if (!labels[ts]) labels[ts] = { state: "not_annotated", visibility: "visible", quality: "high", x: null, y: null, r: null, notes: "" };
+  if (!labels[ts]) labels[ts] = { state: "not_annotated", visibility: "visible", quality: null, x: null, y: null, r: null, notes: "" };
   return labels[ts];
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {} renderCsv(); }
@@ -193,7 +194,8 @@ function csvRows(frames, labels) {
     const r = labels[f.timestamp_s] || { state: "not_annotated", visibility: "unknown" };
     const labelled = r.state === "labelled" && r.x !== null && r.x !== undefined;
     const state = labelled ? "labelled" : (r.state === "unlabelable" ? "unlabelable" : "not_annotated");
-    const quality = labelled ? r.quality : (state === "unlabelable" ? "unusable" : "not_assessed");
+    const quality = labelled && ["high", "medium", "low"].includes(r.quality)
+      ? r.quality : (state === "unlabelable" ? "unusable" : "not_assessed");
     const vis = state === "not_annotated" ? (r.visibility || "unknown") : r.visibility;
     const notes = (r.notes || "").replace(/[\r\n,"]/g, " ");
     return [f.timestamp_s.toFixed(6), "", f.frame_index, state, vis, quality,
@@ -205,10 +207,25 @@ function csvRows(frames, labels) {
 // END csvRows
 function csvText() { return csvRows(CONFIG.frames, labels); }
 function renderCsv() { document.getElementById("csv").value = csvText(); }
+// BEGIN exportProblem (pure; exercised by validation/tests/test_label_package.py)
+function exportProblem(frames, labels) {
+  for (const f of frames) {
+    const r = labels[f.timestamp_s];
+    const labelled = r && r.state === "labelled" && r.x !== null && r.x !== undefined;
+    if (labelled && !["high", "medium", "low"].includes(r.quality))
+      return `frame ${f.frame_index}: choose quality high, medium, or low before export`;
+  }
+  return null;
+}
+// END exportProblem
 document.getElementById("export").onclick = () => {
+  const problem = exportProblem(CONFIG.frames, labels);
+  if (problem) { alert(problem); return; }
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csvText()], { type: "text/csv" }));
+  const url = URL.createObjectURL(new Blob([csvText()], { type: "text/csv" }));
+  a.href = url;
   a.download = `${CONFIG.fixture_id}.${CONFIG.annotator_id}.labels.csv`; a.click();
+  URL.revokeObjectURL(url);
 };
 
 document.getElementById("annotator").textContent = `annotator ${CONFIG.annotator_id} · package ${CONFIG.package_id}`;
