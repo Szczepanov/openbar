@@ -127,19 +127,22 @@ Errors in millimetres using a nominal 450 mm plate (`mm = px × 225 / r_seed_px`
 - `opencv-csrt+circle-a`:
   - Squat: 8 improved, 8 worsened, 8 tied (median Δ = +0.000 px / +0.000 mm). MAE rose from 3.22 to 3.80 px.
   - Clean & jerk: 3 improved, 1 worsened, 16 tied (median Δ = +0.000 px / +0.000 mm). Fit acceptance on labelled frames was only 20% (4/20).
-  - Snatch: 18 improved, 4 worsened, 0 tied (median Δ = -5.007 px / -8.525 mm). Substantial gain on snatch only.
+  - Snatch: 18 improved, 4 worsened, 0 tied (median Δ = -5.007 px / -8.525 mm). Large gain on snatch; the squat is the clip it fails to improve.
 - `opencv-csrt+circle-b1` / `b5`:
   - Re-initialising CSRT on fitted circles led to severe feedback lock-in on distractor edges during the squat and clean & jerk (worsened on 14–18 labels per clip; median Δ = +1.5 to +3.8 px).
+  - On the snatch they match `circle-a` (18 improved, 4 worsened; median Δ ≈ -4.9 px).
 - `opencv-csrt+hough`:
   - Very low fit acceptance (0% on clean & jerk labelled frames, 20.8% on squat, 45.5% on snatch). Mostly falls back to CSRT; median Δ is +0.000 px on all clips.
-  - False tracks appear as 0 only because of the ×0.7 confidence penalty; removing the penalty reveals 2 false tracks on both clean & jerk and snatch.
+  - It never raises MAE: squat 3.22 → 2.93 px (3 improved, 2 worsened, 19 tied), snatch 7.51 → 6.31 px (7 / 3 / 12), clean & jerk identical to CSRT (20 tied).
+  - Its penalised false-track counts (1 / 0 / 0) depend on the ×0.7 confidence penalty; with base confidence they are 5 / 2 / 2 (squat / clean & jerk / snatch), the same as CSRT.
 
 Reading: OpenBar's trackers report "tracked" on every frame while hundreds of pixels off. That is the
 silent false-track failure ADR-0008 lists as a blocker. CSRT remains the clear leader across all three lifts:
 it keeps 100% availability with 3.2 px MAE on the squat, and 6.4–7.5 px on clean and snatch.
 The neural-network trackers evaluated in Phase 1 (ViTTrack, NanoTrack v2, DaSiamRPN) did not outperform CSRT.
-Phase 2 (plate-geometry refinement) showed dramatic gains on the snatch (MAE 7.51 -> 3.73 px) but slightly degraded
-the squat (3.22 -> 3.80 px) and clean & jerk (acceptance only 20%), failing the consistent paired improvement rule.
+Phase 2 (plate-geometry refinement) showed dramatic gains on the snatch (MAE 7.51 -> 3.73 px) and a small gain on
+clean & jerk (6.44 -> 5.97 px, fit acceptance only 20%), but degraded the squat (3.22 -> 3.80 px), failing the
+consistent paired improvement rule.
 Fast lifts require Phase 3 (SAM 2 video segmentation).
 
 Reproduce:
@@ -331,19 +334,21 @@ New candidate `opencv-<base>+circle` (evaluated on top of `csrt`). Per frame:
 - **Gate evaluation:** None of the geometry variants brought clean & jerk seed-excluded MAE (5.97–6.44 px)
   or p90 (9.87–10.25 px) under the < 3.0 px gate. At nominal physical scale, clean & jerk MAE is 6.74–7.27 mm
   (better than squat's 7.96 mm), confirming that the 3 px gate is ~2.2× stricter physically on clean & jerk
-  due to plate pixel scale (222 px vs 101 px plate diameter).
+  due to plate pixel scale (seed radius 199.2 px vs 90.9 px, i.e. plate diameter ≈ 398 px vs ≈ 182 px).
 - **Paired comparisons:**
-  - `circle-a` (output refinement only): Substantially improved the snatch (MAE 7.51 → 3.73 px, p90 14.8 → 7.7 px;
+  - `circle-a` (output refinement only): Substantially improved the snatch (MAE 7.51 → 3.73 px, p90 10.3 → 8.8 px;
     18 improved, 4 worsened, median Δ -5.0 px / -8.5 mm). However, it degraded the squat (MAE 3.22 → 3.80 px,
     p90 5.0 → 7.3 px; 8 improved, 8 worsened, 8 tied) due to background edge distractors during the descent, and
     had low acceptance on clean & jerk labeled frames (20% acceptance; 3 improved, 1 worsened, 16 tied). Because
     paired comparison does not favour it across every clip, it does not qualify as an across-the-board win.
   - `circle-b1` & `circle-b5` (re-initialisation): Severe feedback lock-in. Re-initialising CSRT on fitted circles
     caused drift onto inner plate rims or collar edges during squat and clean & jerk (worsened on 14–18 labels per
-    clip; squat MAE surged to 6.2–8.4 px).
-  - `hough`: Low acceptance (0% on clean & jerk labels, 20.8% on squat, 47.7% on snatch), falling back almost
-    entirely to plain CSRT. Its 0 false tracks are solely due to the ×0.7 fallback penalty (with base confidence,
-    it has 2 false tracks on clean & jerk and snatch).
+    clip; squat MAE surged to 6.2–8.4 px). On the snatch they gain as much as `circle-a` (MAE 3.61–3.83 px).
+  - `hough`: Low acceptance on labelled frames (0% on clean & jerk, 20.8% on squat, 45.5% on snatch), falling
+    back almost entirely to plain CSRT. It never raises MAE (squat 3.22 → 2.93 px, snatch 7.51 → 6.31 px, clean &
+    jerk unchanged), but clean & jerk is all ties, so it is not favoured on every clip. Its low penalised
+    false-track counts (1 / 0 / 0) come solely from the ×0.7 fallback penalty; with base confidence they are
+    5 / 2 / 2 (squat / clean & jerk / snatch), the same as CSRT.
 - **Motion blur bias (Test 7):** Synthetic verification (`test_synthetic_motion_blur_bias`) measured a 0.5797 px
   vertical bias (dx = +0.0230 px, dy = -0.5792 px) under a 15 px vertical box blur proxy, with fitted radius
   90.51 px (ground truth 90 px).
