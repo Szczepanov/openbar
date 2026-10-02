@@ -58,16 +58,18 @@ The v1 validators keep their existing acceptance window instead of the exact pix
 This window deliberately differs from the pixel-centre geometry. It is half a pixel stricter on the left and
 top, and half a pixel looser on the right and bottom. We keep it because:
 
-1. Nothing in the pipeline produces values where the two windows differ. Tracker centres are
-   weighted means or indices of in-frame pixels, so they lie in `[0, width - 1]`. Seed bounds
-   must fit the frame, so seed centres lie at least one radius inside it. The labelling page
-   accepts clicks only in `[0, width - 0.5)`, which is inside both windows.
-2. Moving the window is a contract change. `annotation-v1.schema.json` pins `minimum: 0` on
-   centres and bounds, and narrowing the right edge would reject v1 documents that are valid
-   today. Under the AGENTS.md versioning rules that needs version bumps across seed, annotation
-   and analysis formats.
-3. The two windows differ only in a half-pixel border. A plate centre there means most of the
-   plate is outside the frame, and a seed there already fails the bounds check.
+1. Existing v1 inputs may legally occupy the half-pixel mismatch region. For example, an
+   annotation centre at `width - 0.25` is valid v1 even though it is outside the exact point
+   domain, and a seed/observation bound may end at `right = width`. The first-party labelling page
+   deliberately emits only the intersection `[0, width - 0.5)`, but the persisted v1 contract is
+   broader and tracker bounds continue to obey that contract.
+2. Moving the window is therefore a real contract and behaviour change, not a documentation-only
+   cleanup. `annotation-v1.schema.json` pins `minimum: 0` on centres and bounds, and narrowing the
+   right edge would reject documents that are valid today. Under the AGENTS.md versioning rules
+   that needs version bumps across seed, annotation and analysis formats; changing tracker edge
+   acceptance would also require explicit tracker-version/benchmark review.
+3. The disagreement is confined to a half-pixel border. Preserve it explicitly for v1
+   compatibility, while first-party producers should prefer the intersection of both windows.
 
 Producers should emit points in `[0, width - 0.5) × [0, height - 0.5)`, the intersection of the
 two windows, so their output stays valid if a later schema version adopts the exact extent.
