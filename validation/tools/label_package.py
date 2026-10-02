@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PAGE_TEMPLATE = Path(__file__).with_name("label_page.html")
 CONFIG_PLACEHOLDER = "/*CONFIG*/null"
 PRIVATE_ROOT = ROOT / "validation" / "private"
-TOOL = {"name": "openbar-label-package", "version": "1"}
+TOOL = {"name": "openbar-label-package", "version": "2"}
 # One select term per frame keeps the FFmpeg command well under the Windows command-line limit.
 MAX_FRAMES = 2000
 SHOWINFO = re.compile(r"\[Parsed_showinfo[^\]]*\] n:\s*\d+ pts:\s*(-?\d+)")
@@ -148,8 +148,19 @@ def select_frames(
         )
     if any(index < 0 or index >= len(timestamps_s) for index in include):
         raise PackageError(f"--include-frame must be within 0..{len(timestamps_s) - 1}")
+    span_s = end_s - start_s
+    if span_s > step_s * (MAX_FRAMES - 1):
+        raise PackageError(
+            f"grid contains more than {MAX_FRAMES} requested times; increase --step-s or split the package"
+        )
+    grid_count = int(span_s / step_s + 1e-9) + 1
+    if grid_count > MAX_FRAMES:
+        raise PackageError(
+            f"grid contains {grid_count} requested times; increase --step-s or split the package"
+        )
+
     chosen = set(include)
-    for step in range(int((end_s - start_s) / step_s + 1e-9) + 1):
+    for step in range(grid_count):
         target = start_s + step * step_s
         right = bisect.bisect_left(timestamps_s, target)
         candidates = [index for index in (right - 1, right) if 0 <= index < len(timestamps_s)]
@@ -200,10 +211,19 @@ def metadata(fixture: dict[str, Any], size: tuple[int, int], annotator_id: str, 
 
 def page_config(fixture_id: str, annotator_id: str, size: tuple[int, int], frames: list[dict[str, Any]]) -> dict[str, Any]:
     """Page configuration; ``package_id`` keeps browser storage separate per pass and grid."""
-    identity = json.dumps({"fixture_id": fixture_id, "annotator_id": annotator_id, "frames": frames}, sort_keys=True)
+    identity = json.dumps(
+        {
+            "fixture_id": fixture_id,
+            "annotator_id": annotator_id,
+            "frames": frames,
+            "tool_version": TOOL["version"],
+        },
+        sort_keys=True,
+    )
     return {
         "fixture_id": fixture_id,
         "annotator_id": annotator_id,
+        "tool_version": TOOL["version"],
         "package_id": hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16],
         "width_px": size[0],
         "height_px": size[1],
