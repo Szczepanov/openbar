@@ -297,6 +297,75 @@ fn analyze_emits_recording_support_and_rejects_unsupported_geometry() {
 }
 
 #[test]
+fn analyze_validates_seed_before_writing_recording_support() {
+    if !ffmpeg_available() {
+        return;
+    }
+
+    let invalid_seed = scratch("support-invalid-seed.json");
+    let analysis = scratch("support-invalid-seed-analysis.json");
+    let support = scratch("support-invalid-seed-sidecar.json");
+    let _ = fs::remove_file(&invalid_seed);
+    let _ = fs::remove_file(&analysis);
+    let _ = fs::remove_file(&support);
+
+    let valid_seed = repo_path(
+        "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+    );
+    let mut seed_json: Value =
+        serde_json::from_slice(&fs::read(valid_seed).expect("read valid seed")).expect("seed JSON");
+    seed_json["seed"]["target"]["radius_px"] = Value::from(0.0);
+    fs::write(
+        &invalid_seed,
+        format!("{}\n", serde_json::to_string_pretty(&seed_json).unwrap()),
+    )
+    .expect("write invalid seed");
+
+    let output = Command::new(binary())
+        .arg("analyze")
+        .arg("--manifest")
+        .arg(repo_path("validation/fixtures/public/manifest.json"))
+        .arg("--fixture")
+        .arg("synthetic-clean-side-12")
+        .arg("--video")
+        .arg(repo_path(
+            "validation/fixtures/public/synthetic-clean-side-12.mp4",
+        ))
+        .arg("--seed")
+        .arg(&invalid_seed)
+        .arg("--plate-diameter-m")
+        .arg("0.45")
+        .arg("--tracker")
+        .arg("template")
+        .arg("--filter")
+        .arg("raw")
+        .arg("--kinematics-max-gap-s")
+        .arg("0.2")
+        .arg("--kinematics-min-confidence")
+        .arg("0")
+        .arg("--recording-support-output")
+        .arg(&support)
+        .arg("--output")
+        .arg(&analysis)
+        .output()
+        .expect("run invalid-seed analysis");
+
+    assert_exit(&output, 5, "status=failure error[seed-calibration]");
+    assert!(
+        !support.exists(),
+        "invalid seed must not produce recording-support metadata derived from that seed"
+    );
+    assert!(
+        !analysis.exists(),
+        "invalid seed must not produce canonical analysis"
+    );
+
+    let _ = fs::remove_file(invalid_seed);
+    let _ = fs::remove_file(analysis);
+    let _ = fs::remove_file(support);
+}
+
+#[test]
 fn render_failure_fixture_is_deterministic_and_keeps_uncertainty_visible() {
     let analysis = repo_path("crates/openbar-core/tests/fixtures/analysis-v1.golden.json");
     let output_a = scratch("render-failure-a.svg");
