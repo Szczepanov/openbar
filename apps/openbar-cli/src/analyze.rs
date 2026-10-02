@@ -140,8 +140,6 @@ struct ManifestMedia {
 #[derive(Debug, Clone, Deserialize)]
 struct ManifestVideo {
     nominal_fps: f64,
-    #[serde(default)]
-    measured_fps: Option<f64>,
     width_px: u32,
     height_px: u32,
     #[serde(default)]
@@ -207,6 +205,11 @@ fn run(args: &Args) -> CliResult<()> {
         })
         .map_err(classify_media_error)?;
 
+    // Validate the seed against the decoded media before deriving any support metadata from it.
+    // Otherwise an invalid target radius/timestamp could be reclassified as recording metadata
+    // and, when requested, persisted into a misleading support sidecar.
+    validate_seed(&seed, &stream, args.selection, &clip)?;
+
     let recording_conditions = recording_conditions(
         args,
         fixture.as_ref(),
@@ -226,7 +229,6 @@ fn run(args: &Args) -> CliResult<()> {
         )));
     }
 
-    validate_seed(&seed, &stream, args.selection, &clip)?;
     let tracker_run = tracker
         .track(&clip.frame_samples(), seed.seed())
         .map_err(|error| CliError::tracking(format!("selected tracker failed: {error}")))?;
@@ -325,14 +327,13 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     let seed = PathBuf::from(required(&mut values, "--seed")?);
     let output = PathBuf::from(required(&mut values, "--output")?);
     let recording_support_output = take_path(&mut values, "--recording-support-output");
-    if recording_support_output
-        .as_ref()
-        .is_some_and(|path| path == &output)
-    {
-        return Err(CliError::invalid_input(
-            "--recording-support-output must differ from --output",
-        ));
-    }
+    validate_output_paths(
+        video.as_ref(),
+        manifest.as_ref(),
+        &seed,
+        &output,
+        recording_support_output.as_ref(),
+    )?;
     let plate_diameter_m = parse_f64(
         &required(&mut values, "--plate-diameter-m")?,
         "--plate-diameter-m",
@@ -578,6 +579,46 @@ fn validate_recording_metadata_source(
         return Err(CliError::invalid_input(
             "direct --video analysis requires --camera-view and --camera-movement; OpenBar will not assume side/fixed geometry",
         ));
+    }
+    Ok(())
+}
+
+fn validate_output_paths(
+    video: Option<&PathBuf>,
+    manifest: Option<&PathBuf>,
+    seed: &Path,
+    output: &Path,
+    recording_support_output: Option<&PathBuf>,
+) -> CliResult<()> {
+    if recording_support_output.is_some_and(|path| path.as_path() == output) {
+        return Err(CliError::invalid_input(
+            "--recording-support-output must differ from --output",
+        ));
+    }
+
+    let explicit_inputs = [
+        ("--video", video.map(PathBuf::as_path)),
+        ("--manifest", manifest.map(PathBuf::as_path)),
+        ("--seed", Some(seed)),
+    ];
+    for (output_flag, destination) in [
+        ("--output", Some(output)),
+        (
+            "--recording-support-output",
+            recording_support_output.map(PathBuf::as_path),
+        ),
+    ] {
+        let Some(destination) = destination else {
+            continue;
+        };
+        if let Some((input_flag, _)) = explicit_inputs
+            .iter()
+            .find(|(_, input)| input.is_some_and(|input| input == destination))
+        {
+            return Err(CliError::invalid_input(format!(
+                "{output_flag} must not overwrite the explicit input path supplied by {input_flag}"
+            )));
+        }
     }
     Ok(())
 }
@@ -933,8 +974,6 @@ fn recording_conditions(
         )
     };
 
-    let authored_measured_fps = fixture.and_then(|fixture| fixture.video.measured_fps);
-
     RecordingConditions {
         camera_view,
         approx_yaw_deg,
@@ -943,7 +982,9 @@ fn recording_conditions(
         distance_m,
         camera_movement,
         nominal_fps,
-        measured_fps: authored_measured_fps.or_else(|| measured_fps(clip)),
+        // Derivatives and validation are timestamp-authoritative, so report the rate observed
+        // from the decoded timestamps rather than preferring manifest-authored metadata.
+        measured_fps: measured_fps(clip),
         width_px: stream.display_width_px,
         height_px: stream.display_height_px,
         plate_diameter_px: Some(plate_diameter_px),
@@ -1556,6 +1597,23 @@ mod tests {
         assert!(error
             .to_string()
             .contains("cannot override fixture metadata"));
+    }
+
+    #[test]
+    fn output_paths_cannot_alias_explicit_inputs() {
+        let error = parse_args(base_args("seed.json"))
+            .expect_err("analysis output must not alias the seed input");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--output"));
+        assert!(error.to_string().contains("--seed"));
+
+        let mut args = base_args("analysis.json");
+        args.extend(strings(&["--recording-support-output", "seed.json"]));
+        let error = parse_args(args)
+            .expect_err("support output must not alias the seed input");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--recording-support-output"));
+        assert!(error.to_string().contains("--seed"));
     }
 
     #[test]
