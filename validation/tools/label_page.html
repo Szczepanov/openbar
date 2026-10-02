@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plate Centre Labelling</title>
+<style>
+  :root { --bg:#16181d; --panel:#1f232b; --text:#e6e8ec; --muted:#9aa3b2; --accent:#4cc2ff; --warn:#ffb020; --ok:#3ecf8e; --bad:#ff5d6c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, sans-serif; display:grid; grid-template-columns:1fr 340px; height:100vh; }
+  #stage { position:relative; overflow:hidden; cursor:crosshair; background:#000; }
+  canvas { display:block; }
+  aside { background:var(--panel); padding:14px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:15px; margin:0; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; }
+  button { background:#2b313c; color:var(--text); border:1px solid #3a4250; border-radius:6px; padding:6px 9px; cursor:pointer; font:inherit; }
+  button.on { background:var(--accent); color:#000; border-color:var(--accent); }
+  button:hover { border-color:var(--accent); }
+  #loupe { width:100%; aspect-ratio:1; background:#000; border:1px solid #3a4250; image-rendering:pixelated; }
+  .muted { color:var(--muted); font-size:12px; }
+  kbd { background:#2b313c; border:1px solid #3a4250; border-radius:4px; padding:0 4px; font-size:11px; }
+  #strip { display:flex; flex-wrap:wrap; gap:3px; }
+  #strip span { width:14px; height:14px; border-radius:3px; background:#3a4250; cursor:pointer; }
+  #strip span.labelled { background:var(--ok); } #strip span.unlabelable { background:var(--bad); }
+  #strip span.not_annotated { background:var(--warn); } #strip span.cur { outline:2px solid #fff; }
+  textarea { width:100%; background:#14171c; color:var(--text); border:1px solid #3a4250; border-radius:6px; font:12px monospace; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="view"></canvas></div>
+<aside>
+  <h1 id="title"></h1>
+  <div id="annotator" class="muted"></div>
+  <div id="frameinfo" class="muted"></div>
+  <canvas id="loupe" width="240" height="240"></canvas>
+  <div id="coords" class="muted"></div>
+  <div>
+    <div class="muted">State</div>
+    <div class="row" id="state"></div>
+  </div>
+  <div>
+    <div class="muted">Visibility</div>
+    <div class="row" id="visibility"></div>
+  </div>
+  <div>
+    <div class="muted">Quality (labelled only)</div>
+    <div class="row" id="quality"></div>
+  </div>
+  <input id="notes" placeholder="notes (optional)" style="background:#14171c;color:var(--text);border:1px solid #3a4250;border-radius:6px;padding:6px">
+  <div class="row"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button><button id="clear">Clear centre</button></div>
+  <div id="strip"></div>
+  <div class="row"><button id="export">Download CSV</button></div>
+  <div class="muted">
+    <b>Click</b> plate centre &middot; <b>Shift+click</b> a point on the plate rim (radius, optional) &middot;
+    <b>Wheel</b> zoom &middot; <b>Right/middle-drag</b> pan &middot; <kbd>&larr;</kbd><kbd>&rarr;</kbd> frames &middot;
+    <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> quality high/med/low &middot; <kbd>O</kbd> partially occluded &middot;
+    <kbd>U</kbd> unlabelable &middot; <kbd>F</kbd> fully occluded &middot; <kbd>S</kbd> skip (not annotated).<br>
+    Label the geometric centre of the plate face, not the bar end. If you cannot place it reliably,
+    mark it unlabelable instead of guessing. Coordinates use pixel-centre convention (pixel <i>i</i> spans
+    <i>i</i>&minus;0.5&hellip;<i>i</i>+0.5). Progress autosaves in this browser.
+  </div>
+  <textarea id="csv" rows="4" readonly></textarea>
+</aside>
+<script>
+const CONFIG = /*CONFIG*/null;
+// Storage is per package (fixture, annotator, frame grid) so a second labelling pass starts empty.
+const KEY = "openbar-label-" + CONFIG.fixture_id + "-" + CONFIG.package_id;
+const STATES = ["labelled", "unlabelable", "not_annotated"];
+const VIS = ["visible", "partially_occluded", "fully_occluded", "unknown"];
+const QUAL = ["high", "medium", "low"];
+let labels = {};
+try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
+let cur = 0, zoom = 1, panX = 0, panY = 0, mouse = null, dragging = null;
+const images = CONFIG.frames.map(f => { const im = new Image(); im.src = f.file; im.onload = () => draw(); return im; });
+const view = document.getElementById("view"), ctx = view.getContext("2d");
+const loupe = document.getElementById("loupe"), lctx = loupe.getContext("2d");
+const stage = document.getElementById("stage");
+
+function rec() {
+  const ts = CONFIG.frames[cur].timestamp_s;
+  if (!labels[ts]) labels[ts] = { state: "not_annotated", visibility: "visible", quality: "high", x: null, y: null, r: null, notes: "" };
+  return labels[ts];
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {} renderCsv(); }
+
+function fit() {
+  view.width = stage.clientWidth; view.height = stage.clientHeight;
+  zoom = Math.min(view.width / CONFIG.width_px, view.height / CONFIG.height_px);
+  panX = (view.width - CONFIG.width_px * zoom) / 2; panY = (view.height - CONFIG.height_px * zoom) / 2;
+}
+// Image-space continuous position u -> pixel-centre coordinate u - 0.5.
+function toImage(cx, cy) { return { x: (cx - panX) / zoom - 0.5, y: (cy - panY) / zoom - 0.5 }; }
+function toCanvas(x, y) { return { cx: (x + 0.5) * zoom + panX, cy: (y + 0.5) * zoom + panY }; }
+
+function mark(c, x, y, r, scale) {
+  c.strokeStyle = "#4cc2ff"; c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(x - 12, y); c.lineTo(x - 3, y); c.moveTo(x + 3, y); c.lineTo(x + 12, y);
+  c.moveTo(x, y - 12); c.lineTo(x, y - 3); c.moveTo(x, y + 3); c.lineTo(x, y + 12); c.stroke();
+  if (r) { c.strokeStyle = "rgba(76,194,255,.6)"; c.beginPath(); c.arc(x, y, r * scale, 0, Math.PI * 2); c.stroke(); }
+}
+function draw() {
+  const im = images[cur];
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, view.width, view.height);
+  if (im.complete) { ctx.imageSmoothingEnabled = zoom < 2; ctx.drawImage(im, panX, panY, CONFIG.width_px * zoom, CONFIG.height_px * zoom); }
+  const r = rec();
+  if (r.x !== null) { const p = toCanvas(r.x, r.y); mark(ctx, p.cx, p.cy, r.r, zoom); }
+  drawLoupe(); updatePanel();
+}
+function drawLoupe() {
+  const im = images[cur], L = 8, half = loupe.width / L / 2;
+  lctx.fillStyle = "#000"; lctx.fillRect(0, 0, loupe.width, loupe.height);
+  const r = rec();
+  const centre = mouse ? toImage(mouse.cx, mouse.cy) : (r.x !== null ? { x: r.x, y: r.y } : null);
+  if (!centre || !im.complete) return;
+  lctx.imageSmoothingEnabled = false;
+  lctx.drawImage(im, centre.x + 0.5 - half, centre.y + 0.5 - half, half * 2, half * 2, 0, 0, loupe.width, loupe.height);
+  lctx.strokeStyle = "rgba(255,255,255,.7)"; lctx.beginPath();
+  lctx.moveTo(loupe.width / 2, 0); lctx.lineTo(loupe.width / 2, loupe.height);
+  lctx.moveTo(0, loupe.height / 2); lctx.lineTo(loupe.width, loupe.height / 2); lctx.stroke();
+  if (r.x !== null) mark(lctx, loupe.width / 2 + (r.x - centre.x) * L, loupe.height / 2 + (r.y - centre.y) * L, r.r, L);
+  document.getElementById("coords").textContent = `cursor x=${centre.x.toFixed(1)} y=${centre.y.toFixed(1)}`;
+}
+function buttons(id, values, field) {
+  const el = document.getElementById(id); el.innerHTML = "";
+  values.forEach(v => { const b = document.createElement("button"); b.textContent = v.replace("_", " ");
+    b.onclick = () => { setField(field, v); }; b.dataset.v = v; el.appendChild(b); });
+}
+function setField(field, v) {
+  const r = rec(); r[field] = v;
+  if (field === "state" && v !== "labelled") { r.x = r.y = r.r = null; }
+  if (field === "visibility" && v === "fully_occluded") { r.state = "unlabelable"; r.x = r.y = r.r = null; }
+  save(); draw();
+}
+function updatePanel() {
+  const f = CONFIG.frames[cur], r = rec();
+  document.getElementById("title").textContent = `${CONFIG.fixture_id}  ${cur + 1}/${CONFIG.frames.length}`;
+  document.getElementById("frameinfo").textContent = `frame ${f.frame_index}, t = ${f.timestamp_s.toFixed(6)} s` +
+    (r.x !== null ? ` · centre (${r.x.toFixed(1)}, ${r.y.toFixed(1)})` + (r.r ? ` r=${r.r.toFixed(1)}` : "") : "");
+  for (const [id, field] of [["state", "state"], ["visibility", "visibility"], ["quality", "quality"]])
+    document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === r[field]));
+  document.getElementById("notes").value = r.notes || "";
+  const strip = document.getElementById("strip"); strip.innerHTML = "";
+  CONFIG.frames.forEach((fr, i) => { const s = document.createElement("span"); const l = labels[fr.timestamp_s];
+    if (l) s.className = l.state; if (i === cur) s.classList.add("cur"); s.title = fr.timestamp_s;
+    s.onclick = () => go(i); strip.appendChild(s); });
+}
+function go(i) { cur = Math.max(0, Math.min(CONFIG.frames.length - 1, i)); draw(); }
+
+stage.addEventListener("contextmenu", e => e.preventDefault());
+stage.addEventListener("mousedown", e => {
+  const rect = view.getBoundingClientRect(), cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  if (e.button !== 0) { dragging = { x: e.clientX, y: e.clientY, px: panX, py: panY }; return; }
+  const p = toImage(cx, cy), r = rec();
+  // Integer coordinates are pixel centres; the outer half-pixel border is outside 0 <= x < width.
+  if (p.x < 0 || p.y < 0 || p.x >= CONFIG.width_px - 0.5 || p.y >= CONFIG.height_px - 0.5) return;
+  if (e.shiftKey) { if (r.x !== null) r.r = Math.hypot(p.x - r.x, p.y - r.y); }
+  else { r.x = p.x; r.y = p.y; r.state = "labelled"; if (r.visibility === "fully_occluded") r.visibility = "visible"; }
+  save(); draw();
+});
+window.addEventListener("mouseup", () => { dragging = null; });
+stage.addEventListener("mousemove", e => {
+  const rect = view.getBoundingClientRect();
+  if (dragging) { panX = dragging.px + e.clientX - dragging.x; panY = dragging.py + e.clientY - dragging.y; }
+  mouse = { cx: e.clientX - rect.left, cy: e.clientY - rect.top }; draw();
+});
+stage.addEventListener("mouseleave", () => { mouse = null; draw(); });
+stage.addEventListener("wheel", e => {
+  e.preventDefault(); const rect = view.getBoundingClientRect(), cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  const before = toImage(cx, cy); zoom *= e.deltaY < 0 ? 1.25 : 0.8; zoom = Math.max(0.1, Math.min(40, zoom));
+  panX = cx - (before.x + 0.5) * zoom; panY = cy - (before.y + 0.5) * zoom; draw();
+}, { passive: false });
+document.getElementById("notes").addEventListener("input", e => { rec().notes = e.target.value.replace(/[\r\n,"]/g, " "); save(); });
+document.addEventListener("keydown", e => {
+  if (e.target.id === "notes") return;
+  const k = e.key.toLowerCase();
+  if (k === "arrowright" || k === "n") go(cur + 1);
+  else if (k === "arrowleft" || k === "p") go(cur - 1);
+  else if (k === "1" || k === "2" || k === "3") setField("quality", QUAL[+k - 1]);
+  else if (k === "o") setField("visibility", rec().visibility === "partially_occluded" ? "visible" : "partially_occluded");
+  else if (k === "u") setField("state", "unlabelable");
+  else if (k === "f") setField("visibility", "fully_occluded");
+  else if (k === "s") setField("state", "not_annotated");
+  else if (k === "0") { fit(); draw(); }
+});
+document.getElementById("prev").onclick = () => go(cur - 1);
+document.getElementById("next").onclick = () => go(cur + 1);
+document.getElementById("clear").onclick = () => { const r = rec(); r.x = r.y = r.r = null; r.state = "not_annotated"; save(); draw(); };
+
+// BEGIN csvRows (pure; exercised by validation/tests/test_label_package.py)
+function csvRows(frames, labels) {
+  const head = "timestamp_s,requested_timestamp_s,frame_index,annotation_state,visibility,quality,x_px,y_px,radius_px,diameter_px,left_px,top_px,right_px,bottom_px,notes";
+  const rows = frames.map(f => {
+    const r = labels[f.timestamp_s] || { state: "not_annotated", visibility: "unknown" };
+    const labelled = r.state === "labelled" && r.x !== null && r.x !== undefined;
+    const state = labelled ? "labelled" : (r.state === "unlabelable" ? "unlabelable" : "not_annotated");
+    const quality = labelled ? r.quality : (state === "unlabelable" ? "unusable" : "not_assessed");
+    const vis = state === "not_annotated" ? (r.visibility || "unknown") : r.visibility;
+    const notes = (r.notes || "").replace(/[\r\n,"]/g, " ");
+    return [f.timestamp_s.toFixed(6), "", f.frame_index, state, vis, quality,
+      labelled ? r.x.toFixed(2) : "", labelled ? r.y.toFixed(2) : "",
+      labelled && r.r ? r.r.toFixed(2) : "", "", "", "", "", "", notes].join(",");
+  });
+  return [head, ...rows].join("\n") + "\n";
+}
+// END csvRows
+function csvText() { return csvRows(CONFIG.frames, labels); }
+function renderCsv() { document.getElementById("csv").value = csvText(); }
+document.getElementById("export").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csvText()], { type: "text/csv" }));
+  a.download = `${CONFIG.fixture_id}.${CONFIG.annotator_id}.labels.csv`; a.click();
+};
+
+document.getElementById("annotator").textContent = `annotator ${CONFIG.annotator_id} · package ${CONFIG.package_id}`;
+buttons("state", STATES, "state"); buttons("visibility", VIS, "visibility"); buttons("quality", QUAL, "quality");
+window.addEventListener("resize", () => { fit(); draw(); });
+fit(); renderCsv(); draw();
+</script>
+</body>
+</html>

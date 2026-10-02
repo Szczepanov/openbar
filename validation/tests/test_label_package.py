@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import shutil
+import struct
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+TOOLS = ROOT / "validation" / "tools"
+MANIFEST_PATH = ROOT / "validation" / "fixtures" / "public" / "manifest.json"
+FIXTURE_ID = "synthetic-clean-side-12"
+
+
+def load(name: str):
+    spec = importlib.util.spec_from_file_location(f"openbar_{name}", TOOLS / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+label_package = load("label_package")
+annotations = load("annotations")
+
+
+def private_fixture() -> dict:
+    fixture = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]
+    return {**fixture, "source": {**fixture["source"], "redistribution_status": "private_only"}}
+
+
+def png_size(path: Path) -> tuple[int, int]:
+    header = path.read_bytes()[:24]
+    assert header[:8] == b"\x89PNG\r\n\x1a\n"
+    return struct.unpack(">II", header[16:24])
+
+
+class FrameSelectionTests(unittest.TestCase):
+    def test_grid_picks_nearest_decoded_frames_and_keeps_explicit_frames(self):
+        timestamps = [0.0, 0.031, 0.067, 0.1, 0.133, 0.17, 0.2]
+
+        self.assertEqual(label_package.select_frames(timestamps, 0.0, 0.2, 0.1, [5]), [0, 3, 5, 6])
+
+    def test_grid_times_between_frames_do_not_duplicate_indices(self):
+        self.assertEqual(label_package.select_frames([0.0, 1.0], 0.0, 1.0, 0.25, []), [0, 1])
+
+    def test_invalid_grid_or_frame_is_rejected(self):
+        with self.assertRaises(label_package.PackageError):
+            label_package.select_frames([0.0, 1.0], 0.0, 1.0, 0.0, [])
+        with self.assertRaises(label_package.PackageError):
+            label_package.select_frames([0.0, 1.0], 1.0, 0.0, 0.5, [])
+        with self.assertRaises(label_package.PackageError):
+            label_package.select_frames([0.0, 1.0], 0.0, 1.0, 0.5, [2])
+
+    def test_display_size_swaps_for_quarter_turn_rotation(self):
+        self.assertEqual(label_package.display_size(1280, 720, 90), (720, 1280))
+        self.assertEqual(label_package.display_size(1280, 720, 270), (720, 1280))
+        self.assertEqual(label_package.display_size(1280, 720, 180), (1280, 720))
+
+
+def probe_json(stream_extra: dict, frames: list) -> str:
+    stream = {"width": 1280, "height": 720, "time_base": "1/90000", "start_pts": 0, **stream_extra}
+    return json.dumps({"streams": [stream], "frames": frames})
+
+
+class ProbeTests(unittest.TestCase):
+    def test_parses_timestamps_from_start_pts_and_rotation(self):
+        probed = label_package.parse_probe(probe_json(
+            {"start_pts": 900, "side_data_list": [{"rotation": -90}], "sample_aspect_ratio": "1:1"},
+            [{"pts": 900}, {"pts": 3885}, {"pts": 6870}],
+        ))
+
+        self.assertEqual(probed["timestamps_s"], [0.0, 2985 / 90000, 5970 / 90000])
+        self.assertEqual(probed["rotation_deg"], 270)
+        self.assertEqual(probed["pts"], [900, 3885, 6870])
+
+    def test_rejects_media_the_rust_frame_source_rejects(self):
+        cases = {
+            "sar": probe_json({"sample_aspect_ratio": "4:3"}, [{"pts": 0}]),
+            "rotation": probe_json({"side_data_list": [{"rotation": 45}]}, [{"pts": 0}]),
+            "before start": probe_json({"start_pts": 10}, [{"pts": 5}]),
+            "missing pts": probe_json({}, [{"pts": 0}, {}]),
+            "non-increasing": probe_json({}, [{"pts": 5}, {"pts": 5}]),
+            "no frames": probe_json({}, []),
+            "no stream": json.dumps({"streams": [], "frames": [{"pts": 0}]}),
+        }
+        for name, text in cases.items():
+            with self.assertRaises(label_package.PackageError, msg=name):
+                label_package.parse_probe(text)
+
+
+class AlignmentTests(unittest.TestCase):
+    STDERR = (
+        "[Parsed_showinfo_1 @ 0000] n:   0 pts:   3072 pts_time:0.25    duration: 1024\n"
+        "[Parsed_showinfo_1 @ 0000] n:   1 pts:   6144 pts_time:0.5     duration: 1024\n"
+    )
+
+    def test_showinfo_pts_must_equal_probed_pts(self):
+        extracted = label_package.parse_showinfo(self.STDERR)
+
+        self.assertEqual(extracted, [3072, 6144])
+        label_package.require_aligned(extracted, [3072, 6144])
+        with self.assertRaises(label_package.PackageError):
+            label_package.require_aligned(extracted, [3072, 7168])
+        with self.assertRaises(label_package.PackageError):
+            label_package.require_aligned(extracted[:1], [3072, 6144])
+
+
+class PageContractTests(unittest.TestCase):
+    def test_page_exports_exactly_the_import_csv_columns(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        header = re.search(r'const head = "([^"]+)"', page).group(1).split(",")
+
+        self.assertEqual(len(header), len(annotations.CSV_COLUMNS))
+        self.assertEqual(set(header), annotations.CSV_COLUMNS)
+
+    def test_config_is_injected_exactly_once(self):
+        page = label_package.render_page("a /*CONFIG*/null b", {"fixture_id": "x</script>", "frames": []})
+
+        self.assertEqual(page, 'a {"fixture_id": "x<\\/script>", "frames": []} b')
+        with self.assertRaises(label_package.PackageError):
+            label_package.render_page("no placeholder", {})
+
+    def test_page_format_csv_imports_with_generated_metadata(self):
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        fixture = manifest["fixtures"][0]
+        sidecar = label_package.metadata(fixture, (320, 240), "pass-a", "grid")
+        sidecar["provenance"]["annotated_at"] = "2026-10-01T12:00:00Z"
+        rows = [
+            "timestamp_s,requested_timestamp_s,frame_index,annotation_state,visibility,quality,x_px,y_px,"
+            "radius_px,diameter_px,left_px,top_px,right_px,bottom_px,notes",
+            "0.000000,,0,labelled,visible,high,100.25,189.75,24.10,,,,,,",
+            "0.083333,,1,unlabelable,fully_occluded,unusable,,,,,,,,,",
+            "0.166667,,2,not_annotated,visible,not_assessed,,,,,,,,,",
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            csv_path = Path(temp) / "labels.csv"
+            csv_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            document = annotations.import_csv(sidecar, csv_path, manifest)
+
+        annotations.validate_annotation(document, manifest)
+        self.assertEqual(document["provenance"]["tool"], label_package.TOOL)
+        self.assertEqual(document["samples"][0]["center_px"], {"x_px": 100.25, "y_px": 189.75})
+
+
+    def test_package_id_separates_annotator_passes_and_grids(self):
+        frames = [{"file": "frames/frame_000000.png", "frame_index": 0, "timestamp_s": 0.0}]
+        first = label_package.page_config("clip", "pass-a", (320, 240), frames)
+
+        self.assertEqual(first, label_package.page_config("clip", "pass-a", (320, 240), frames))
+        self.assertNotEqual(first["package_id"], label_package.page_config("clip", "pass-b", (320, 240), frames)["package_id"])
+        self.assertNotEqual(first["package_id"], label_package.page_config("clip", "pass-a", (320, 240), [])["package_id"])
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_csv_rows_import_with_generated_metadata(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        function = re.search(r"// BEGIN csvRows.*?\n(.*?)// END csvRows", page, re.S).group(1)
+        frames = [{"timestamp_s": t, "frame_index": i} for i, t in enumerate([0.0, 0.083333, 0.166667, 0.25])]
+        labels = {
+            "0": {"state": "labelled", "visibility": "partially_occluded", "quality": "medium",
+                  "x": 100.257, "y": 189.743, "r": 24.1, "notes": 'rim "edge", blurred'},
+            "0.083333": {"state": "unlabelable", "visibility": "fully_occluded", "quality": "high",
+                         "x": None, "y": None, "r": None},
+            "0.166667": {"state": "labelled", "visibility": "visible", "quality": "high",
+                         "x": None, "y": None, "r": None},
+        }
+        script = function + f"process.stdout.write(csvRows({json.dumps(frames)}, {json.dumps(labels)}));"
+        csv_text = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        sidecar = label_package.metadata(manifest["fixtures"][0], (320, 240), "pass-a", "grid")
+        sidecar["provenance"]["annotated_at"] = "2026-10-01T12:00:00Z"
+        with tempfile.TemporaryDirectory() as temp:
+            csv_path = Path(temp) / "labels.csv"
+            csv_path.write_text(csv_text, encoding="utf-8")
+            document = annotations.import_csv(sidecar, csv_path, manifest)
+
+        annotations.validate_annotation(document, manifest)
+        states = [sample["annotation_state"] for sample in document["samples"]]
+        self.assertEqual(states, ["labelled", "unlabelable", "not_annotated", "not_annotated"])
+        self.assertEqual(document["samples"][0]["center_px"], {"x_px": 100.26, "y_px": 189.74})
+        self.assertEqual(document["samples"][0]["notes"], "rim  edge   blurred")
+
+
+class OutputSafetyTests(unittest.TestCase):
+    def test_non_redistributable_frames_must_stay_under_validation_private(self):
+        fixture = private_fixture()
+
+        with self.assertRaises(label_package.PackageError):
+            label_package.require_safe_output(fixture, ROOT / "target" / "frames")
+        label_package.require_safe_output(fixture, label_package.PRIVATE_ROOT / "annotations" / "work" / "x")
+
+    def test_redistributable_frames_may_go_anywhere(self):
+        fixture = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]
+
+        label_package.require_safe_output(fixture, ROOT / "target" / "frames")
+
+
+@unittest.skipUnless(
+    shutil.which("ffmpeg") and shutil.which("ffprobe") or os.environ.get("OPENBAR_REQUIRE_FFMPEG") == "1",
+    "SKIPPED: ffmpeg/ffprobe not on PATH",
+)
+class PackageBuildTests(unittest.TestCase):
+    def test_builds_public_fixture_package_with_authoritative_timestamps(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "package"
+            args = argparse.Namespace(
+                manifest=MANIFEST_PATH, fixture=FIXTURE_ID, start_s=0.0, end_s=None, step_s=0.25,
+                include_frame=[1], annotator_id="pass-a", output_dir=output_dir,
+            )
+
+            label_package.build(args)
+
+            page = (output_dir / "index.html").read_text(encoding="utf-8")
+            config = json.loads(re.search(r"const CONFIG = (\{.*?\});\n", page).group(1))
+            frames = config["frames"]
+            self.assertEqual(config["annotator_id"], "pass-a")
+            self.assertEqual([frame["frame_index"] for frame in frames], [0, 1, 3, 6, 9])
+            self.assertEqual([frame["timestamp_s"] for frame in frames], [0.0, 0.083333, 0.25, 0.5, 0.75])
+            for frame in frames:
+                self.assertEqual(png_size(output_dir / frame["file"]), (320, 240))
+            sidecar = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(sidecar["coordinate_system"]["width_px"], 320)
+            self.assertEqual(sidecar["source_video_sha256"],
+                             json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]["media"]["sha256"])
+
+
+if __name__ == "__main__":
+    unittest.main()
