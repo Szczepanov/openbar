@@ -15,7 +15,6 @@ Typical flow:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import tempfile
@@ -567,7 +566,11 @@ def evaluate_study(
                 }
                 continue
             prediction = load_json(prediction_path)
-            actual_config = prediction.get("implementation", {}).get("config", {})
+            actual_config = (
+                prediction.get("implementation", {})
+                .get("config", {})
+                .get("tracker_config", {})
+            )
             if actual_config != tracker["expected_config"]:
                 raise SelectionError(
                     f"{fixture_id}: {tracker['id']} effective config differs from frozen config"
