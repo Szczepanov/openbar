@@ -46,7 +46,11 @@ does not block the rest.
 
 Alongside: `opencv-csrt`, `template-sad-v1` and `local-contrast-centroid-v1`, unchanged.
 
-Sources and pins (verified 2026-10-02; the exact commit is pinned in `requirements.txt` when installed):
+Sources and licence evidence (verified 2026-10-02). The Phase 3 bootstrap `requirements.txt` did not retain
+an immutable package/VCS lock, despite the original wording here. After review, the runner verifies checkpoint
+SHA-256 values and records installed package versions plus pip VCS direct-source metadata when available.
+Historical Run 1 therefore remains development/exploratory evidence; shortlisted candidates must be rerun under
+an explicit retained environment lock before any Phase 4 freeze.
 
 | Library | Source | Licence evidence |
 |---|---|---|
@@ -240,7 +244,8 @@ accuracy reference, but cannot be frozen for shipping without a licence resoluti
 ## 11. Commands
 
 ```bash
-# GPU venv (CUDA 12.x PyTorch wheel matching driver 616.92; exact versions pinned in requirements.txt)
+# GPU venv bootstrap (CUDA 12.x PyTorch wheel matching driver 616.92).
+# requirements.txt is not the historical run lock; prediction provenance captures the installed environment.
 python -m venv research/gpu-tracking/.venv
 research/gpu-tracking/.venv/Scripts/python -m pip install -r research/gpu-tracking/requirements.txt
 research/gpu-tracking/.venv/Scripts/python research/gpu-tracking/download_models.py
