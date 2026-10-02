@@ -99,6 +99,7 @@ time, because the user waits for the complete offline analysis rather than for a
 
 The harness may run on any machine for diagnostics, but a gate status can be assigned only when:
 
+- the suite explicitly records that #57 has frozen the production tracker/filter candidate;
 - the observed runtime matches the designated physical Pixel 8 reference environment;
 - at least two cases are explicitly marked representative for the gate;
 - those cases are non-synthetic real lifting clips;
