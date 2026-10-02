@@ -217,8 +217,11 @@ def assess_boundary(
         if purpose not in eligible_purposes:
             blockers.append(f"fixture {fixture['id']} has ineligible purpose {purpose!r}")
             continue
-        if require_non_synthetic and kind == "synthetic":
-            blockers.append(f"fixture {fixture['id']} is synthetic")
+        if require_non_synthetic and kind not in {"self_recorded", "public_dataset", "third_party"}:
+            blockers.append(
+                f"fixture {fixture['id']} does not establish non-synthetic provenance "
+                f"(source kind {kind!r})"
+            )
             continue
         eligible_fixtures.append(fixture)
 
@@ -233,14 +236,7 @@ def assess_boundary(
                 f"fixture {fixture['id']} has no benchmark case for the frozen tracker"
             )
 
-    for case in selected_cases:
-        if not implementation_matches(case.get("implementation") or {}, candidate):
-            blockers.append(
-                f"case {case.get('case_id')} was produced by a different tracker candidate"
-            )
-            continue
-        if case.get("fixture_id") not in eligible_ids:
-            continue
+    for case in eligible_matching_cases:
         metrics = case.get("metrics") or {}
         missing = [key for key in _REQUIRED_METRICS if metrics.get(key) is None]
         if missing:
@@ -388,7 +384,8 @@ def build_artifact(study_path: Path) -> dict[str, Any]:
         if fixture.get("purpose") in eligible_purposes
         and (
             not policy.get("require_non_synthetic", True)
-            or (fixture.get("source") or {}).get("kind") != "synthetic"
+            or (fixture.get("source") or {}).get("kind")
+            in {"self_recorded", "public_dataset", "third_party"}
         )
     ]
     if not eligible_real:
