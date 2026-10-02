@@ -386,7 +386,18 @@ def summarize_repeats(runs: list[dict[str, Any]], media_span_s: float) -> dict[s
     }
 
 
-def assess_gate(env: dict[str, Any], cases: list[dict[str, Any]]) -> dict[str, str]:
+def assess_gate(
+    env: dict[str, Any],
+    cases: list[dict[str, Any]],
+    *,
+    production_candidate_frozen: bool,
+) -> dict[str, str]:
+    if not production_candidate_frozen:
+        return {
+            "status": "NOT MEASURABLE YET",
+            "evidence": "#57 has not yet frozen the production tracker/filter candidate for this runtime study.",
+            "rationale": "A fast development integration probe cannot satisfy the product performance gate.",
+        }
     if not env["reference_match"]:
         return {
             "status": "NOT MEASURABLE YET",
@@ -629,7 +640,11 @@ def main(argv: list[str] | None = None) -> int:
             },
             "environment": env,
             "cases": cases,
-            "gate": assess_gate(env, cases),
+            "gate": assess_gate(
+                env,
+                cases,
+                production_candidate_frozen=bool(suite.get("production_candidate_frozen", False)),
+            ),
         }
         write_json(output_path, artifact)
         print(f"phone runtime evidence: {output_path}")
