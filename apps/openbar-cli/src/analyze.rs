@@ -1665,6 +1665,45 @@ mod tests {
         assert_eq!(parsed.kinematics.min_confidence, 0.0);
     }
 
+
+    #[test]
+    fn tracker_and_observations_are_exactly_one_required() {
+        let mut both = base_args("analysis.json");
+        both.extend(strings(&["--observations", "prediction.json"]));
+        let error = parse_args(both).expect_err("both measurement sources must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("mutually exclusive"));
+
+        let mut neither = base_args("analysis.json");
+        let tracker_index = neither
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        neither.drain(tracker_index..=tracker_index + 1);
+        let error = parse_args(neither).expect_err("missing measurement source must fail");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("exactly one"));
+    }
+
+    #[test]
+    fn observations_reject_internal_tracker_options() {
+        let mut args = base_args("analysis.json");
+        let tracker_index = args
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        args.splice(
+            tracker_index..=tracker_index + 1,
+            strings(&["--observations", "prediction.json"]),
+        );
+        args.extend(strings(&["--tracker-search-radius-px", "20"]));
+        let error = parse_args(args).expect_err("external observations own tracker configuration");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("tracker-specific options cannot be used with --observations"));
+    }
+
     #[test]
     fn direct_video_requires_explicit_geometry_metadata() {
         let mut args = base_args("analysis.json");
@@ -1705,6 +1744,23 @@ mod tests {
         assert_eq!(error.kind(), CliErrorKind::InvalidInput);
         assert!(error.to_string().contains("--recording-support-output"));
         assert!(error.to_string().contains("--seed"));
+    }
+
+
+    #[test]
+    fn output_paths_cannot_alias_external_observations() {
+        let mut args = base_args("prediction.json");
+        let tracker_index = args
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        args.splice(
+            tracker_index..=tracker_index + 1,
+            strings(&["--observations", "prediction.json"]),
+        );
+        let error = parse_args(args).expect_err("analysis output must not alias observations input");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("--observations"));
     }
 
     #[test]
@@ -1875,6 +1931,90 @@ mod tests {
     }
 
     #[test]
+    fn external_observations_public_fixture_is_deterministic() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output_a = scratch_file("external-analysis-a.json");
+        let output_b = scratch_file("external-analysis-b.json");
+        let _ = fs::remove_file(&output_a);
+        let _ = fs::remove_file(&output_b);
+
+        let prediction =
+            repo_path("validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json");
+        let args_a = external_fixture_args(&output_a, &prediction);
+        let args_b = external_fixture_args(&output_b, &prediction);
+        run(&args_a).expect("first external analysis succeeds");
+        run(&args_b).expect("second external analysis succeeds");
+
+        let bytes_a = fs::read(&output_a).expect("first output");
+        let bytes_b = fs::read(&output_b).expect("second output");
+        assert_eq!(bytes_a, bytes_b, "external analysis must be deterministic");
+
+        let parsed = Analysis::from_json(
+            std::str::from_utf8(&bytes_a).expect("analysis JSON must be UTF-8"),
+        )
+        .expect("external output round-trips through canonical model");
+        assert_eq!(parsed.schema_version(), 1);
+        assert_eq!(parsed.provenance().tracker.id, "synthetic-perfect");
+        assert_eq!(parsed.raw_observations().len(), 10);
+        assert_eq!(parsed.raw_observations()[0].timestamp_s, 0.0);
+        assert_eq!(
+            parsed.raw_observations()[0]
+                .measurement
+                .expect("first sample tracked")
+                .x_px,
+            100.0
+        );
+        assert!(parsed
+            .provenance()
+            .tracker
+            .implementation
+            .parameters
+            .contains_key("prediction_sha256"));
+        assert!(parsed.derived().filtered.is_some());
+        assert!(parsed.derived().kinematics.is_some());
+
+        let _ = fs::remove_file(output_a);
+        let _ = fs::remove_file(output_b);
+    }
+
+    #[test]
+    fn invalid_external_observations_write_no_analysis() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output = scratch_file("external-invalid-output.json");
+        let prediction = scratch_file("external-invalid-hash.prediction-v1.json");
+        let _ = fs::remove_file(&output);
+        let _ = fs::remove_file(&prediction);
+
+        let source = repo_path(
+            "validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json",
+        );
+        let mut document: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(source).expect("read public prediction"))
+                .expect("parse public prediction");
+        document["source_video_sha256"] = serde_json::Value::String(
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
+        );
+        fs::write(
+            &prediction,
+            format!("{}\n", serde_json::to_string_pretty(&document).expect("serialize prediction")),
+        )
+        .expect("write invalid prediction");
+
+        let args = external_fixture_args(&output, &prediction);
+        let error = run(&args).expect_err("wrong source hash must fail before output");
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("does not match decoded media"));
+        assert!(!output.exists(), "invalid prediction must not create analysis output");
+
+        let _ = fs::remove_file(output);
+        let _ = fs::remove_file(prediction);
+    }
+
+    #[test]
     fn end_to_end_public_fixture_is_deterministic_and_refuses_overwrite() {
         if !ffmpeg_available() {
             return;
@@ -1908,6 +2048,44 @@ mod tests {
 
         let _ = fs::remove_file(output_a);
         let _ = fs::remove_file(output_b);
+    }
+
+    fn external_fixture_args(output: &Path, observations: &Path) -> Args {
+        let values = vec![
+            "--manifest".to_owned(),
+            repo_path("validation/fixtures/public/manifest.json")
+                .display()
+                .to_string(),
+            "--fixture".to_owned(),
+            "synthetic-clean-side-12".to_owned(),
+            "--video".to_owned(),
+            repo_path("validation/fixtures/public/synthetic-clean-side-12.mp4")
+                .display()
+                .to_string(),
+            "--seed".to_owned(),
+            repo_path(
+                "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+            )
+            .display()
+            .to_string(),
+            "--plate-diameter-m".to_owned(),
+            "0.45".to_owned(),
+            "--observations".to_owned(),
+            observations.display().to_string(),
+            "--filter".to_owned(),
+            "raw".to_owned(),
+            "--kinematics-max-gap-s".to_owned(),
+            "0.2".to_owned(),
+            "--kinematics-min-confidence".to_owned(),
+            "0".to_owned(),
+            "--output".to_owned(),
+            output.display().to_string(),
+            "--diagnostics".to_owned(),
+            "quiet".to_owned(),
+        ];
+        parse_args(values)
+            .expect("external fixture args parse")
+            .expect("not help")
     }
 
     fn fixture_args(output: &Path) -> Args {
