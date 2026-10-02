@@ -252,6 +252,9 @@ DaSiamRPN maintained 100% availability but had 10.8–27.0 px error; ViTTrack lo
 
 ### Phase 2: plate-geometry refinement on top of a box tracker (medium)
 
+Execution detail (pre-declared parameters, coordinate handling, tests, metrics and decision rule):
+[`docs/plans/PLATE_GEOMETRY_REFINEMENT_PLAN.md`](../docs/plans/PLATE_GEOMETRY_REFINEMENT_PLAN.md).
+
 New candidate `opencv-<base>+circle` (start with `csrt`, then try the best Phase 1 tracker as the base). Per
 frame:
 
