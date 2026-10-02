@@ -98,10 +98,15 @@ RecordingSupportAssessment (schema_version = 1) contains:
 
 - normalized recording conditions using the #3 view/movement/condition vocabulary;
 - overall support status;
+- exactly one emitted assessment for each of the 13 current recording dimensions;
 - per-dimension status and stable reason code;
 - the #14 evidence reference;
 - metric-level support status for horizontal displacement, vertical displacement, plate scale and
   velocity.
+
+For CLI-produced assessments, `measured_fps` is computed from decoded presentation timestamps.
+Fixture `nominal_fps` is retained as authored metadata rather than treated as a derivative time
+base.
 
 The JSON wire contract is
 [recording-support-v1.schema.json](../../validation/schema/recording-support-v1.schema.json).
