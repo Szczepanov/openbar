@@ -230,9 +230,10 @@ Introducing AGPL code into the application could materially change distribution 
 
 Treat Ultralytics as:
 
-- a benchmark;
-- a rapid research tool;
-- an optional commercial dependency only if a future commercial license is explicitly evaluated and accepted.
+- a benchmark candidate in an isolated evaluation environment where its licence obligations are understood;
+- an optional commercial dependency only if a future commercial licence is explicitly evaluated and accepted.
+
+Do not commit Ultralytics code/models or derived shipping assets into OpenBar under the current PolyForm Shield distribution posture without an explicit compatibility/legal review.
 
 Do not make the core architecture or persisted model format dependent on Ultralytics.
 
@@ -324,10 +325,10 @@ The actual observation generator may differ by protocol.
 
 ## 7. Future protocol abstraction
 
-The canonical architecture now records a future `MeasurementProtocol` boundary while explicitly
-keeping it out of M0 implementation scope.
+The architecture document now records a candidate `MeasurementProtocol` boundary as a non-normative
+design hypothesis while explicitly keeping it out of M0 implementation scope.
 
-The intended measurement-family split is:
+One hypothesized measurement-family split is:
 
 ```text
 MeasurementProtocol
@@ -340,7 +341,7 @@ MeasurementProtocol
     +-- SprintProtocol
 ```
 
-The abstraction should consume **protocol evidence**, not assume a continuous tracker trajectory.
+If a later ADR adopts this abstraction, it should consume **protocol evidence** rather than assume a continuous tracker trajectory.
 Evidence may include:
 
 - timestamped target observations;
@@ -349,8 +350,8 @@ Evidence may include:
 - calibrated points/lines/planes;
 - later pose/landmark observations.
 
-A protocol should validate its required evidence and support assumptions, derive typed events and
-metrics deterministically, and preserve confidence/failure/provenance.
+An adopted protocol implementation should validate its required evidence and support assumptions,
+derive typed events and metrics deterministically, and preserve confidence/failure/provenance.
 
 Conceptually:
 
@@ -390,9 +391,9 @@ crates/
   openbar-protocol-sprint/        # future (#69)
 ```
 
-The architecture direction is now explicit, but the Rust trait/crate extraction should remain a
-design hypothesis until a second protocol produces concrete shared requirements. Do not refactor
-M0 purely to satisfy this future shape.
+The candidate direction is documented, but the Rust trait/crate extraction remains a design
+hypothesis until a second protocol produces concrete shared requirements and an ADR accepts the
+boundary. Do not refactor M0 purely to satisfy this future shape.
 
 ---
 
@@ -1196,7 +1197,7 @@ Only after individual protocols have demonstrated acceptable measurement quality
 
 ## 23. Competitive differentiation
 
-Metric and WL Analysis demonstrate market demand for camera-based athlete measurement.
+Metric and WL Analysis are examples of products in the camera-based athlete-measurement category. Their existence shows category activity, but this document does **not** treat that as market-size or willingness-to-pay validation.
 
 OpenBar should not primarily differentiate by claiming a better detector.
 
@@ -1272,8 +1273,8 @@ Do not create generic abstractions prematurely, but avoid names or invariants th
 
 ### R2 — promote the protocol boundary to implementation ADR/API only after the second protocol exists
 
-The architecture now records the intended `MeasurementProtocol` boundary so today's design does
-not accidentally block jump/sprint support.
+The architecture now records a candidate `MeasurementProtocol` boundary so today's design does
+not accidentally block jump/sprint support without prematurely accepting that boundary.
 
 Do not, however, invent a large generic Rust framework before M0 is complete.
 
