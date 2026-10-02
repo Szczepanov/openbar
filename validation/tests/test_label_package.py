@@ -231,12 +231,77 @@ class PageContractTests(unittest.TestCase):
         calls = ",".join(f"applyKey({json.dumps(r)}, {json.dumps(k)}, {json.dumps(ring)})" for r, k, ring, _ in cases)
         script = functions + (
             f"process.stdout.write(JSON.stringify({{keys: [{calls}], "
-            "ring: [resizeRing(50, ']'), resizeRing(51, '['), resizeRing(null, ']'), resizeRing(50, 'x')]}));"
+            "ring: [resizeRing(50, 1), resizeRing(50, -0.1), resizeRing(0.15, -1), resizeRing(null, 1)]}));"
         )
         output = json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
 
         self.assertEqual(output["keys"], [expected for *_, expected in cases])
-        self.assertEqual(output["ring"], [51.0, 50.0, None, 50])
+        self.assertEqual(output["ring"], [51, 49.9, 0.1, None])
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_nudges_centre_one_pixel_inside_the_image(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        functions = re.search(r"// BEGIN keyActions.*?\n(.*?)// END keyActions", page, re.S).group(1)
+        centred = {"state": "labelled", "visibility": "visible", "quality": "high", "x": 10.25, "y": 0.5, "r": 30.0}
+        empty = {"state": "not_annotated", "visibility": "visible", "quality": None, "x": None, "y": None, "r": None}
+        calls = [
+            ("centred", "arrowleft"), ("centred", "arrowright"), ("centred", "arrowdown"),
+            ("centred", "arrowup"),  # would leave the image (y -0.5): unchanged
+            ("empty", "arrowleft"), ("centred", "x"),
+        ]
+        script = functions + (
+            f"const centred = {json.dumps(centred)}, empty = {json.dumps(empty)};"
+            "process.stdout.write(JSON.stringify(["
+            + ",".join(f"nudgeCentre({name}, '{key}', 320, 240)" for name, key in calls)
+            + ", withRing(centred, 31.5), withRing(empty, 31.5), withRing(centred, null)]));"
+        )
+        output = json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
+
+        self.assertEqual(
+            output,
+            [
+                {**centred, "x": 9.25}, {**centred, "x": 11.25}, {**centred, "y": 1.5}, centred,
+                None, None,
+                {**centred, "r": 31.5}, None, None,
+            ],
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_click_takes_the_visible_ring_radius_only_when_the_frame_has_none(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        functions = re.search(r"// BEGIN keyActions.*?\n(.*?)// END keyActions", page, re.S).group(1)
+        fresh = {"state": "not_annotated", "visibility": "fully_occluded", "quality": None, "x": None, "y": None, "r": None}
+        sized = {"state": "labelled", "visibility": "visible", "quality": None, "x": 1.0, "y": 2.0, "r": 64.5}
+        point = {"x": 100.25, "y": 200.75}
+        script = functions + "process.stdout.write(JSON.stringify([" + ",".join(
+            f"placeAt({json.dumps(r)}, {json.dumps(point)}, {json.dumps(ring)})"
+            for r, ring in [(fresh, 80.1), (fresh, None), (sized, 80.1)]
+        ) + "]));"
+        output = json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
+
+        placed = {"state": "labelled", "visibility": "visible", "quality": None, "x": 100.25, "y": 200.75}
+        self.assertEqual(output, [
+            {**placed, "r": 80.1},          # new frame: the ring drawn at the click
+            {**placed, "r": None},          # no ring yet: no radius is invented
+            {**sized, **point, "r": 64.5},  # re-click keeps the frame's own radius
+        ])
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_progress_counts_frames_and_picks_first_sized_frame_as_seed(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        function = re.search(r"// BEGIN progress.*?\n(.*?)// END progress", page, re.S).group(1)
+        frames = [{"timestamp_s": t, "frame_index": i} for i, t in enumerate([0.1, 0.2, 0.3, 0.4, 0.5])]
+        labels = {
+            "0.1": {"state": "labelled", "x": 1.0, "y": 1.0, "r": None, "quality": "high"},     # no radius: not the seed
+            "0.2": {"state": "labelled", "x": 1.0, "y": 1.0, "r": 40.0, "quality": None},      # needs quality; seed
+            "0.3": {"state": "unlabelable", "x": None, "y": None, "r": None, "quality": None},
+            "0.4": {"state": "labelled", "x": 1.0, "y": 1.0, "r": 41.0, "quality": "low"},
+        }
+        script = function + f"process.stdout.write(JSON.stringify(progress({json.dumps(frames)}, {json.dumps(labels)})));"
+        output = json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
+
+        self.assertEqual(output, {"total": 5, "labelled": 2, "needQuality": 1, "unlabelable": 1,
+                                  "seed": {"frame_index": 1, "timestamp_s": 0.2}})
 
     def test_package_id_separates_annotator_passes_and_grids(self):
         frames = [{"file": "frames/frame_000000.png", "frame_index": 0, "timestamp_s": 0.0}]

@@ -22,7 +22,7 @@
   #strip { display:flex; flex-wrap:wrap; gap:3px; }
   #strip span { width:14px; height:14px; border-radius:3px; background:#3a4250; cursor:pointer; }
   #strip span.labelled { background:var(--ok); } #strip span.unlabelable { background:var(--bad); }
-  #strip span.not_annotated { background:var(--warn); } #strip span.cur { outline:2px solid #fff; }
+  #strip span.not_annotated { background:var(--warn); } #strip span.needq { background:#b48cff; } #strip span.cur { outline:2px solid #fff; }
   textarea { width:100%; background:#14171c; color:var(--text); border:1px solid #3a4250; border-radius:6px; font:12px monospace; }
 </style>
 </head>
@@ -50,16 +50,21 @@
   <div class="row"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button><button id="clear">Clear centre</button></div>
   <div id="strip"></div>
   <div class="row"><button id="export">Download CSV</button></div>
+  <div id="progress" class="muted"></div>
   <div id="ringinfo" class="muted"></div>
   <div class="muted">
     <b>Click</b> plate centre (hold and drag to adjust) &middot; <b>Shift+click</b> a point on the plate rim
-    (records this frame's radius and sets the aiming ring) &middot; <kbd>[</kbd><kbd>]</kbd> resize the ring
-    (also records it as this frame's radius once a centre is placed) &middot;
-    <b>Wheel</b> zoom &middot; <b>Right/middle-drag</b> pan &middot; <kbd>&larr;</kbd><kbd>&rarr;</kbd> frames &middot;
+    (records this frame's radius and sets the aiming ring) &middot; <kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd>
+    move the centre 1 px &middot; <b>Shift+wheel</b> radius &plusmn;0.1 px, <kbd>[</kbd><kbd>]</kbd> &plusmn;1 px (resizes the ring and,
+    once a centre is placed, records it as this frame's radius) &middot;
+    <b>Wheel</b> zoom &middot; <b>Right/middle-drag</b> pan &middot; <kbd>N</kbd><kbd>P</kbd> next/previous frame &middot;
     <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> quality high/med/low, then next frame &middot; <kbd>O</kbd> partially occluded &middot;
     <kbd>U</kbd> unlabelable &middot; <kbd>F</kbd> fully occluded &middot; <kbd>S</kbd> skip (not annotated); these three also move on.<br>
-    The dashed ring follows the cursor: line it up with the plate's outer rim and click, and the click is the centre.
-    It is an aiming aid only; a frame gets a radius only from Shift+click or <kbd>[</kbd><kbd>]</kbd> on that frame.
+    The tracker seed is made at import from the first frame that has a centre and a radius, so start each clip
+    on its first frame with a rim Shift+click.<br>
+    The dashed ring follows the cursor: line it up with the plate's outer rim and click. The click is the centre, and a
+    frame without a radius takes the ring's radius; if the ring does not fit, correct it with Shift+wheel before
+    choosing quality. Each new frame starts with the previous frame's radius.
     Label the geometric centre of the plate face, not the bar end. For every labelled centre, explicitly
     choose high/medium/low quality; CSV download is blocked until quality is assessed. If you cannot place
     the centre reliably, mark it unlabelable instead of guessing. Coordinates use pixel-centre convention (pixel <i>i</i> spans
@@ -153,40 +158,63 @@ function updatePanel() {
   const f = CONFIG.frames[cur], r = rec();
   document.getElementById("title").textContent = `${CONFIG.fixture_id}  ${cur + 1}/${CONFIG.frames.length}`;
   document.getElementById("frameinfo").textContent = `frame ${f.frame_index}, t = ${f.timestamp_s.toFixed(6)} s` +
-    (r.x !== null ? ` · centre (${r.x.toFixed(1)}, ${r.y.toFixed(1)})` + (r.r ? ` r=${r.r.toFixed(1)}` : "") : "");
+    (r.x !== null ? ` · centre (${r.x.toFixed(2)}, ${r.y.toFixed(2)})` + (r.r ? ` r=${r.r.toFixed(2)}` : "") : "");
   for (const [id, field] of [["state", "state"], ["visibility", "visibility"], ["quality", "quality"]])
     document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === r[field]));
   document.getElementById("notes").value = r.notes || "";
   document.getElementById("ringinfo").textContent = ringR
-    ? `aiming ring r=${ringR.toFixed(1)} px ([ ] to resize)` : "Shift+click the plate rim once to set the aiming ring";
+    ? `aiming ring r=${ringR.toFixed(2)} px (Shift+wheel ±0.1, [ ] ±1)` : "Shift+click the plate rim once to set the aiming ring";
   const strip = document.getElementById("strip"); strip.innerHTML = "";
   CONFIG.frames.forEach((fr, i) => { const s = document.createElement("span"); const l = labels[fr.timestamp_s];
-    if (l) s.className = l.state; if (i === cur) s.classList.add("cur"); s.title = fr.timestamp_s;
+    if (l) s.className = l.state === "labelled" && !["high", "medium", "low"].includes(l.quality) ? "needq" : l.state;
+    if (i === cur) s.classList.add("cur"); s.title = fr.timestamp_s;
     s.onclick = () => go(i); strip.appendChild(s); });
+  const pr = progress(CONFIG.frames, labels);
+  document.getElementById("progress").textContent = `${pr.labelled}/${pr.total} done` +
+    (pr.needQuality ? ` · ${pr.needQuality} need quality (purple)` : "") +
+    (pr.unlabelable ? ` · ${pr.unlabelable} unlabelable` : "") +
+    (pr.seed ? ` · seed: frame ${pr.seed.frame_index} (t = ${pr.seed.timestamp_s.toFixed(3)} s)`
+      : " · no seed yet: Shift+click the rim on the first frame");
 }
-function go(i) { cur = Math.max(0, Math.min(CONFIG.frames.length - 1, i)); draw(); }
+function go(i) {
+  cur = Math.max(0, Math.min(CONFIG.frames.length - 1, i));
+  // The ring follows the frames: a frame with its own radius sets it, so a new frame starts from the last one.
+  const r = labels[CONFIG.frames[cur].timestamp_s];
+  if (r && r.r > 0) { ringR = r.r; saveRing(); }
+  draw();
+}
 function inImage(p) {
   // Integer coordinates are pixel centres; the outer half-pixel border is outside 0 <= x < width.
   return p.x >= 0 && p.y >= 0 && p.x < CONFIG.width_px - 0.5 && p.y < CONFIG.height_px - 0.5;
 }
-function placeCentre(p) {
-  const r = rec();
-  setRec({ ...r, x: p.x, y: p.y, state: "labelled", visibility: r.visibility === "fully_occluded" ? "visible" : r.visibility });
-  save(); draw();
-}
+function placeCentre(p) { setRec(placeAt(rec(), p, ringR)); save(); draw(); }
 
 // BEGIN keyActions (pure; exercised by validation/tests/test_label_package.py)
-const RING_STEP = 1.02;
-function resizeRing(ring, key) {
-  if (!ring) return ring;
-  return key === "]" ? ring * RING_STEP : key === "[" ? ring / RING_STEP : ring;
+// Centre placed at p. A frame without its own radius takes the aiming ring's radius, because the ring is
+// drawn at that size around the cursor when the click is made; a radius already set on the frame is kept.
+function placeAt(r, p, ring) {
+  return { ...r, x: p.x, y: p.y, state: "labelled", r: r.r > 0 ? r.r : (ring > 0 ? ring : null),
+    visibility: r.visibility === "fully_occluded" ? "visible" : r.visibility };
+}
+const RING_MIN_PX = 0.1;
+function resizeRing(ring, deltaPx) {
+  return ring ? Math.max(RING_MIN_PX, ring + deltaPx) : ring;
+}
+function hasCentre(r) { return r.state === "labelled" && r.x !== null && r.x !== undefined; }
+// Record the (resized) ring as this frame's radius; null unless the frame has a centre and a ring exists.
+function withRing(r, ring) { return hasCentre(r) && ring ? { ...r, r: ring } : null; }
+const NUDGE = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
+// Centre moved 1 px by an arrow key, kept inside 0 <= x < width - 0.5; null for other keys or no centre.
+function nudgeCentre(r, key, width, height) {
+  if (!Object.prototype.hasOwnProperty.call(NUDGE, key) || !hasCentre(r)) return null;
+  const x = r.x + NUDGE[key][0], y = r.y + NUDGE[key][1];
+  return x >= 0 && y >= 0 && x < width - 0.5 && y < height - 0.5 ? { ...r, x, y } : r;
 }
 // Updated record plus whether to move on, or null when `key` is not a labelling key. Quality moves on
 // only once a centre exists; a frame gets a radius only from an explicit ring resize while it has a centre.
 function applyKey(r, key, ring) {
-  const hasCentre = r.state === "labelled" && r.x !== null && r.x !== undefined;
   const quality = ["1", "2", "3"].indexOf(key);
-  if (quality >= 0) return { rec: { ...r, quality: ["high", "medium", "low"][quality] }, advance: hasCentre };
+  if (quality >= 0) return { rec: { ...r, quality: ["high", "medium", "low"][quality] }, advance: hasCentre(r) };
   if (key === "o") {
     return { rec: { ...r, visibility: r.visibility === "partially_occluded" ? "visible" : "partially_occluded" }, advance: false };
   }
@@ -194,8 +222,8 @@ function applyKey(r, key, ring) {
   if (key === "u") return { rec: { ...cleared, state: "unlabelable" }, advance: true };
   if (key === "f") return { rec: { ...cleared, state: "unlabelable", visibility: "fully_occluded" }, advance: true };
   if (key === "s") return { rec: { ...cleared, state: "not_annotated" }, advance: true };
-  if ((key === "[" || key === "]") && hasCentre && ring) return { rec: { ...r, r: ring }, advance: false };
-  return null;
+  const ringed = key === "[" || key === "]" ? withRing(r, ring) : null;
+  return ringed ? { rec: ringed, advance: false } : null;
 }
 // END keyActions
 
@@ -221,7 +249,17 @@ stage.addEventListener("mousemove", e => {
 });
 stage.addEventListener("mouseleave", () => { mouse = null; draw(); });
 stage.addEventListener("wheel", e => {
-  e.preventDefault(); const rect = view.getBoundingClientRect(), cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+  e.preventDefault();
+  if (e.shiftKey) {
+    // Shift+wheel: radius +/- 0.1 px. Browsers often report Shift+wheel as horizontal (deltaX).
+    const delta = e.deltaY || e.deltaX;
+    if (!delta || !ringR) return;
+    ringR = resizeRing(ringR, delta < 0 ? 0.1 : -0.1); saveRing();
+    const ringed = withRing(rec(), ringR);
+    if (ringed) { setRec(ringed); save(); }
+    draw(); return;
+  }
+  const rect = view.getBoundingClientRect(), cx = e.clientX - rect.left, cy = e.clientY - rect.top;
   const before = toImage(cx, cy); zoom *= e.deltaY < 0 ? 1.25 : 0.8; zoom = Math.max(0.1, Math.min(40, zoom));
   panX = cx - (before.x + 0.5) * zoom; panY = cy - (before.y + 0.5) * zoom; draw();
 }, { passive: false });
@@ -229,13 +267,15 @@ document.getElementById("notes").addEventListener("input", e => { rec().notes = 
 document.addEventListener("keydown", e => {
   if (e.target.id === "notes") return;
   const k = e.key.toLowerCase();
-  if (k === "arrowright" || k === "n") { go(cur + 1); return; }
-  if (k === "arrowleft" || k === "p") { go(cur - 1); return; }
+  if (k === "n") { go(cur + 1); return; }
+  if (k === "p") { go(cur - 1); return; }
   if (k === "0") { fit(); draw(); return; }
+  const nudged = nudgeCentre(rec(), k, CONFIG.width_px, CONFIG.height_px);
+  if (nudged) { e.preventDefault(); setRec(nudged); save(); draw(); return; }
   const resize = k === "[" || k === "]";
-  // A held key must not sweep labels across frames; only the ring resize repeats.
+  // A held key must not sweep labels across frames; only nudging and ring resizing repeat.
   if (e.repeat && !resize) return;
-  if (resize) { ringR = resizeRing(ringR, k); if (ringR) saveRing(); }
+  if (resize) { ringR = resizeRing(ringR, k === "]" ? 1 : -1); if (ringR) saveRing(); }
   const result = applyKey(rec(), k, ringR);
   if (result) { setRec(result.rec); save(); }
   if (result && result.advance) go(cur + 1); else draw();
@@ -275,14 +315,32 @@ function exportProblem(frames, labels) {
   return null;
 }
 // END exportProblem
+// BEGIN progress (pure; exercised by validation/tests/test_label_package.py)
+// Counts for the status line. The seed is the first frame in time order with a centre and a radius; the
+// import builds the tracker seed from it, because trackers run forward from the seed.
+function progress(frames, labels) {
+  const done = r => r && r.state === "labelled" && r.x !== null && r.x !== undefined;
+  const result = { total: frames.length, labelled: 0, needQuality: 0, unlabelable: 0, seed: null };
+  for (const f of frames) {
+    const r = labels[f.timestamp_s];
+    if (done(r) && ["high", "medium", "low"].includes(r.quality)) result.labelled += 1;
+    else if (done(r)) result.needQuality += 1;
+    else if (r && r.state === "unlabelable") result.unlabelable += 1;
+    if (!result.seed && done(r) && r.r > 0) result.seed = { frame_index: f.frame_index, timestamp_s: f.timestamp_s };
+  }
+  return result;
+}
+// END progress
+function download(text, name, type) {
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
 document.getElementById("export").onclick = () => {
   const problem = exportProblem(CONFIG.frames, labels);
   if (problem) { alert(problem); return; }
-  const a = document.createElement("a");
-  const url = URL.createObjectURL(new Blob([csvText()], { type: "text/csv" }));
-  a.href = url;
-  a.download = `${CONFIG.fixture_id}.${CONFIG.annotator_id}.labels.csv`; a.click();
-  URL.revokeObjectURL(url);
+  download(csvText(), `${CONFIG.fixture_id}.${CONFIG.annotator_id}.labels.csv`, "text/csv");
 };
 
 document.getElementById("annotator").textContent = `annotator ${CONFIG.annotator_id} · package ${CONFIG.package_id}`;
