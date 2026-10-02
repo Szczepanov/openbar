@@ -29,21 +29,33 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 
 | Clip | Tracker | License | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `self-back-squat-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 3.1 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| `self-back-squat-side-002` | opencv-csrt+hough | Apache-2.0 | 100.0 % | 2.8 | 2.9 | 4.7 | 5.8 | 0 | 1 |
+| | opencv-csrt | Apache-2.0 | 100.0 % | 3.1 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 3.6 | 3.1 | 7.3 | 11.7 | 0 | 3 |
+| | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 5.9 | 3.5 | 14.7 | 20.4 | 0 | 2 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 6.7 | 4.6 | 21.5 | 30.7 | 0 | 17 |
+| | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 8.1 | 6.7 | 18.2 | 22.5 | 0 | 1 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 10.4 | 10.2 | 21.2 | 25.4 | 0 | 22 |
 | | opencv-kcf | Apache-2.0 | 72.0 % | 19.6 | 4.3 | 88.4 | 89.2 | 7 | 4 |
 | | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 52.2 | 10.3 | 166.0 | 178.3 | 0 | 13 |
 | | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 108.9 | 75.3 | 251.5 | 281.6 | 0 | 24 |
 | | opencv-vit | Apache-2.0 | 80.0 % | 133.6 | 27.7 | 326.4 | 384.0 | 5 | 0 |
-| `self-clean-jerk-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| `self-clean-jerk-side-002` | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 5.7 | 5.1 | 9.9 | 14.3 | 0 | 2 |
+| | opencv-csrt | Apache-2.0 | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| | opencv-csrt+hough | Apache-2.0 | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 0 |
+| | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 9.9 | 8.2 | 16.7 | 18.6 | 0 | 2 |
+| | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 10.1 | 8.2 | 17.1 | 18.6 | 0 | 2 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 21.7 | 22.5 | 44.3 | 46.9 | 0 | 9 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 25.7 | 22.5 | 48.0 | 50.9 | 0 | 19 |
 | | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 198.8 | 199.4 | 423.3 | 439.8 | 0 | 18 |
 | | opencv-kcf | Apache-2.0 | 85.7 % | 231.2 | 65.3 | 509.8 | 520.5 | 3 | 3 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 231.6 | 87.7 | 516.8 | 552.3 | 0 | 0 |
 | | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 746.1 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
-| `self-snatch-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 7.2 | 7.8 | 10.3 | 11.4 | 0 | 3 |
+| `self-snatch-side-002` | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 3.5 | 2.9 | 8.6 | 9.3 | 0 | 2 |
+| | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 3.6 | 2.9 | 8.8 | 9.9 | 0 | 2 |
+| | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 3.7 | 2.9 | 8.7 | 9.4 | 0 | 2 |
+| | opencv-csrt+hough | Apache-2.0 | 100.0 % | 6.0 | 6.9 | 10.1 | 10.7 | 0 | 0 |
+| | opencv-csrt | Apache-2.0 | 100.0 % | 7.2 | 7.8 | 10.3 | 11.4 | 0 | 3 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 15.9 | 9.0 | 26.1 | 77.8 | 0 | 18 |
 | | opencv-kcf | Apache-2.0 | 87.0 % | 17.9 | 11.5 | 23.0 | 127.2 | 3 | 0 |
 | | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 95.7 % | 32.9 | 8.2 | 119.3 | 243.0 | 1 | 19 |
@@ -55,21 +67,33 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 
 | Clip | Tracker | License | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `self-back-squat-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 3.2 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| `self-back-squat-side-002` | opencv-csrt+hough | Apache-2.0 | 100.0 % | 2.9 | 2.9 | 4.7 | 5.8 | 0 | 1 |
+| | opencv-csrt | Apache-2.0 | 100.0 % | 3.2 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 3.8 | 3.1 | 7.3 | 11.7 | 0 | 3 |
+| | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 6.2 | 3.5 | 14.7 | 20.4 | 0 | 2 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 7.0 | 4.6 | 21.5 | 30.7 | 0 | 17 |
+| | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 8.4 | 6.7 | 18.2 | 22.5 | 0 | 1 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 10.8 | 10.2 | 21.2 | 25.4 | 0 | 22 |
 | | opencv-kcf | Apache-2.0 | 70.8 % | 20.8 | 4.5 | 88.4 | 89.2 | 7 | 4 |
 | | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 54.3 | 10.3 | 166.0 | 178.3 | 0 | 13 |
 | | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 113.4 | 75.3 | 251.5 | 281.6 | 0 | 24 |
 | | opencv-vit | Apache-2.0 | 79.2 % | 140.6 | 28.7 | 361.6 | 384.0 | 5 | 0 |
-| `self-clean-jerk-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| `self-clean-jerk-side-002` | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 6.0 | 5.1 | 9.9 | 14.3 | 0 | 2 |
+| | opencv-csrt | Apache-2.0 | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| | opencv-csrt+hough | Apache-2.0 | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 0 |
+| | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 10.4 | 8.2 | 16.7 | 18.6 | 0 | 2 |
+| | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 10.6 | 8.2 | 17.1 | 18.6 | 0 | 2 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 22.8 | 22.5 | 44.3 | 46.9 | 0 | 9 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 27.0 | 22.5 | 48.0 | 50.9 | 0 | 19 |
 | | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 208.7 | 199.4 | 423.3 | 439.8 | 0 | 18 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 243.2 | 87.7 | 516.8 | 552.3 | 0 | 0 |
 | | opencv-kcf | Apache-2.0 | 85.0 % | 244.8 | 82.3 | 509.8 | 520.5 | 3 | 3 |
 | | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 783.4 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
-| `self-snatch-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 7.5 | 7.8 | 10.3 | 11.4 | 0 | 3 |
+| `self-snatch-side-002` | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 3.6 | 2.9 | 8.6 | 9.3 | 0 | 2 |
+| | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 3.7 | 2.9 | 8.8 | 9.9 | 0 | 2 |
+| | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 3.8 | 2.9 | 8.7 | 9.4 | 0 | 2 |
+| | opencv-csrt+hough | Apache-2.0 | 100.0 % | 6.3 | 6.9 | 10.1 | 10.7 | 0 | 0 |
+| | opencv-csrt | Apache-2.0 | 100.0 % | 7.5 | 7.8 | 10.3 | 11.4 | 0 | 3 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 16.6 | 9.0 | 26.1 | 77.8 | 0 | 18 |
 | | opencv-kcf | Apache-2.0 | 86.4 % | 18.8 | 12.2 | 31.8 | 127.2 | 3 | 0 |
 | | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 95.5 % | 34.5 | 8.3 | 119.3 | 243.0 | 1 | 19 |
@@ -77,20 +101,49 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 63.2 | 60.6 | 121.1 | 233.6 | 0 | 0 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 107.9 | 63.2 | 185.4 | 660.6 | 0 | 0 |
 
+### Physical scale (nominal mm) and paired comparison summary (Phase 2)
+
+Errors in millimetres using a nominal 450 mm plate (`mm = px × 225 / r_seed_px`), seed-excluded:
+
+| Clip | Seed radius px | Candidate | MAE px | MAE mm (nom) | p90 px | p90 mm (nom) | FT | FT (base conf) | High err (>3px) |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | 90.9 | `opencv-csrt` | 3.22 | 7.96 | 5.00 | 12.36 | 5 | 5 | 14 |
+| | | `opencv-csrt+circle-a` | 3.80 | 9.41 | 7.29 | 18.04 | 3 | 3 | 13 |
+| | | `opencv-csrt+circle-b1` | 8.43 | 20.87 | 18.18 | 45.00 | 1 | 1 | 19 |
+| | | `opencv-csrt+circle-b5` | 6.18 | 15.30 | 14.68 | 36.32 | 2 | 2 | 14 |
+| | | `opencv-csrt+hough` | 2.93 | 7.25 | 4.71 | 11.65 | 1 | 5 | 12 |
+| `self-clean-jerk-side-002` | 199.2 | `opencv-csrt` | 6.44 | 7.27 | 10.25 | 11.57 | 2 | 2 | 18 |
+| | | `opencv-csrt+circle-a` | 5.97 | 6.74 | 9.87 | 11.14 | 2 | 1 | 17 |
+| | | `opencv-csrt+circle-b1` | 10.37 | 11.71 | 16.70 | 18.87 | 2 | 1 | 18 |
+| | | `opencv-csrt+circle-b5` | 10.58 | 11.95 | 17.07 | 19.28 | 2 | 1 | 18 |
+| | | `opencv-csrt+hough` | 6.44 | 7.27 | 10.25 | 11.57 | 0 | 2 | 18 |
+| `self-snatch-side-002` | 132.1 | `opencv-csrt` | 7.51 | 12.78 | 10.31 | 17.56 | 3 | 3 | 21 |
+| | | `opencv-csrt+circle-a` | 3.73 | 6.35 | 8.82 | 15.02 | 2 | 2 | 11 |
+| | | `opencv-csrt+circle-b1` | 3.83 | 6.52 | 8.73 | 14.87 | 2 | 2 | 11 |
+| | | `opencv-csrt+circle-b5` | 3.61 | 6.14 | 8.60 | 14.65 | 2 | 3 | 10 |
+| | | `opencv-csrt+hough` | 6.31 | 10.74 | 10.08 | 17.16 | 0 | 2 | 17 |
+
+**Paired comparison against CSRT on seed-excluded labels:**
+- `opencv-csrt+circle-a`:
+  - Squat: 8 improved, 8 worsened, 8 tied (median Δ = +0.000 px / +0.000 mm). MAE rose from 3.22 to 3.80 px.
+  - Clean & jerk: 3 improved, 1 worsened, 16 tied (median Δ = +0.000 px / +0.000 mm). Fit acceptance on labelled frames was only 20% (4/20).
+  - Snatch: 18 improved, 4 worsened, 0 tied (median Δ = -5.007 px / -8.525 mm). Substantial gain on snatch only.
+- `opencv-csrt+circle-b1` / `b5`:
+  - Re-initialising CSRT on fitted circles led to severe feedback lock-in on distractor edges during the squat and clean & jerk (worsened on 14–18 labels per clip; median Δ = +1.5 to +3.8 px).
+- `opencv-csrt+hough`:
+  - Very low fit acceptance (0% on clean & jerk labelled frames, 20.8% on squat, 45.5% on snatch). Mostly falls back to CSRT; median Δ is +0.000 px on all clips.
+  - False tracks appear as 0 only because of the ×0.7 confidence penalty; removing the penalty reveals 2 false tracks on both clean & jerk and snatch.
+
 Reading: OpenBar's trackers report "tracked" on every frame while hundreds of pixels off. That is the
 silent false-track failure ADR-0008 lists as a blocker. CSRT remains the clear leader across all three lifts:
 it keeps 100% availability with 3.2 px MAE on the squat, and 6.4–7.5 px on clean and snatch.
-The neural-network trackers evaluated in Phase 1 (ViTTrack, NanoTrack v2, DaSiamRPN) did not outperform CSRT:
-- NanoTrack v2 is second best on squat (7.0 px) but degrades to 22.8 px on clean and 63.2 px on snatch, and
-  its model has an unconfirmed license (all rights reserved upstream, not shippable without confirmation).
-- DaSiamRPN (MIT) maintains 100% availability but achieves 10.8 px on squat, 27.0 px on clean, 16.6 px on snatch.
-- ViTTrack (Apache-2.0) loses tracking on squat (79.2% availability, 140.6 px MAE) and drifts heavily on clean and snatch.
-None of the off-the-shelf OpenCV neural trackers meets the < 3 px MAE gate on fast lifts. Fast lifts require
-the next phases: geometric circle-fit refinement (Phase 2) and SAM 2 (Phase 3).
-Manual-label repeatability on `self-back-squat-side-001` is 2.06 px mean (2.45 px RMSE) between two passes,
-so a perfect tracker would still score about 1.5–2 px MAE against these labels.
+The neural-network trackers evaluated in Phase 1 (ViTTrack, NanoTrack v2, DaSiamRPN) did not outperform CSRT.
+Phase 2 (plate-geometry refinement) showed dramatic gains on the snatch (MAE 7.51 -> 3.73 px) but slightly degraded
+the squat (3.22 -> 3.80 px) and clean & jerk (acceptance only 20%), failing the consistent paired improvement rule.
+Fast lifts require Phase 3 (SAM 2 video segmentation).
 
-Reproduce: `research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --output-dir target/opencv-spike/phase1-compare`
+Reproduce:
+`research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --candidate opencv-csrt --candidate opencv-csrt+circle-a --candidate opencv-csrt+circle-b1 --candidate opencv-csrt+circle-b5 --candidate opencv-csrt+hough --output-dir target/opencv-spike/phase2-compare`
 
 ## 3. Non-negotiable rules
 
@@ -255,28 +308,46 @@ DaSiamRPN maintained 100% availability but had 10.8–27.0 px error; ViTTrack lo
 Execution detail (pre-declared parameters, coordinate handling, tests, metrics and decision rule):
 [`docs/plans/PLATE_GEOMETRY_REFINEMENT_PLAN.md`](../docs/plans/PLATE_GEOMETRY_REFINEMENT_PLAN.md).
 
-New candidate `opencv-<base>+circle` (start with `csrt`, then try the best Phase 1 tracker as the base). Per
-frame:
+New candidate `opencv-<base>+circle` (evaluated on top of `csrt`). Per frame:
 
 1. Take the base tracker's box. Use as the ROI that box expanded by 1.3× and clipped to the image.
 2. Grayscale, Gaussian blur (σ ≈ 1.5), then Canny with thresholds derived from the ROI median. Keep edge points
    whose distance to the predicted centre lies in `[0.75 r_prev, 1.25 r_prev]`, where `r_prev` is the previous
    frame's radius (the seed radius on the first frame).
 3. Fit a circle with deterministic RANSAC (fixed RNG seed; 3-point samples; inlier tolerance 1.5 px; a fixed
-   iteration count), then an algebraic least-squares refit (Kåsa or Taubin) on the inliers.
+   iteration count), then an algebraic least-squares refit (Taubin) on the inliers.
 4. Accept the fit only if inliers cover at least 50 % of the circumference (angular histogram of inliers,
    36 bins) and `|r - r_prev| / r_prev ≤ 0.1`. Otherwise use the base tracker's centre and lower the
    confidence (document the rule).
-5. Variants to compare: **A**, refine the output only; **B**, refine and re-initialise the base tracker from the
-   refined circle every N frames (try N = 1 and 5).
-6. Also try `cv2.HoughCircles(..., cv2.HOUGH_GRADIENT_ALT, ...)` in the same ROI with radius bounds
+5. Variants compared: **A** (`circle-a`), refine the output only; **B** (`circle-b1` and `circle-b5`), refine and
+   re-initialise the base tracker from the refined circle every 1 or 5 frames.
+6. Also tried `cv2.HoughCircles(..., cv2.HOUGH_GRADIENT_ALT, ...)` (`hough`) in the same ROI with radius bounds
    `[0.85, 1.15] · r_prev` as an alternative to steps 2–4.
-7. Write a diagnostics sidecar `<prediction>.geometry.json` with the per-frame fitted radius, inlier coverage,
-   and `cv2.fitEllipse` axes and angle on the inliers. That records the perspective effect (gotcha 6) for #58
+7. Diagnostics sidecar `<prediction>.geometry.json` written with the per-frame fitted radius, inlier coverage,
+   and `cv2.fitEllipse` axes and angle on the inliers, recording the perspective effect (gotcha 6) for #58
    without changing the prediction schema.
 
-Acceptance: variant results in the comparison table, plus a note on whether refinement brings the fast-pull
-error (the `self-clean-jerk-side-002` p90) under 3 px.
+**Status: completed.** Decision outcome: **NO GAIN / REJECT** per §9 of `PLATE_GEOMETRY_REFINEMENT_PLAN.md`.
+- **Gate evaluation:** None of the geometry variants brought clean & jerk seed-excluded MAE (5.97–6.44 px)
+  or p90 (9.87–10.25 px) under the < 3.0 px gate. At nominal physical scale, clean & jerk MAE is 6.74–7.27 mm
+  (better than squat's 7.96 mm), confirming that the 3 px gate is ~2.2× stricter physically on clean & jerk
+  due to plate pixel scale (222 px vs 101 px plate diameter).
+- **Paired comparisons:**
+  - `circle-a` (output refinement only): Substantially improved the snatch (MAE 7.51 → 3.73 px, p90 14.8 → 7.7 px;
+    18 improved, 4 worsened, median Δ -5.0 px / -8.5 mm). However, it degraded the squat (MAE 3.22 → 3.80 px,
+    p90 5.0 → 7.3 px; 8 improved, 8 worsened, 8 tied) due to background edge distractors during the descent, and
+    had low acceptance on clean & jerk labeled frames (20% acceptance; 3 improved, 1 worsened, 16 tied). Because
+    paired comparison does not favour it across every clip, it does not qualify as an across-the-board win.
+  - `circle-b1` & `circle-b5` (re-initialisation): Severe feedback lock-in. Re-initialising CSRT on fitted circles
+    caused drift onto inner plate rims or collar edges during squat and clean & jerk (worsened on 14–18 labels per
+    clip; squat MAE surged to 6.2–8.4 px).
+  - `hough`: Low acceptance (0% on clean & jerk labels, 20.8% on squat, 47.7% on snatch), falling back almost
+    entirely to plain CSRT. Its 0 false tracks are solely due to the ×0.7 fallback penalty (with base confidence,
+    it has 2 false tracks on clean & jerk and snatch).
+- **Motion blur bias (Test 7):** Synthetic verification (`test_synthetic_motion_blur_bias`) measured a 0.5797 px
+  vertical bias (dx = +0.0230 px, dy = -0.5792 px) under a 15 px vertical box blur proxy, with fitted radius
+  90.51 px (ground truth 90 px).
+- **Phase 3 direction:** Phase 3 (SAM 2) proceeds against plain `opencv-csrt` as the primary classical reference.
 
 ### Phase 3: SAM 2 video segmentation (medium; uses the GPU)
 
