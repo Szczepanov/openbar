@@ -1,0 +1,6 @@
+# Research-only tracker spike (#57); no production/runtime dependency.
+# opencv-python packaging: MIT; bundled OpenCV 4.12: Apache-2.0; wheel third-party notices apply.
+# Source: https://github.com/opencv/opencv-python
+opencv-contrib-python==4.12.0.88
+# NumPy: BSD-3-Clause. Source: https://numpy.org/
+numpy==2.2.6
