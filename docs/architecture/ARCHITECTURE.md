@@ -86,7 +86,156 @@ Python is not the authoritative production implementation of calibration/kinemat
 
 Flutter is the preferred cross-platform application layer after M0. The UI consumes structured analysis results; it does not reimplement measurement algorithms.
 
-## Frame pipeline target
+## Future measurement protocol boundary (post-M0)
+
+OpenBar should evolve toward a protocol-oriented measurement engine without changing the current
+barbell M0 implementation or acceptance criteria.
+
+The intended boundary is conceptual until a second measurement family is implemented and validated:
+
+```text
+media / decoded frames / authoritative timestamps
+                     |
+              evidence producers
+        +------------+-------------+
+        |            |             |
+   lift tracker   event marker   future pose /
+                                gate detection
+        |            |             |
+        +------------+-------------+
+                     |
+              canonical evidence
+                     |
+             MeasurementProtocol
+        +------------+-------------+
+        |            |             |
+   LiftProtocol  JumpProtocol  SprintProtocol
+        |            |             |
+        +------------+-------------+
+                     |
+         typed protocol result
+       + events + metrics + quality
+       + confidence + provenance
+```
+
+`MeasurementProtocol` is a **future domain abstraction**, not an M0 trait/API requirement. Its job
+is to represent measurement semantics independently from the mechanism that produced the evidence.
+
+A future protocol implementation should be responsible for:
+
+- identifying its protocol and implementation version;
+- declaring/validating the evidence and calibration it requires;
+- validating recording/support-envelope assumptions relevant to that protocol;
+- deriving protocol events and metrics deterministically from retained evidence;
+- preserving event/metric uncertainty and explicit failure;
+- retaining enough provenance to reproduce the result.
+
+It should **not** own:
+
+- camera/video decoding;
+- Flutter/UI state;
+- a particular CV or ML framework;
+- model training;
+- cloud/backend concerns.
+
+The abstraction must not assume that every protocol has a tracker or continuous trajectory.
+Canonical evidence may include:
+
+- timestamped position observations;
+- manually or automatically marked timestamped events;
+- calibrated points/lines/planes;
+- later pose/landmark observations;
+- protocol-specific reference geometry.
+
+This distinction is important because the first jump and sprint implementations can be event-based
+without pose estimation or continuous body tracking.
+
+### Future protocol modules
+
+The intended measurement-family boundaries are:
+
+#### LiftProtocol
+
+The lift protocol is the future home of the existing barbell measurement semantics:
+
+- plate/bar target evidence;
+- plate-diameter calibration;
+- trajectory/filtering/kinematics;
+- rep/event interpretation when validated;
+- lift-specific metrics and comparisons.
+
+**M0 is not being refactored into this module now.** The current `openbar-core`,
+`openbar-tracking`, `analysis::Analysis`, manual seed, and plate calibration remain the
+authoritative M0 implementation. Extract a dedicated lift protocol only when doing so is justified
+by a real second protocol rather than speculative abstraction.
+
+#### JumpProtocol
+
+Tracked by #68.
+
+The first jump implementation should be able to work without pose estimation:
+
+- vertical jump: manually marked or independently detected take-off/landing timestamps, with
+  flight-time-derived height and explicit temporal uncertainty;
+- broad jump: calibrated ground reference plus take-off/landing points and an explicit distance
+  protocol.
+
+Pose/landmark inference may later automate event/point detection, but it is an evidence producer,
+not a requirement of the protocol abstraction.
+
+#### SprintProtocol
+
+Tracked by #69.
+
+The first sprint implementation should support known-distance gate/split timing:
+
+- measured gate/reference geometry;
+- explicit start/crossing definition;
+- timestamped gate-crossing events;
+- split time and distance/time speed metrics.
+
+Continuous speed can be added later using a calibrated body trajectory (potentially from pose
+estimation), without changing the protocol boundary.
+
+### Future crate/module direction
+
+If implementation pressure justifies separate crates, the likely direction is:
+
+```text
+crates/
+  openbar-core/              # shared deterministic measurement primitives
+  openbar-tracking/          # current M0 tracking
+  openbar-video/             # future media boundary
+  openbar-inference/         # future production inference
+  openbar-protocol-lift/     # future
+  openbar-protocol-jump/     # future (#68)
+  openbar-protocol-sprint/   # future (#69)
+```
+
+These crate names are directional, not commitments. Prefer starting with the smallest module
+boundary that preserves clean dependencies; extract crates only when they provide a concrete
+build/test/dependency benefit.
+
+### M0 scope fence
+
+This future architecture does **not** change `docs/roadmap/M0.md`.
+
+In particular, M0 still does not require:
+
+- a `MeasurementProtocol` implementation;
+- jump or sprint code;
+- generic calibration replacing `PlateDiameterCalibration`;
+- a generic event schema;
+- pose estimation;
+- automatic detection;
+- live camera mode;
+- Flutter integration.
+
+Any implementation that changes the canonical persisted analysis shape, calibration semantics, or
+accepted M0 measurement behavior requires the normal schema/ADR review rather than being justified
+by this future direction alone.
+
+## Current lift frame pipeline target
 
 ```text
 decode/camera frame
@@ -120,10 +269,16 @@ implications before adoption.
 Every persisted analysis should eventually include:
 
 - source media identity/metadata;
-- calibration method and parameters;
-- raw trajectory;
-- filtered trajectory or sufficient parameters to reproduce it;
+- protocol identity/version once protocol modules exist;
+- calibration method and parameters where the protocol requires calibration;
+- retained raw measurement evidence (a trajectory for current lift analysis; potentially timed
+  events/points/other evidence for future protocols);
+- derived/filtered data or sufficient parameters to reproduce it;
+- event definitions and uncertainty where events are measured;
 - model name/version if inference was used;
-- pipeline version;
+- pipeline/protocol implementation version;
 - confidence/quality flags;
 - timestamps in a single well-defined time base.
+
+The current M0 schema remains trajectory-centric and unchanged. Future protocol persistence must be
+introduced through explicit schema/versioning work rather than by silently weakening M0 invariants.
