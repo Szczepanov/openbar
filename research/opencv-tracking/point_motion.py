@@ -74,24 +74,17 @@ def track_points_lk(
     max_level: int = 3,
     max_fb_error: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Track points frame to frame using pyramidal LK with forward-backward error check.
+    """Track points frame to frame using pyramidal LK with a forward-backward check.
 
-    Args:
-        prev_gray: previous grayscale frame.
-        cur_gray: current grayscale frame.
-        prev_pts: (N, 2) array of coordinates on previous frame.
-        win_size: LK window size.
-        max_level: LK pyramid max level.
-        max_fb_error: maximum forward-backward discrepancy in pixels.
-
-    Returns:
-        (cur_pts, valid_mask): (N, 2) float32 coordinates and (N,) bool mask.
+    An OpenCV flow failure is represented as an all-false validity mask instead of
+    allowing a None result to reach a second OpenCV call.
     """
     n = len(prev_pts)
     if n == 0:
         return np.empty((0, 2), dtype=np.float32), np.zeros(0, dtype=bool)
 
-    pts_in = prev_pts.astype(np.float32).reshape(-1, 1, 2)
+    prev_pts_2d = prev_pts.astype(np.float32).reshape(-1, 2)
+    pts_in = prev_pts_2d.reshape(-1, 1, 2)
     criteria = (cv2.TERM_CRITERIA_COUNT | cv2.TERM_CRITERIA_EPS, 30, 0.01)
 
     fwd_pts, status_fwd, _ = cv2.calcOpticalFlowPyrLK(
@@ -103,7 +96,10 @@ def track_points_lk(
         maxLevel=max_level,
         criteria=criteria,
     )
+    if fwd_pts is None or status_fwd is None:
+        return prev_pts_2d.copy(), np.zeros(n, dtype=bool)
 
+    fwd_pts_2d = fwd_pts.reshape(-1, 2)
     back_pts, status_back, _ = cv2.calcOpticalFlowPyrLK(
         cur_gray,
         prev_gray,
@@ -113,13 +109,14 @@ def track_points_lk(
         maxLevel=max_level,
         criteria=criteria,
     )
+    if back_pts is None or status_back is None:
+        return fwd_pts_2d, np.zeros(n, dtype=bool)
 
-    fwd_pts_2d = fwd_pts.reshape(-1, 2)
     back_pts_2d = back_pts.reshape(-1, 2)
-    prev_pts_2d = prev_pts.reshape(-1, 2)
-
-    fb_err = np.hypot(prev_pts_2d[:, 0] - back_pts_2d[:, 0], prev_pts_2d[:, 1] - back_pts_2d[:, 1])
-
+    fb_err = np.hypot(
+        prev_pts_2d[:, 0] - back_pts_2d[:, 0],
+        prev_pts_2d[:, 1] - back_pts_2d[:, 1],
+    )
     valid = (
         (status_fwd.reshape(-1) == 1)
         & (status_back.reshape(-1) == 1)
@@ -127,7 +124,6 @@ def track_points_lk(
         & np.isfinite(fwd_pts_2d[:, 0])
         & np.isfinite(fwd_pts_2d[:, 1])
     )
-
     return fwd_pts_2d, valid
 
 
