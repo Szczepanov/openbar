@@ -320,6 +320,11 @@ fn validate_and_adapt(
 
     let mut parameters = Configuration::new();
     for (key, value) in document.implementation.config {
+        if key.trim().is_empty() {
+            return Err(CliError::invalid_input(
+                "external tracker config keys must not be blank",
+            ));
+        }
         if key == PREDICTION_SHA256_PARAMETER {
             return Err(CliError::invalid_input(format!(
                 "external tracker config key '{PREDICTION_SHA256_PARAMETER}' is reserved for OpenBar input provenance"
@@ -605,5 +610,17 @@ mod tests {
         let error = validate(document).expect_err("invalid id must fail");
         assert!(error.to_string().contains("external tracker identifier"));
         assert!(error.to_string().contains("opencv-csrt+lk"));
+    }
+
+
+    #[test]
+    fn blank_config_key_is_rejected_before_canonical_analysis() {
+        let mut document = valid_document();
+        document
+            .implementation
+            .config
+            .insert("   ".to_owned(), serde_json::json!("value"));
+        let error = validate(document).expect_err("blank config key must fail");
+        assert!(error.to_string().contains("config keys must not be blank"));
     }
 }
