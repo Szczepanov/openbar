@@ -341,7 +341,9 @@ These come from `AGENTS.md`, ADR-0003/0005/0006/0007/0008 and lessons from this 
   - `centres.py`: pure mask centroid extraction, contour circle fitting via RANSAC, seed-disk rasterisation, and coordinate mapping.
   - `track_gpu.py`: unified runner for candidates 3–10 (SAM 2.1 small/base+ centroid & circle, Cutie base centroid & circle, BootsTAPIR, CoTracker3). Decodes only the seed-to-end window into an ephemeral JPEG cache, keeps SAM 2 frames in host RAM, and with `--sibling-output` writes a mask model's centroid and circle candidates from one run (`compare.py` pairs them automatically).
   - `download_models.py`: SHA-256-verified downloader for all 5 neural checkpoints into `validation/private/models/`.
-  - `requirements.txt`: pinned dependencies including PyTorch 2.6.0+cu124, `sam2`, `cutie`, `tapnet`, `cotracker`.
+  - `requirements.txt`: bootstrap constraints for the GPU venv, **not** an immutable historical lock. The
+    reviewed runner now records critical installed package/VCS provenance per prediction and verifies model
+    checkpoint SHA-256 before inference. A retained environment lock is required before Phase 4 freeze.
   - `.venv/` (git-ignored): Python 3.11 with CUDA-enabled PyTorch.
 
 ### Environment
@@ -569,6 +571,12 @@ candidates were evaluated; none is NOT EVALUATED. Full tables are in §2 "Phase 
   3. `compare.py`'s overall fit-acceptance count included the seed entry (which is marked accepted without a fit
      attempt), giving rates above 100 %. Fixed; labelled acceptance was not affected. The run 1 summary on disk
      predates the fix; the rates above are recomputed from the sidecars.
+  4. Review found that `research/gpu-tracking/requirements.txt` was a bootstrap constraint file even though the
+     plan/inventory described it as pinned. The committed aggregates above remain useful development evidence,
+     but the exact historical package/VCS lock is not recoverable from committed artifacts. The runner now
+     SHA-256-verifies every checkpoint and records critical installed package versions and pip direct-source/VCS
+     metadata when available. Before Phase 4 freeze, rerun the shortlisted SAM 2 candidates under an explicit,
+     retained environment lock. No historical metric is rewritten by this provenance correction.
 - **Error diagnosis (development labels, read-only, after scoring).** This analysis looked at labels, so it is
   development evidence only; nothing was tuned from it.
   - Most of the SAM 2 circle error is a shared offset, not scatter: the mean signed error is 49–69 % of MAE, in
