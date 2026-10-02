@@ -53,6 +53,127 @@ ANALYSIS_SCHEMA_VERSION = 1
 The model intentionally contains no Flutter view state, cloud/database keys, accounts, or
 subscription concepts.
 
+## Future multi-protocol extensibility (post-M0; no v1 change)
+
+The current `analysis-v1` model is intentionally **barbell/M0-specific**. Its required manual
+target seed, plate-diameter calibration, tracker observations, and trajectory layers are valid M0
+semantics and must not be weakened merely to make hypothetical future protocols fit.
+
+Issues #68 (jump measurement) and #69 (running/sprint measurement) establish future measurement
+families with materially different evidence:
+
+- vertical jump can initially be derived from take-off/landing event timestamps without continuous
+  tracking or spatial calibration;
+- broad jump can initially use a known ground reference plus take-off/landing points;
+- sprint split timing can initially use known-distance gates plus crossing timestamps;
+- continuous sprint speed may later use a calibrated body trajectory.
+
+Therefore future multi-protocol persistence should introduce an explicit **protocol boundary**
+rather than turning today's lift-specific required fields into a large collection of optional
+fields.
+
+A conceptual future shape is:
+
+```text
+MeasurementArtifact
+  identity / source / video timebase
+  protocol { id, version }
+  evidence: protocol-discriminated evidence
+  result: protocol-discriminated result
+  provenance
+  quality / warnings
+```
+
+The corresponding future domain abstraction is conceptually:
+
+```text
+MeasurementProtocol
+  +-- LiftProtocol
+  +-- JumpProtocol
+  +-- SprintProtocol
+```
+
+This is architectural direction, not a committed Rust trait or schema.
+
+### Shared future concepts
+
+The following concepts are expected to generalize safely across measurement families:
+
+- authoritative media timestamps;
+- source/capture identity;
+- deterministic implementation/protocol versioning;
+- confidence/quality/failure representation;
+- calibration provenance where calibration is required;
+- retained raw evidence;
+- typed events with timing uncertainty/provenance;
+- typed metrics with explicit units and metric definitions;
+- model/tracker/detector provenance when those components produced evidence.
+
+### Concepts that must remain protocol-specific
+
+Do not assume every future analysis has:
+
+- a `ManualTargetSeed`;
+- `PlateDiameterCalibration`;
+- a tracker;
+- continuous X/Y observations;
+- a filtered trajectory;
+- velocity samples;
+- a rep model.
+
+Likewise, avoid a generic untyped `Map<String, number>` for protocol results. A future schema
+should use discriminated, typed protocol results so units, event definitions, required fields, and
+validation invariants remain explicit.
+
+### Calibration evolution
+
+Do not rename or generalize `PlateDiameterCalibration` inside schema v1.
+
+Future protocols may introduce additional calibration/reference types, for example:
+
+- known reference length;
+- calibrated ground line/gates;
+- ground-plane/homography calibration.
+
+Those should coexist behind a future versioned calibration/evidence model. Existing barbell
+analysis must retain its exact plate-calibration semantics and validation.
+
+### Event evolution
+
+Future jump/sprint work needs first-class measurement events such as:
+
+- take-off;
+- landing;
+- sprint start;
+- gate crossing.
+
+A future event representation should be able to retain:
+
+- authoritative timestamp;
+- optional frame index as auxiliary metadata;
+- event definition/type;
+- confidence;
+- temporal uncertainty or bounded event interval where appropriate;
+- manual vs algorithmic provenance;
+- implementation/model provenance for automatic detection.
+
+Event-only protocols must be representable without fabricating a trajectory.
+
+### Versioning rule
+
+**No field is added to, removed from, or relaxed in `analysis-v1` for #68/#69.**
+
+When a jump/sprint implementation is ready to persist canonical results, choose one of the following
+through an explicit ADR/schema review:
+
+1. introduce a new protocol-aware top-level schema/version and provide an explicit migration/import
+   path for lift v1; or
+2. introduce a separate protocol artifact envelope that embeds/preserves existing lift analysis
+   without silently reinterpreting it.
+
+The choice should be based on real implementation evidence. Migrations must preserve raw evidence
+and provenance and must never synthesize missing protocol data.
+
 ## Identity and video metadata
 
 `AnalysisIdentity` carries a stable `source_id` plus optional fixture ID and source SHA-256.
