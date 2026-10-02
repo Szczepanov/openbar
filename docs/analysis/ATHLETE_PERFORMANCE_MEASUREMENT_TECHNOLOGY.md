@@ -713,7 +713,11 @@ Potentially better references include:
 - torso centre;
 - another stable pose-derived body landmark.
 
-The chosen construct must be explicit and validated.
+The chosen construct must be explicit and validated. A photocell/timing gate is not automatically
+interchangeable with a pelvis/torso crossing definition because a limb can trigger the beam first.
+When timing gates are used as a reference, record their beam geometry/processing and either match the
+OpenBar event construct or quantify the construct offset with synchronized high-speed reference
+video.
 
 ### Gate crossing
 
@@ -1013,10 +1017,16 @@ Potential references:
 
 Potential references:
 
-1. photocells;
-2. fully automatic timing where appropriate;
-3. high-speed reference video;
+1. synchronized high-speed reference video using the same anatomical/start/crossing definition as
+   the OpenBar metric;
+2. validated dual-beam or signal-processed timing gates with beam geometry, start procedure, and
+   trigger semantics recorded;
+3. fully automatic timing where the measured construct is definition-matched;
 4. manual annotation for intermediate development fixtures.
+
+Do not call two systems interchangeable merely because both output seconds. If their start event or
+body-crossing construct differs, measure and report that systematic construct difference separately
+from camera/timestamp error.
 
 ### Metrics
 
@@ -1179,7 +1189,8 @@ Start with:
 - static camera;
 - calibrated virtual gates;
 - benchmark 60/120/240 fps capture modes where supported, then freeze the validated timing envelope;
-- photocell ground truth.
+- definition-matched high-speed reference timing plus validated timing gates where their trigger
+  semantics match or are explicitly characterized.
 
 ### Stage E — broad-jump research spike
 
