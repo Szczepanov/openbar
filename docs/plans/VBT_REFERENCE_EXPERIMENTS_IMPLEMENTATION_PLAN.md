@@ -41,18 +41,18 @@ A successful experiment does not automatically justify changing production measu
 
 ## 2. Execution status & phase dashboard
 
-Execution commenced per §6 and §21. Detailed empirical findings, distributions, and reproduction commands are recorded in [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md).
+Execution commenced per §6 and §21. Detailed empirical findings, distributions, and reproduction commands are recorded in [`../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md).
 
 | Phase / Work Package | Focus | Status | Implementation / Evidence Reference | Explicit Decision |
 |---|---|---|---|---|
-| **Phase 1** | Display coordinate invariant | **COMPLETED** | [`docs/validation/TRACKER_EXPERIMENTS.md`](docs/validation/TRACKER_EXPERIMENTS.md) | **DOCUMENTED (DOCS ONLY)** |
-| **Phase 2 (P2.0)** | Real-timestamp applicability survey | **COMPLETED** | [`research/vbt-experiments/timestamp_survey.py`](../../research/vbt-experiments/timestamp_survey.py), `target/research/butterworth/timestamp_survey_dev.json` | **GO** (1% low-jitter rule qualifies 80% dev, 83.3% val clips) |
-| **Phase 2 (P2.1–P2.4)** | Butterworth challenger implementation & grid | **COMPLETED** | [`crates/openbar-core/src/filtering.rs`](../../crates/openbar-core/src/filtering.rs), [`apps/openbar-cli/src/filter_experiment.rs`](../../apps/openbar-cli/src/filter_experiment.rs) | **CONTINUE RESEARCH / DEFER PROMOTION** (Savitzky-Golay superior on peak velocity attenuation; promotion deferred to #58) |
-| **Phase 3 (P3.0)** | Multi-frame calibration oracle study | **COMPLETED** | [`research/vbt-experiments/calibration_oracle_study.py`](../../research/vbt-experiments/calibration_oracle_study.py), `target/research/calibration/p3_annotation_oracle_study.json` | **REJECT ESTIMATOR PROMOTION / KEEP DIAGNOSTIC** (blur causes 3–12% plate shrinkage; S0 remains authoritative) |
+| **Phase 1** | Display coordinate invariant | **COMPLETED** | [`../validation/TRACKER_EXPERIMENTS.md`](../validation/TRACKER_EXPERIMENTS.md) | **DOCUMENTED (DOCS ONLY)** |
+| **Phase 2 (P2.0)** | Real-timestamp applicability survey | **COMPLETED** | [`../../research/vbt-experiments/timestamp_survey.py`](../../research/vbt-experiments/timestamp_survey.py), `target/research/butterworth/timestamp_survey_dev.json` | **GO** (1% low-jitter rule qualifies 80% dev, 83.3% val clips at container PTS level) |
+| **Phase 2 (P2.1–P2.4)** | Butterworth challenger implementation & grid | **COMPLETED** | [`../../crates/openbar-core/src/filtering/butterworth_experimental.rs`](../../crates/openbar-core/src/filtering/butterworth_experimental.rs), [`../../apps/openbar-cli/src/filter_experiment.rs`](../../apps/openbar-cli/src/filter_experiment.rs) | **DO NOT PROMOTE / RETAIN AS RESEARCH CHALLENGER** (winner at 4 Hz boundary due to smoothing bias; peak attenuation 29.6%; promo deferred to #58) |
+| **Phase 3 (P3.0)** | Multi-frame calibration oracle study | **COMPLETED** | [`../../research/vbt-experiments/calibration_oracle_study.py`](../../research/vbt-experiments/calibration_oracle_study.py), `target/research/calibration/p3_annotation_oracle_study.json` | **DEFER (INCONCLUSIVE) / RETAIN PlateDiameterCalibration@1** (3%–12% scale discrepancy between static seed and dynamic fitted diameter; unverified without physical ground truth; uncertainty forwarded to #58) |
 | **Phase 4** | Camera-geometry sensitivity | **DEFERRED** | Section 11 (stub retained) | **DEFERRED** (trigger conditions in §11 not met) |
 | **Phase 5** | Controlled marker reference | **DEFERRED** | Section 12 (stub retained) | **DEFERRED** (trigger conditions in §12 not met) |
 
-## 3. Current state at plan authoring
+### Current state at plan authoring
 
 At the time this plan was written:
 
@@ -260,7 +260,7 @@ not make P2–P4 blockers. Continue the existing M0 re-entry work first.
 Priority: **low now (document the invariant); high as soon as a transformed-frame consumer appears**  
 M0 blocker: **no**, unless a current research/production tracker performs transformed-frame
 inference and returns transformed coordinates.  
-Status: **COMPLETED (DOCS ONLY)** — invariant recorded in [`docs/validation/TRACKER_EXPERIMENTS.md`](docs/validation/TRACKER_EXPERIMENTS.md).
+Status: **COMPLETED (DOCS ONLY)** — invariant recorded in [`../validation/TRACKER_EXPERIMENTS.md`](../validation/TRACKER_EXPERIMENTS.md).
 
 ## Rationale
 
@@ -380,9 +380,10 @@ state (see above).
 
 Priority: **medium/high after baseline reference data exists**  
 M0 blocker: **no by default**  
-Status: **CONTINUE RESEARCH / DEFER PROMOTION** — P2.0–P2.4 executed; findings in [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md).
+Status: **DO NOT PROMOTE / RETAIN AS RESEARCH CHALLENGER** — P2.0–P2.4 executed; findings in [`../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md).
 
 ## Rationale
+
 
 A reviewed public VBT project uses a fourth-order zero-phase Butterworth low-pass filter with an
 8 Hz cutoff. That is sufficient to justify evaluation, not adoption.
@@ -540,8 +541,8 @@ Required tests:
 
 ## P2.5 — real/reference evaluation
 
-Status: **EVALUATED — DECISION: CONTINUE RESEARCH / DEFER PROMOTION**.  
-Evaluated against development synthetic scenarios and phone captures (see [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md)). Findings: while Butterworth achieves zero phase delay and low vel RMSE on long loss spans (0.0312 m/s), Savitzky-Golay outperforms it on sharp peaks (0.5% vs 29.6% attenuation) and handles irregular/gap timestamps natively. Production promotion deferred until #58 physical reference evidence is acquired.
+Status: **EVALUATED — DECISION: DO NOT PROMOTE / RETAIN AS RESEARCH CHALLENGER**.  
+Evaluated against development synthetic scenarios and phone captures (see [`../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md)). Findings: while Butterworth achieves zero phase delay and low vel RMSE on long loss spans (0.0312 m/s), Savitzky-Golay outperforms it on sharp peaks (0.5% vs 29.6% attenuation) and handles irregular/gap timestamps natively. Production promotion deferred until #58 physical reference evidence is acquired.
 
 Only after #58 provides suitable definition-matched reference data:
 
@@ -594,7 +595,7 @@ Stop and retain the existing four families if any is true:
 
 Priority: **medium after tracker quality is adequate**  
 M0 blocker: **no by default**  
-Status: **COMPLETED — DECISION: REJECT ESTIMATOR PROMOTION / KEEP DIAGNOSTIC** (P3.0 oracle study findings in [`docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md)).
+Status: **COMPLETED — DECISION: DEFER (INCONCLUSIVE) / RETAIN PlateDiameterCalibration@1** (P3.0 oracle study findings in [`../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md`](../analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md)).
 
 ## Rationale
 
@@ -628,8 +629,8 @@ tracker is needed, it is tracker work owned by #57 and its candidate gates, not 
 
 ## P3.0 — annotation-oracle study (go/no-go)
 
-Status: **COMPLETED — DECISION: REJECT ESTIMATOR PROMOTION**.  
-Executed via [`research/vbt-experiments/calibration_oracle_study.py`](../../research/vbt-experiments/calibration_oracle_study.py); artifact in `target/research/calibration/p3_annotation_oracle_study.json`. Findings: human annotators dynamically adjust aiming rings during barbell motion blur to fit high-contrast cores, resulting in 3.2% to 12.5% diameter shrinkage relative to the stationary seed ($S_0$). Multi-frame median diameter ($S_1$) artificially inflates velocity and ROM. Stop condition met: P3.1–P3.4 stopped. `PlateDiameterCalibration@1` remains authoritative; visible diameter variation retained strictly as P3.5 diagnostic signal for blur/geometry tracking quality (#53).
+Status: **COMPLETED — DECISION: DEFER (INCONCLUSIVE)**.  
+Executed via [`../../research/vbt-experiments/calibration_oracle_study.py`](../../research/vbt-experiments/calibration_oracle_study.py); artifact in `target/research/calibration/p3_annotation_oracle_study.json`. Findings: human annotators dynamically adjust aiming rings during barbell motion; when isolating deliberately fitted frames, median dynamic diameter disagrees by 3% to 12% with the stationary seed diameter ($S_0$). Without independent physical ground truth, cause is unverified (blur vs out-of-plane motion vs perspective vs annotator edge bias). Stop condition met: P3.1–P3.4 stopped. `PlateDiameterCalibration@1` retained as authoritative standard; the 3%–12% scale discrepancy is passed directly to #58 as an empirical calibration uncertainty signal.
 
 Before building any estimator harness, test the best case: perfect, human-measured per-frame
 diameters.

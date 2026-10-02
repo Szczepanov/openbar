@@ -93,13 +93,12 @@ def analyze_dataset():
 
     print(f"Loaded {len(fixtures)} fixtures total across public and private manifests.\n")
 
-    dev_results = []
+    all_results = []
 
     for mkind, fix in fixtures:
         fid = fix["id"]
         purpose = fix.get("purpose")
-        if purpose != "development":
-            continue
+
 
         media_rel = fix.get("media", {}).get("repository_path")
         media_path = Path(media_rel)
@@ -212,7 +211,7 @@ def analyze_dataset():
         if len(cur_sec) >= 2:
             contiguous_segments.append((compute_regularity(cur_sec), max(cur_ticks) - min(cur_ticks)))
 
-        dev_results.append({
+        all_results.append({
             "fixture_id": fid,
             "media": media_path.name,
             "purpose": purpose,
@@ -239,10 +238,18 @@ def analyze_dataset():
             "contiguous_segments": contiguous_segments,
         })
 
+    dev_results = [r for r in all_results if r["purpose"] == "development"]
+    val_results = [r for r in all_results if r["purpose"] == "validation"]
+
+    evaluate_cohort("development", dev_results, Path("target/research/butterworth/timestamp_survey_dev.json"))
+    evaluate_cohort("validation", val_results, Path("target/research/butterworth/timestamp_survey_val.json"))
+
+
+def evaluate_cohort(cohort_name: str, cohort_results: list, out_path: Path):
+    print("\n" + "=" * 80)
+    print(f"{cohort_name.upper()} CLIPS TIMESTAMP REGULARITY SURVEY (P2.0)")
     print("=" * 80)
-    print("DEVELOPMENT CLIPS TIMESTAMP REGULARITY SURVEY (P2.0)")
-    print("=" * 80)
-    for r in dev_results:
+    for r in cohort_results:
         print(f"\n--- Fixture: {r['fixture_id']} ({r['media']}) ---")
         print(f"  Exercise: {r['exercise']}, Nominal FPS: {r['nominal_fps']}, Measured: {r['measured_fps']}")
         print(f"  Device/Source: {r['device_notes']}")
@@ -274,7 +281,7 @@ def analyze_dataset():
             print(f"    Seg {si+1}: {sreg['sample_count']} frames, tick_span={sspan}, rel_dev={sreg['max_rel_dev']*100:.3f}%, cv={sreg['cv']*100:.3f}%")
 
     print("\n" + "=" * 80)
-    print("RULE APPLICABILITY EVALUATION ON DEVELOPMENT CLIPS")
+    print(f"RULE APPLICABILITY EVALUATION ON {cohort_name.upper()} CLIPS")
     print("=" * 80)
 
     rules = [
@@ -294,21 +301,20 @@ def analyze_dataset():
          lambda r, seg: ((r["tracked_reg" if seg else "all_reg"]["cv"] <= 0.05))),
     ]
 
-    print(f"\n1. WHOLE CLIPS APPLICABILITY (N = {len(dev_results)} dev clips):")
+    print(f"\n1. WHOLE CLIPS APPLICABILITY (N = {len(cohort_results)} {cohort_name} clips):")
     for rname, rfunc in rules:
-        passed = [r["fixture_id"] for r in dev_results if rfunc(r, False)]
-        pct = len(passed) / len(dev_results) * 100
-        print(f"  {rname:65}: {len(passed)}/{len(dev_results)} ({pct:5.1f}%) -> {passed}")
+        passed = [r["fixture_id"] for r in cohort_results if rfunc(r, False)]
+        pct = len(passed) / len(cohort_results) * 100 if cohort_results else 0.0
+        print(f"  {rname:65}: {len(passed)}/{len(cohort_results)} ({pct:5.1f}%) -> {passed}")
 
-    seeded_dev = [r for r in dev_results if r["tracked_reg"] is not None]
-    print(f"\n2. TRACKED SEGMENTS (SEED TO END) APPLICABILITY (N = {len(seeded_dev)} seeded dev clips):")
+    seeded_cohort = [r for r in cohort_results if r["tracked_reg"] is not None]
+    print(f"\n2. TRACKED SEGMENTS (SEED TO END) APPLICABILITY (N = {len(seeded_cohort)} seeded {cohort_name} clips):")
     for rname, rfunc in rules:
-        passed = [r["fixture_id"] for r in seeded_dev if rfunc(r, True)]
-        pct = len(passed) / len(seeded_dev) * 100
-        print(f"  {rname:65}: {len(passed)}/{len(seeded_dev)} ({pct:5.1f}%) -> {passed}")
+        passed = [r["fixture_id"] for r in seeded_cohort if rfunc(r, True)]
+        pct = len(passed) / len(seeded_cohort) * 100 if seeded_cohort else 0.0
+        print(f"  {rname:65}: {len(passed)}/{len(seeded_cohort)} ({pct:5.1f}%) -> {passed}")
 
-    # Contiguous segments applicability across all clips
-    all_contiguous = [seg for r in dev_results for seg in r["contiguous_segments"]]
+    all_contiguous = [seg for r in cohort_results for seg in r["contiguous_segments"]]
     print(f"\n3. CONTIGUOUS DROP-FREE SEGMENTS APPLICABILITY (N = {len(all_contiguous)} segments):")
     for rname, rfunc in [
         ("Strict (tick span <= 1)", lambda s: s[1] <= 1),
@@ -317,15 +323,16 @@ def analyze_dataset():
         ("Low-jitter CV 1% (cv <= 0.01)", lambda s: s[0]["cv"] <= 0.01),
     ]:
         passed_c = [s for s in all_contiguous if rfunc(s)]
-        pct = len(passed_c) / len(all_contiguous) * 100
+        pct = len(passed_c) / len(all_contiguous) * 100 if all_contiguous else 0.0
         print(f"  {rname:65}: {len(passed_c)}/{len(all_contiguous)} ({pct:5.1f}%)")
 
-    # Serialize results
     summary_data = {
         "survey_version": "p2-0-timestamp-regularity-survey-v1",
-        "development_fixtures_count": len(dev_results),
-        "seeded_development_fixtures_count": len(seeded_dev),
+        "cohort": cohort_name,
+        "fixtures_count": len(cohort_results),
+        "seeded_fixtures_count": len(seeded_cohort),
         "total_drop_free_contiguous_segments": len(all_contiguous),
+        "qualification_caveat": "Note: Measured qualification reflects container-level video frame PTS regularity. Real tracker observation streams contain tracking dropouts; any gap > 1.5x median dt violates the Butterworth regularity threshold and causes segment/run rejection.",
         "results": [
             {
                 "fixture_id": r["fixture_id"],
@@ -342,15 +349,14 @@ def analyze_dataset():
                 "ann_tick_span": r["ann_tick_span"],
                 "contiguous_drop_free_segments_count": r["contiguous_segments_count"],
             }
-            for r in dev_results
+            for r in cohort_results
         ]
     }
 
-    out_path = Path("target/research/butterworth/timestamp_survey_dev.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(summary_data, f, indent=2)
-    print(f"\nWrote full survey artifact to {out_path}")
+    print(f"\nWrote {cohort_name} survey artifact to {out_path}")
 
 if __name__ == "__main__":
     analyze_dataset()
