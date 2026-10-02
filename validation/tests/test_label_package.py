@@ -58,6 +58,17 @@ class FrameSelectionTests(unittest.TestCase):
         with self.assertRaises(label_package.PackageError):
             label_package.select_frames([0.0, 1.0], 0.0, 1.0, 0.5, [2])
 
+    def test_grid_rejects_non_finite_and_out_of_media_windows(self):
+        for start, end, step in [
+            (-0.01, 1.0, 0.5),
+            (0.0, 1.01, 0.5),
+            (float("nan"), 1.0, 0.5),
+            (0.0, 1.0, float("inf")),
+            (0.0, 1.0, 1e-300),
+        ]:
+            with self.assertRaises(label_package.PackageError):
+                label_package.select_frames([0.0, 0.5, 1.0], start, end, step, [])
+
     def test_display_size_swaps_for_quarter_turn_rotation(self):
         self.assertEqual(label_package.display_size(1280, 720, 90), (720, 1280))
         self.assertEqual(label_package.display_size(1280, 720, 270), (720, 1280))
@@ -81,9 +92,17 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(probed["pts"], [900, 3885, 6870])
 
     def test_rejects_media_the_rust_frame_source_rejects(self):
+        missing_start = json.loads(probe_json({}, [{"pts": 0}]))
+        del missing_start["streams"][0]["start_pts"]
         cases = {
             "sar": probe_json({"sample_aspect_ratio": "4:3"}, [{"pts": 0}]),
             "rotation": probe_json({"side_data_list": [{"rotation": 45}]}, [{"pts": 0}]),
+            "zero width": probe_json({"width": 0}, [{"pts": 0}]),
+            "zero height": probe_json({"height": 0}, [{"pts": 0}]),
+            "zero timebase numerator": probe_json({"time_base": "0/1"}, [{"pts": 0}]),
+            "zero timebase denominator": probe_json({"time_base": "1/0"}, [{"pts": 0}]),
+            "invalid timebase": probe_json({"time_base": "x/90000"}, [{"pts": 0}]),
+            "missing start": json.dumps(missing_start),
             "before start": probe_json({"start_pts": 10}, [{"pts": 5}]),
             "missing pts": probe_json({}, [{"pts": 0}, {}]),
             "non-increasing": probe_json({}, [{"pts": 5}, {"pts": 5}]),
@@ -93,6 +112,27 @@ class ProbeTests(unittest.TestCase):
         for name, text in cases.items():
             with self.assertRaises(label_package.PackageError, msg=name):
                 label_package.parse_probe(text)
+
+
+class FixtureProbeContractTests(unittest.TestCase):
+    def test_fixture_raster_and_rotation_must_match_probe(self):
+        fixture = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]
+        video = fixture["video"]
+        probed = {
+            "width_px": video["width_px"],
+            "height_px": video["height_px"],
+            "rotation_deg": video.get("rotation_deg", 0),
+        }
+
+        label_package.require_fixture_probe_match(fixture, probed)
+        for key, value in [
+            ("width_px", probed["width_px"] + 1),
+            ("height_px", probed["height_px"] + 1),
+            ("rotation_deg", (probed["rotation_deg"] + 90) % 360),
+        ]:
+            changed = {**probed, key: value}
+            with self.assertRaises(label_package.PackageError, msg=key):
+                label_package.require_fixture_probe_match(fixture, changed)
 
 
 class AlignmentTests(unittest.TestCase):
@@ -149,11 +189,31 @@ class PageContractTests(unittest.TestCase):
         self.assertEqual(document["samples"][0]["center_px"], {"x_px": 100.25, "y_px": 189.75})
 
 
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_blocks_export_until_label_quality_is_explicit(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        function = re.search(r"// BEGIN exportProblem.*?\n(.*?)// END exportProblem", page, re.S).group(1)
+        frames = [{"timestamp_s": 0.0, "frame_index": 7}]
+        unassessed = {"0": {"state": "labelled", "x": 10.0, "y": 20.0, "quality": None}}
+        assessed = {"0": {"state": "labelled", "x": 10.0, "y": 20.0, "quality": "medium"}}
+
+        for labels, expect_problem in [(unassessed, True), (assessed, False)]:
+            script = function + (
+                f"const value = exportProblem({json.dumps(frames)}, {json.dumps(labels)});"
+                "process.stdout.write(value || '');"
+            )
+            output = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
+            self.assertEqual(bool(output), expect_problem)
+            if expect_problem:
+                self.assertIn("choose quality", output)
+
     def test_package_id_separates_annotator_passes_and_grids(self):
         frames = [{"file": "frames/frame_000000.png", "frame_index": 0, "timestamp_s": 0.0}]
         first = label_package.page_config("clip", "pass-a", (320, 240), frames)
 
         self.assertEqual(first, label_package.page_config("clip", "pass-a", (320, 240), frames))
+        self.assertEqual(first["tool_version"], label_package.TOOL["version"])
         self.assertNotEqual(first["package_id"], label_package.page_config("clip", "pass-b", (320, 240), frames)["package_id"])
         self.assertNotEqual(first["package_id"], label_package.page_config("clip", "pass-a", (320, 240), [])["package_id"])
 
