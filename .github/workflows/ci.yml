@@ -265,6 +265,26 @@ jobs:
           --analysis crates/openbar-core/tests/fixtures/analysis-v1.golden.json
           --output target/render-failure.svg
 
+  research-opencv:
+    name: Research / OpenCV
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: research/opencv-tracking/requirements.txt
+      - name: Install pinned research dependencies
+        run: python -m pip install --disable-pip-version-check -r research/opencv-tracking/requirements.txt
+      - name: OpenCV tracker research tests
+        run: python -m unittest discover -v -s research/opencv-tracking/tests -p 'test_*.py'
+
   dependencies:
     name: Dependency Policy
     runs-on: ubuntu-26.04
@@ -316,6 +336,7 @@ jobs:
     needs:
       - rust
       - rust-windows
+      - research-opencv
       - dependencies
       - validation
     runs-on: ubuntu-26.04
@@ -327,12 +348,14 @@ jobs:
           echo "Required CI job results:"
           echo "  Rust / Linux:       ${{ needs.rust.result }}"
           echo "  Rust / Windows:     ${{ needs.rust-windows.result }}"
+          echo "  Research / OpenCV:  ${{ needs.research-opencv.result }}"
           echo "  Dependency Policy:  ${{ needs.dependencies.result }}"
           echo "  Validation Tooling: ${{ needs.validation.result }}"
 
           for result in \
             "${{ needs.rust.result }}" \
             "${{ needs.rust-windows.result }}" \
+            "${{ needs.research-opencv.result }}" \
             "${{ needs.dependencies.result }}" \
             "${{ needs.validation.result }}"; do
             if [ "$result" != "success" ]; then
