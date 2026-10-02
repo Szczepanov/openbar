@@ -803,7 +803,11 @@ def finalize_decision(
         )
         if tracker_result is None:
             raise SelectionError(f"unknown evaluated tracker: {tracker}")
-        if set(tracker_result["gate_status"].values()) != {"PASS"}:
+        required_gate_status = {
+            "plate_center_mae": "PASS",
+            "tracking_availability": "PASS",
+        }
+        if tracker_result["gate_status"] != required_gate_status:
             raise SelectionError(
                 f"{tracker}: cannot select a tracker that does not pass both original tracking gates"
             )
