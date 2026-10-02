@@ -51,7 +51,7 @@ to ordinary phone video or the supported-condition envelope.
 | Mean velocity MAE | < 0.05 m/s | **NOT MEASURABLE YET** | Mean-axis velocity semantics are implemented for explicit intervals. No fixture has a definition-matched physical/reference velocity source. |
 | Peak velocity MAE | < 0.10 m/s | **NOT MEASURABLE YET** | Peak signed-axis velocity semantics are implemented for explicit intervals. No fixture has a definition-matched physical/reference velocity source. |
 | Repeat-analysis determinism | 100% | **PASS** | Public subset: repeated tracker runs, benchmark evaluations and canonical analyze runs were compared; local clips: repeated canonical analyze runs and benchmark evaluations. Scoped to the public synthetic subset and the frozen configuration. |
-| Offline processing | faster than video duration on reference hardware | **NOT MEASURABLE YET** | Per-tracker wall-clock runtime is recorded in this evidence artifact. The project intends phone-class reference hardware; no specific device is designated and M0 has no mobile build, so desktop timings are diagnostic only. |
+| Offline processing | faster than video duration on reference hardware | **NOT MEASURABLE YET** | Per-tracker wall-clock runtime is recorded in this evidence artifact. The phone-class reference target is Google Pixel 8 under ADR-0009, but no gate-eligible reference-phone run over representative supported real clips is committed yet; desktop and non-reference timings are diagnostic only. |
 
 ## Determinism and performance
 
@@ -59,7 +59,7 @@ to ordinary phone video or the supported-condition envelope.
 - Benchmark JSON identical across repeated evaluation of the same prediction streams: True.
 - Canonical analysis JSON byte-identical across two end-to-end runs: True.
 - Runtime is recorded per tracker in the machine-readable evidence. The offline-speed gate remains
-  NOT MEASURABLE YET: the project intends phone-class reference hardware, which M0 cannot run yet.
+  NOT MEASURABLE YET until #59 records gate-eligible runs on the Pixel 8 reference runtime.
 
 ## Failure cases and unsupported conditions
 

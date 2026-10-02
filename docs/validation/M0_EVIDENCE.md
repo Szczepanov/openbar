@@ -105,9 +105,11 @@ The determinism gate is allowed to PASS for the evaluated public subset when rep
 tracker predictions, repeated benchmark outputs, and repeated canonical analysis are identical. Its
 scope must remain explicit.
 
-The offline-speed gate targets phone-class reference hardware (owner decision, 2026-10-01). No
-specific device is designated yet and M0 has no mobile build, so the gate stays NOT MEASURABLE YET.
-Desktop release-build timings on the local real clips are reported as diagnostics only.
+The offline-speed gate targets phone-class reference hardware. ADR-0009 designates a physical
+Google Pixel 8 reference target and a Termux/native-ARM64 benchmark boundary that reuses the
+ADR-0006 external FFmpeg harness. The gate still stays NOT MEASURABLE YET until #59 records
+gate-eligible runs over representative supported real clips on that reference phone. Desktop and
+other non-reference timings remain diagnostics only.
 
 ## Subgroup reporting
 

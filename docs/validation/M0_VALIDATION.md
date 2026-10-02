@@ -48,6 +48,21 @@ Rework tracking:
 - #58 — independent physical ROM/velocity validation;
 - #59 — phone-class runtime gate.
 
+### Reference phone runtime for #59
+
+ADR-0009 designates a physical **Google Pixel 8** as the M0 reference phone. The evidence harness
+runs the release-built native ARM64 Rust CLI under Termux while retaining ADR-0006 external
+FFmpeg/FFprobe as the experimental decode boundary.
+
+This choice is deliberately narrower than a production Android architecture: it measures the real
+phone CPU/memory/runtime constraint without introducing Flutter, JNI/FFI product integration or a
+native decoder before evidence justifies one.
+
+The gate remains **NOT MEASURABLE YET** until #57 freezes the candidate pipeline, #53 provides
+representative real clips inside a supported recording envelope, and
+`validation/tools/phone_runtime_benchmark.py` is run on the reference phone. See
+[`PHONE_RUNTIME_BENCHMARK.md`](PHONE_RUNTIME_BENCHMARK.md).
+
 ## Dataset dimensions
 
 The fixture set should vary:
