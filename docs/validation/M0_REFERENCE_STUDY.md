@@ -188,3 +188,63 @@ encoder/LPT (or another independently calibrated position reference):
 High-frame-rate reference video can be used when its own calibration, digitisation repeatability and
 timing uncertainty are documented. A commercial VBT source should be used only when the mean/peak
 construct, phase boundaries, smoothing/filtering and timestamp semantics are definition-matched.
+
+
+## Agreement-study design requirements
+
+Commercial VBT applications can be useful secondary comparators, but agreement with another app is
+not automatically ground truth. A commercial-device/app comparison is acceptable only when the
+metric construct, phase boundaries, filtering/smoothing, axis/sign convention and synchronization
+can be mapped to the frozen OpenBar definition. Independent physical/reference evidence remains the
+preferred basis for M0 gate claims.
+
+### Explicit observation pairing
+
+Never pair repetitions merely by row position or by truncating two result arrays to the shorter
+length. A missed or extra repetition can otherwise shift every subsequent comparison.
+
+A validation import should identify comparable observations by an explicit key or exact interval,
+for example:
+
+```text
+participant / session / set / repetition
++ measurement interval
++ construct definition
+```
+
+or by the exact timestamp-alignment rules already required by this study.
+
+Missed detections, extra detections and unmatchable intervals are outcomes to report, not rows to
+drop silently.
+
+### Repeated observations
+
+Multiple repetitions from one athlete/session are clustered observations. Early engineering studies
+may still report descriptive per-rep errors, but formal inferential uncertainty must not pretend all
+repetitions are independent.
+
+As study size grows, use an analysis appropriate to the hierarchy, such as cluster/bootstrap
+confidence intervals, mixed-effects modelling, or another pre-specified repeated-measures method.
+Record the participant/session/exercise/load grouping needed to reproduce that analysis.
+
+### Agreement reporting
+
+For sufficiently sized studies, report more than correlation:
+
+- signed bias;
+- 95% limits of agreement;
+- confidence intervals for bias/limits where justified by the design;
+- MAE/RMSE and absolute-error percentiles;
+- misses/extra detections separately from matched-value error;
+- condition-stratified results;
+- participant/session/exercise/load counts;
+- reference-system uncertainty.
+
+Correlation/regression can remain descriptive but must not replace agreement/error analysis.
+
+### Scope of conclusions
+
+A study based on one athlete, one exercise or one camera geometry may be useful development evidence
+but cannot establish general product validity. The report must state the population, exercises,
+loads, devices, frame rates and recording conditions actually represented and avoid extrapolating
+outside them.

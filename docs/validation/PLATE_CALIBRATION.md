@@ -223,3 +223,68 @@ This model does not provide:
 
 A valid scalar conversion must therefore never be interpreted as proof that the recording
 geometry is supported.
+
+
+## Follow-up calibration research
+
+The accepted M0 method remains the explicit single-reference plate-diameter calibration described
+above. Two follow-up experiments are justified by reviewed public VBT/CV projects, but neither
+changes the current method without separate evidence and versioning.
+
+### Multi-frame visible-diameter estimation
+
+A future experiment should compare:
+
+1. the existing manual-seed diameter;
+2. the median visible diameter over high-confidence tracked frames;
+3. a robust confidence-weighted estimate over high-confidence frames.
+
+The experiment must guard against circularity: a tracker that drifts can corrupt both trajectory and
+the diameter estimate. Report at minimum:
+
+- physical position/ROM error versus an independent reference;
+- visible-diameter distribution and robust spread;
+- sensitivity to occlusion, blur, plate rotation/foreshortening and camera motion;
+- cases where the multi-frame estimate improves or worsens the single-reference result.
+
+Do not silently vary metres-per-pixel frame by frame. A dynamic or multi-frame calibration would be
+a new method with its own method version, provenance and validation.
+
+Visible-diameter variation may also be evaluated as a geometry-quality diagnostic. Large or
+systematic changes can be evidence of depth change, perspective, foreshortening, camera movement or
+tracker error, but no threshold should be promoted without measured false-positive/false-negative
+behaviour.
+
+### Intrinsic/lens-distortion sensitivity
+
+A controlled study may estimate phone-camera intrinsics/distortion using a documented calibration
+target (for example chessboard/ChArUco tooling) and compare otherwise identical analyses with and
+without image undistortion.
+
+Measure:
+
+- centre/trajectory error by field-of-view position;
+- calibrated position error;
+- horizontal/vertical ROM error;
+- mean/peak velocity error where the reference construct is definition-matched;
+- runtime and capture/setup cost.
+
+The product should not require an intrinsic-calibration workflow merely because correction is
+technically possible. Promotion requires evidence that distortion materially harms measurements
+inside the supported recording envelope and that the chosen correction improves them reliably.
+
+## Image-transform geometry invariant
+
+Any future inference/preprocessing path that crops, rotates, resizes, letterboxes or otherwise
+transforms frames must preserve a documented mapping back to the canonical display/source pixel
+coordinate space before physical calibration.
+
+In particular, non-uniform X/Y resizing must not be followed by a single scalar metres-per-pixel
+conversion in transformed coordinates. Either:
+
+- use a geometry-preserving transform; or
+- record an invertible transform and map observations back to canonical coordinates before applying
+  the calibration model.
+
+Synthetic transform tests should cover crop, uniform resize, non-uniform resize, rotation and
+letterbox mappings before such preprocessing is accepted into a production measurement path.
