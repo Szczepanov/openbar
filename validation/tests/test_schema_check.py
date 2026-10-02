@@ -46,6 +46,7 @@ class CatalogueTests(unittest.TestCase):
             "m0-evidence-v1.schema.json",
             "kinematic-reference-study-v1.schema.json",
             "kinematic-reference-result-v1.schema.json",
+            "recording-envelope-evidence-v1.schema.json",
         }
         self.assertEqual({path.name for path in SCHEMA_DIR.glob("*.schema.json")}, exercised)
 

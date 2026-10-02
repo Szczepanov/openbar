@@ -441,23 +441,27 @@ fn validate_study(study: &StudySpec) -> AnyResult<()> {
     require_non_blank("purpose", &study.purpose)?;
     require_non_blank("reference.system", &study.reference.system)?;
     require_non_blank("reference.protocol", &study.reference.protocol)?;
-    require_non_blank("reference.synchronization", &study.reference.synchronization)?;
+    require_non_blank(
+        "reference.synchronization",
+        &study.reference.synchronization,
+    )?;
     require_non_blank(
         "reference.coordinate_alignment",
         &study.reference.coordinate_alignment,
     )?;
-    require_non_blank("reference.rights_or_access", &study.reference.rights_or_access)?;
+    require_non_blank(
+        "reference.rights_or_access",
+        &study.reference.rights_or_access,
+    )?;
 
-    if study.construct.coordinate_convention
-        != MetricCoordinateConvention::ReferenceCentreXRightYUp
+    if study.construct.coordinate_convention != MetricCoordinateConvention::ReferenceCentreXRightYUp
     {
         return Err(data_error(
             "study coordinate convention must be reference_centre_x_right_y_up",
         ));
     }
     if study.construct.calibration_method != CalibrationMethod::PlateDiameter
-        || study.construct.calibration_method_version
-            != PLATE_DIAMETER_CALIBRATION_METHOD_VERSION
+        || study.construct.calibration_method_version != PLATE_DIAMETER_CALIBRATION_METHOD_VERSION
     {
         return Err(data_error(format!(
             "study calibration must be plate_diameter@{}",
@@ -521,7 +525,11 @@ fn validate_study(study: &StudySpec) -> AnyResult<()> {
                         "cases[{index}] supported case must not set unsupported_reason"
                     )));
                 }
-                if case\n                    .analysis_path\n                    .as_deref()\n                    .is_none_or(|value| value.trim().is_empty())\n                {
+                if case
+                    .analysis_path
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                {
                     return Err(data_error(format!(
                         "cases[{index}] supported case requires analysis_path"
                     )));
@@ -819,8 +827,8 @@ fn evaluate_supported_case(
     );
     let text = fs::read_to_string(&analysis_path)
         .map_err(|error| format!("cannot read canonical analysis: {error}"))?;
-    let analysis =
-        Analysis::from_json(&text).map_err(|error| format!("canonical analysis is invalid: {error}"))?;
+    let analysis = Analysis::from_json(&text)
+        .map_err(|error| format!("canonical analysis is invalid: {error}"))?;
 
     let expected_tracker = case
         .expected_tracker
@@ -834,7 +842,9 @@ fn evaluate_supported_case(
         || analysis.calibration().method_version() != study.construct.calibration_method_version
         || analysis.calibration().coordinate_convention() != study.construct.coordinate_convention
     {
-        return Err("analysis calibration provenance does not match the frozen study contract".to_owned());
+        return Err(
+            "analysis calibration provenance does not match the frozen study contract".to_owned(),
+        );
     }
 
     let velocity_layer = case
@@ -849,16 +859,17 @@ fn evaluate_supported_case(
             (derived.calibrated.samples.as_slice(), None)
         }
         VelocityLayer::Filtered => {
-            let filtered = derived
-                .filtered
-                .as_ref()
-                .ok_or_else(|| "study requests filtered velocity but analysis has no filtered layer".to_owned())?;
+            let filtered = derived.filtered.as_ref().ok_or_else(|| {
+                "study requests filtered velocity but analysis has no filtered layer".to_owned()
+            })?;
             let expected = case
                 .expected_filter
                 .as_ref()
                 .ok_or_else(|| "filtered velocity layer is missing expected_filter".to_owned())?;
             if &filtered.filter != expected {
-                return Err("analysis filter provenance does not match the frozen study case".to_owned());
+                return Err(
+                    "analysis filter provenance does not match the frozen study case".to_owned(),
+                );
             }
             (filtered.samples.as_slice(), Some(filtered.filter.clone()))
         }
@@ -869,19 +880,28 @@ fn evaluate_supported_case(
         .as_ref()
         .ok_or_else(|| "analysis has no canonical kinematics layer".to_owned())?;
     if kinematics.input != velocity_layer.expected_input() {
-        return Err("analysis kinematics input does not match the frozen velocity layer".to_owned());
+        return Err(
+            "analysis kinematics input does not match the frozen velocity layer".to_owned(),
+        );
     }
     if kinematics.method.implementation != study.construct.kinematics.implementation
         || kinematics.method.version != study.construct.kinematics.version
     {
-        return Err("analysis kinematics method/version does not match the frozen study contract".to_owned());
+        return Err(
+            "analysis kinematics method/version does not match the frozen study contract"
+                .to_owned(),
+        );
     }
-    let config = KinematicsConfig::from_velocity_provenance(&kinematics.method)
-        .map_err(|error| format!("cannot reconstruct canonical kinematics configuration: {error}"))?;
+    let config =
+        KinematicsConfig::from_velocity_provenance(&kinematics.method).map_err(|error| {
+            format!("cannot reconstruct canonical kinematics configuration: {error}")
+        })?;
     if config.max_gap_s != study.construct.kinematics.max_gap_s
         || config.min_confidence != study.construct.kinematics.min_confidence
     {
-        return Err("analysis kinematics parameters do not match the frozen study contract".to_owned());
+        return Err(
+            "analysis kinematics parameters do not match the frozen study contract".to_owned(),
+        );
     }
 
     let reference = case
@@ -914,7 +934,8 @@ fn evaluate_supported_case(
     )?;
     let reference_mean = require_metric(
         "reference mean velocity",
-        mean_axis_velocity(&reference, axis, interval, config).map_err(|error| error.to_string())?,
+        mean_axis_velocity(&reference, axis, interval, config)
+            .map_err(|error| error.to_string())?,
     )?;
     let openbar_mean = require_metric(
         "OpenBar mean velocity",
@@ -922,7 +943,8 @@ fn evaluate_supported_case(
     )?;
     let reference_peak = require_timed_metric(
         "reference peak velocity",
-        peak_axis_velocity(&reference, axis, interval, config).map_err(|error| error.to_string())?,
+        peak_axis_velocity(&reference, axis, interval, config)
+            .map_err(|error| error.to_string())?,
     )?;
     let openbar_peak = require_timed_metric(
         "OpenBar peak velocity",
@@ -1170,14 +1192,10 @@ fn render_report(result: &ReferenceStudyResult) -> String {
     }
 
     report.push_str("\n## Gate status\n\n");
-    report.push_str("| Gate | Original target | Status | Observed MAE | Bias | Effective target |\n");
+    report
+        .push_str("| Gate | Original target | Status | Observed MAE | Bias | Effective target |\n");
     report.push_str("| --- | ---: | --- | ---: | ---: | ---: |\n");
-    render_gate_row(
-        &mut report,
-        "ROM MAE",
-        "m",
-        &result.gates.rom_mae_m,
-    );
+    render_gate_row(&mut report, "ROM MAE", "m", &result.gates.rom_mae_m);
     render_gate_row(
         &mut report,
         "Mean velocity MAE",
@@ -1348,11 +1366,7 @@ mod tests {
 
     #[test]
     fn supported_reference_metrics_use_core_semantics() {
-        let reference_samples = [
-            sample(0.0, 0.0),
-            sample(0.1, 0.12),
-            sample(0.2, 0.20),
-        ];
+        let reference_samples = [sample(0.0, 0.0), sample(0.1, 0.12), sample(0.2, 0.20)];
         let reference = reference_samples
             .iter()
             .map(|sample| StudyAxis::VerticalY.reference_sample(sample))
@@ -1361,30 +1375,26 @@ mod tests {
         let config = KinematicsConfig::try_new(0.2, 0.0).unwrap();
         let interval = MetricInterval::try_new(0.0, 0.2).unwrap();
 
-        let reference_rom =
-            range_of_motion(&reference, MetricAxis::VerticalY, config)
-                .unwrap()
-                .unwrap();
-        let openbar_rom =
-            range_of_motion(&openbar, MetricAxis::VerticalY, config)
-                .unwrap()
-                .unwrap();
+        let reference_rom = range_of_motion(&reference, MetricAxis::VerticalY, config)
+            .unwrap()
+            .unwrap();
+        let openbar_rom = range_of_motion(&openbar, MetricAxis::VerticalY, config)
+            .unwrap()
+            .unwrap();
         let reference_mean =
             mean_axis_velocity(&reference, MetricAxis::VerticalY, interval, config)
                 .unwrap()
                 .unwrap();
-        let openbar_mean =
-            mean_axis_velocity(&openbar, MetricAxis::VerticalY, interval, config)
-                .unwrap()
-                .unwrap();
+        let openbar_mean = mean_axis_velocity(&openbar, MetricAxis::VerticalY, interval, config)
+            .unwrap()
+            .unwrap();
         let reference_peak =
             peak_axis_velocity(&reference, MetricAxis::VerticalY, interval, config)
                 .unwrap()
                 .unwrap();
-        let openbar_peak =
-            peak_axis_velocity(&openbar, MetricAxis::VerticalY, interval, config)
-                .unwrap()
-                .unwrap();
+        let openbar_peak = peak_axis_velocity(&openbar, MetricAxis::VerticalY, interval, config)
+            .unwrap()
+            .unwrap();
 
         assert!((reference_rom.value - 0.20).abs() < 1.0e-12);
         assert!((openbar_rom.value - 0.19).abs() < 1.0e-12);
