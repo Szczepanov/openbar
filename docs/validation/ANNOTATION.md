@@ -176,10 +176,14 @@ is being evaluated. The output folder holds the frames, a `metadata.json` sideca
 - click the plate centre (hold and drag to adjust); Shift+click a rim point to record that frame's
   radius (optional). The Shift+click also sets a dashed aiming ring that follows the cursor: line it up
   with the plate's outer rim and click, so the centre comes from the whole rim rather than a guess at the
-  middle. The ring is an aiming aid only; a frame gets a radius only from its own Shift+click or a
-  `[`/`]` ring resize while it has a centre. Nothing is prefilled from a detector or tracker;
+  middle. Arrow keys move the placed centre by 1 px; Shift+wheel resizes the ring by 0.1 px and `[`/`]`
+  by 1 px. Clicking a centre on a frame that has no radius records the ring's radius, because the ring is
+  drawn at that size around the cursor as the centre is placed; correct it with Shift+wheel if it does
+  not fit. Moving to a frame that has a radius sets the ring to it, so each new frame starts from the
+  previous frame's radius. Nothing is prefilled from a detector or tracker;
 - `1`/`2`/`3` set the quality of a labelled frame and move to the next frame; `U`, `F` and `S` also
-  move on. Clicking never advances, so a centre can be corrected before its quality is chosen;
+  move on, and `N`/`P` step frames. Clicking never advances, so a centre can be corrected before its
+  quality is chosen;
 - the wheel zooms, right/middle-drag pans, and a loupe magnifies the cursor area;
 - set visibility/quality, mark `unlabelable` or skip (`not_annotated`) explicitly;
 - integer coordinates fall on pixel centres, matching how the trackers compute positions (for
@@ -187,7 +191,11 @@ is being evaluated. The output folder holds the frames, a `metadata.json` sideca
   every label stays within `0 <= x < width`;
 - progress is kept in the browser's local storage, separately for each package, so a second
   annotator pass (`--annotator-id`) starts empty;
-- "Download CSV" writes exactly the `import-csv` columns.
+- "Download CSV" writes exactly the `import-csv` columns;
+- the status line counts done frames and frames still needing a quality (purple in the strip), and names
+  the seed frame: the first frame in time order with a centre and a radius. Trackers run forward from
+  the seed, so start each clip on its first frame with a rim Shift+click; the seed is built from that
+  frame at import.
 
 Every extracted frame's PTS is checked against the probe, and the media is checked against the
 manifest SHA-256, so labels cannot be stamped onto the wrong frame or a different file. Packages
