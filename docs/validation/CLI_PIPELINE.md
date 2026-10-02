@@ -42,13 +42,17 @@ dimensions/rotation when those values are present. Fixture mode also cross-check
 `--plate-diameter-m` against the manifest's required `load.plate_diameter_m` before media I/O,
 so a fixture identity cannot silently carry a different metric scale.
 
-Recording support is evaluated before physical analysis is emitted. Fixture mode reuses the
-camera/condition metadata from the #3 manifest. Direct-video mode must provide
+After media decode, the manual seed is validated against the decoded display geometry/timeline
+before any recording-support artifact is derived from it. Recording support is then evaluated
+before tracking/calibration/kinematics and before physical analysis is emitted. Fixture mode reuses
+the camera/condition metadata from the #3 manifest. Direct-video mode must provide
 `--camera-view` and `--camera-movement`; the CLI does not assume side/fixed geometry.
 
 Optional direct-video metadata is accepted through `--approx-yaw-deg`,
 `--approx-pitch-deg`, `--camera-roll-deg`, and `--camera-distance-m`.
 These values are recorded for support assessment but are not compared with invented cutoffs.
+The support document's `measured_fps` is derived from decoded presentation timestamps; fixture
+`nominal_fps` remains authored manifest metadata.
 
 `--recording-support-output <path>` writes the versioned recording-support-v1 assessment.
 Declared side + fixed camera is currently warning-only because #14 has no held-out
