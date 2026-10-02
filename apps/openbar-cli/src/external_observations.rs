@@ -256,12 +256,13 @@ fn validate_and_adapt(
                 sample.timestamp_s
             )));
         }
-        if previous_frame_index.is_some_and(|previous| matched_frame.frame_index <= previous) {
-            return Err(CliError::invalid_input(format!(
-                "external observation {index} resolves to decoded frame {} after frame {}; each sample must map to a distinct, strictly advancing decoded frame",
-                matched_frame.frame_index,
-                previous_frame_index.expect("checked Some")
-            )));
+        if let Some(previous) = previous_frame_index {
+            if matched_frame.frame_index <= previous {
+                return Err(CliError::invalid_input(format!(
+                    "external observation {index} resolves to decoded frame {} after frame {previous}; each sample must map to a distinct, strictly advancing decoded frame",
+                    matched_frame.frame_index
+                )));
+            }
         }
         previous_frame_index = Some(matched_frame.frame_index);
 
@@ -365,10 +366,10 @@ fn parameter_value(value: serde_json::Value) -> CliResult<ParameterValue> {
         serde_json::Value::Number(value) => {
             if let Some(integer) = value.as_i64() {
                 Ok(ParameterValue::Integer(integer))
-            } else if value.as_u64().is_some() {
+            } else if let Some(integer) = value.as_u64() {
                 // analysis-v1 has an i64 integer parameter type. Preserve larger JSON integers
                 // exactly as decimal text rather than silently rounding them through f64.
-                Ok(ParameterValue::Text(value.to_string()))
+                Ok(ParameterValue::Text(integer.to_string()))
             } else if let Some(float) = value.as_f64() {
                 if float.is_finite() {
                     Ok(ParameterValue::Float(float))
