@@ -36,29 +36,9 @@ tracking:
 Recording directly in the app is compatible with this plan. It does **not** require live tracking:
 the camera can record a file first and analysis can run after capture.
 
-## Market reference and clean-room boundary
+## Implementation boundary
 
-Public listings for WL Analysis were reviewed only to understand visible market expectations in the
-barbell-video-analysis category. Those public descriptions advertise capabilities such as automatic
-barbell detection, bar-path visualization, velocity and other derived metrics, charts/statistics,
-video comparison, trimming, playback controls, and export.
-
-OpenBar may independently solve the same generic user needs, but this document does not authorize:
-
-- copying WL Analysis UI/layout, wording, icons, assets, interaction details, algorithms, models,
-  weights, datasets, or internal data structures;
-- decompilation, traffic inspection, binary inspection, or other reverse engineering;
-- reproducing undocumented implementation behavior.
-
-OpenBar's implementation remains first-principles and validation-driven.
-
-Public product-behaviour references reviewed:
-
-- Apple App Store: WL Analysis, product description as publicly available on 2026-10-02;
-- Google Play: WL Analysis - bar path tracker, product description as publicly available on
-  2026-10-02.
-
-No competitor code, model, dataset, or asset is introduced by this proposal.
+This workflow is defined from OpenBar's own product goals, measurement architecture, validation requirements, and user needs. Implementation should remain first-principles and validation-driven.
 
 ## Core design rule: exercise-aware workflow, exercise-agnostic measurement
 
