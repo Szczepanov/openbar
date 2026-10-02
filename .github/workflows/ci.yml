@@ -297,6 +297,8 @@ jobs:
         run: python --version
       - name: Python syntax
         run: python -m compileall -q validation/tools validation/tests
+      - name: Research Python syntax
+        run: python -m compileall -q research/opencv-tracking research/gpu-tracking
       - name: Validation tooling tests
         run: python -m unittest discover -v -s validation/tests -p 'test_*.py'
       - name: Committed fixtures match their schemas
