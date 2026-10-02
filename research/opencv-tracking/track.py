@@ -41,6 +41,7 @@ from typing import Any, Iterator
 import cv2
 import numpy as np
 
+import point_motion
 import refine_circle
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -192,7 +193,12 @@ REFINEMENT_VARIANTS: dict[str, dict[str, Any]] = {
     "csrt+hough": {"base": "csrt", "method": "hough", "reinit_period": None},
 }
 
-ALL_TRACKERS = sorted(list(TRACKERS.keys()) + list(REFINEMENT_VARIANTS.keys()))
+POINT_MOTION_VARIANTS: dict[str, dict[str, Any]] = {
+    "lk-affine": {"fallback": None},
+    "csrt+lk": {"fallback": "csrt"},
+}
+
+ALL_TRACKERS = sorted(list(TRACKERS.keys()) + list(REFINEMENT_VARIANTS.keys()) + list(POINT_MOTION_VARIANTS.keys()))
 DECODE_ARGS = ["-map", "0:v:0", "-fps_mode", "passthrough", "-enc_time_base", "demux",
                "-pix_fmt", "bgr24", "-f", "rawvideo", "-"]
 
@@ -313,11 +319,15 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
     box = seed_box(float(center["x_px"]), float(center["y_px"]), float(radius), width, height)
 
     is_refined = tracker_name in REFINEMENT_VARIANTS
+    is_point_motion = tracker_name in POINT_MOTION_VARIANTS
     ref_spec = REFINEMENT_VARIANTS.get(tracker_name)
     base_tracker_name = ref_spec["base"] if is_refined else tracker_name
 
     cv2.setNumThreads(1)  # single-threaded for reproducible results
-    tracker = TRACKERS[base_tracker_name]()
+    tracker = None
+    if not is_point_motion or tracker_name == "csrt+lk":
+        tracker_to_create = "csrt" if is_point_motion else base_tracker_name
+        tracker = TRACKERS[tracker_to_create]()
     template = None
     samples: list[dict[str, Any]] = []
     sidecar_samples: list[dict[str, Any]] = []
@@ -325,6 +335,12 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
 
     r_prev = float(radius)
     r_seed = float(radius)
+
+    seed_pts: np.ndarray | None = None
+    cur_pts: np.ndarray | None = None
+    surviving_indices: np.ndarray | None = None
+    prev_gray: np.ndarray | None = None
+    initial_query_count = 0
 
     for index, frame in enumerate(decode_frames(media, width, height, len(timestamps))):
         t = timestamps[index]
@@ -337,13 +353,19 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
             continue
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if index == seed_index:
-            tracker.init(frame, box)
-            x, y, w, h = box
-            template = gray[y:y + h, x:x + w].copy()
-            current = box
-            ok = True
-            conf = 1.0
             cx, cy = float(center["x_px"]), float(center["y_px"])
+            if tracker is not None:
+                tracker.init(frame, box)
+                x, y, w, h = box
+                template = gray[y:y + h, x:x + w].copy()
+            if is_point_motion:
+                query_pts = point_motion.extract_query_points(gray, cx, cy, float(radius))
+                initial_query_count = len(query_pts)
+                seed_pts = query_pts.copy()
+                cur_pts = query_pts.copy()
+                surviving_indices = np.arange(initial_query_count)
+                prev_gray = gray.copy()
+
             samples.append({"timestamp_s": round(t, 6), "state": "tracked",
                             "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
                             "confidence": 1.0})
@@ -362,92 +384,178 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
                     "ellipse": None,
                     "base_confidence": 1.0,
                 })
+            elif tracker_name == "csrt+lk":
+                sidecar_samples.append({
+                    "timestamp_s": round(t, 6),
+                    "fit_attempted": False,
+                    "accepted": True,
+                    "reject_reasons": [],
+                    "base_confidence": 1.0,
+                })
         else:
             frame_offset = index - seed_index
-            ok, current = tracker.update(frame)
-            if ok:
-                if hasattr(tracker, "getTrackingScore"):
-                    raw_score = float(tracker.getTrackingScore())
-                    base_conf = min(1.0, max(0.0, raw_score)) if math.isfinite(raw_score) else 0.0
-                else:
-                    base_conf = appearance_confidence(gray, current, template)
+            if is_point_motion:
+                assert prev_gray is not None and cur_pts is not None and seed_pts is not None and surviving_indices is not None
+                next_pts, valid = point_motion.track_points_lk(prev_gray, gray, cur_pts)
+                surviving_indices = surviving_indices[valid]
+                cur_pts = next_pts[valid]
+                prev_gray = gray.copy()
+                res = point_motion.estimate_center_from_points(
+                    seed_pts[surviving_indices],
+                    cur_pts,
+                    (float(center["x_px"]), float(center["y_px"])),
+                    initial_query_count,
+                    width,
+                    height,
+                )
+                if tracker_name == "lk-affine":
+                    if res.state == "tracked":
+                        assert res.center_px is not None
+                        samples.append({
+                            "timestamp_s": round(t, 6),
+                            "state": "tracked",
+                            "center_px": {"x_px": round(res.center_px[0], 3), "y_px": round(res.center_px[1], 3)},
+                            "confidence": round(res.confidence, 4),
+                        })
+                    else:
+                        samples.append({"timestamp_s": round(t, 6), "state": "lost"})
+                elif tracker_name == "csrt+lk":
+                    assert tracker is not None
+                    csrt_ok, csrt_current = tracker.update(frame)
+                    csrt_conf = 0.0
+                    if csrt_ok:
+                        if hasattr(tracker, "getTrackingScore"):
+                            raw_score = float(tracker.getTrackingScore())
+                            csrt_conf = min(1.0, max(0.0, raw_score)) if math.isfinite(raw_score) else 0.0
+                        else:
+                            assert template is not None
+                            csrt_conf = appearance_confidence(gray, csrt_current, template)
+                    if res.state == "tracked":
+                        assert res.center_px is not None
+                        samples.append({
+                            "timestamp_s": round(t, 6),
+                            "state": "tracked",
+                            "center_px": {"x_px": round(res.center_px[0], 3), "y_px": round(res.center_px[1], 3)},
+                            "confidence": round(res.confidence, 4),
+                        })
+                        sidecar_samples.append({
+                            "timestamp_s": round(t, 6),
+                            "fit_attempted": True,
+                            "accepted": True,
+                            "reject_reasons": [],
+                            "base_confidence": round(res.confidence, 4),
+                        })
+                    elif csrt_ok and valid_box(csrt_current, width, height):
+                        cx_b, cy_b = box_center(csrt_current)
+                        samples.append({
+                            "timestamp_s": round(t, 6),
+                            "state": "tracked",
+                            "center_px": {"x_px": round(cx_b, 3), "y_px": round(cy_b, 3)},
+                            "confidence": round(csrt_conf * 0.7, 4),
+                        })
+                        sidecar_samples.append({
+                            "timestamp_s": round(t, 6),
+                            "fit_attempted": True,
+                            "accepted": False,
+                            "reject_reasons": ["lk_lost"],
+                            "base_confidence": round(csrt_conf, 4),
+                        })
+                    else:
+                        samples.append({"timestamp_s": round(t, 6), "state": "lost"})
+                        sidecar_samples.append({
+                            "timestamp_s": round(t, 6),
+                            "fit_attempted": True,
+                            "accepted": False,
+                            "reject_reasons": ["lk_lost", "csrt_lost"],
+                            "base_confidence": 0.0,
+                        })
             else:
-                base_conf = 0.0
-
-            if not is_refined:
-                if ok and valid_box(current, width, height):
-                    cx, cy = box_center(current)
-                    samples.append({"timestamp_s": round(t, 6), "state": "tracked",
-                                    "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
-                                    "confidence": round(base_conf, 4)})
+                assert tracker is not None
+                ok, current = tracker.update(frame)
+                if ok:
+                    if hasattr(tracker, "getTrackingScore"):
+                        raw_score = float(tracker.getTrackingScore())
+                        base_conf = min(1.0, max(0.0, raw_score)) if math.isfinite(raw_score) else 0.0
+                    else:
+                        assert template is not None
+                        base_conf = appearance_confidence(gray, current, template)
                 else:
-                    samples.append({"timestamp_s": round(t, 6), "state": "lost"})
-            else:
-                if ok and valid_box(current, width, height):
-                    assert ref_spec is not None
-                    ref_res = refine_circle.refine_circle(
-                        frame,
-                        current,
-                        r_prev,
-                        r_seed,
-                        base_conf,
-                        frame_offset,
-                        seed_template=template,
-                        method=ref_spec["method"],
-                    )
-                    if ref_res.accepted:
-                        r_prev = ref_res.radius_px
-                        reinit_period = ref_spec["reinit_period"]
-                        if reinit_period is not None and (frame_offset % reinit_period == 0):
-                            reinit_box = seed_box(
-                                ref_res.center_px[0],
-                                ref_res.center_px[1],
-                                ref_res.radius_px,
-                                width,
-                                height,
-                            )
-                            tracker = TRACKERS[base_tracker_name]()
-                            tracker.init(frame, reinit_box)
+                    base_conf = 0.0
 
-                    samples.append({
-                        "timestamp_s": round(t, 6),
-                        "state": "tracked",
-                        "center_px": {
-                            "x_px": round(ref_res.center_px[0], 3),
-                            "y_px": round(ref_res.center_px[1], 3),
-                        },
-                        "confidence": round(ref_res.confidence, 4),
-                    })
-                    sidecar_samples.append({
-                        "timestamp_s": round(t, 6),
-                        "fit_attempted": ref_res.fit_attempted,
-                        "accepted": ref_res.accepted,
-                        "reject_reasons": ref_res.reject_reasons,
-                        "radius_px": round(ref_res.radius_px, 3) if ref_res.radius_px is not None else None,
-                        "inlier_count": ref_res.inlier_count,
-                        "edge_count": ref_res.edge_count,
-                        "coverage_bins": ref_res.coverage_bins,
-                        "canny_lower": ref_res.canny_lower,
-                        "canny_upper": ref_res.canny_upper,
-                        "ellipse": ref_res.ellipse,
-                        "base_confidence": round(base_conf, 4),
-                    })
+                if not is_refined:
+                    if ok and valid_box(current, width, height):
+                        cx, cy = box_center(current)
+                        samples.append({"timestamp_s": round(t, 6), "state": "tracked",
+                                        "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
+                                        "confidence": round(base_conf, 4)})
+                    else:
+                        samples.append({"timestamp_s": round(t, 6), "state": "lost"})
                 else:
-                    samples.append({"timestamp_s": round(t, 6), "state": "lost"})
-                    sidecar_samples.append({
-                        "timestamp_s": round(t, 6),
-                        "fit_attempted": False,
-                        "accepted": False,
-                        "reject_reasons": ["base_lost"],
-                        "radius_px": None,
-                        "inlier_count": None,
-                        "edge_count": None,
-                        "coverage_bins": None,
-                        "canny_lower": None,
-                        "canny_upper": None,
-                        "ellipse": None,
-                        "base_confidence": 0.0,
-                    })
+                    if ok and valid_box(current, width, height):
+                        assert ref_spec is not None
+                        ref_res = refine_circle.refine_circle(
+                            frame,
+                            current,
+                            r_prev,
+                            r_seed,
+                            base_conf,
+                            frame_offset,
+                            seed_template=template,
+                            method=ref_spec["method"],
+                        )
+                        if ref_res.accepted:
+                            r_prev = ref_res.radius_px
+                            reinit_period = ref_spec["reinit_period"]
+                            if reinit_period is not None and (frame_offset % reinit_period == 0):
+                                reinit_box = seed_box(
+                                    ref_res.center_px[0],
+                                    ref_res.center_px[1],
+                                    ref_res.radius_px,
+                                    width,
+                                    height,
+                                )
+                                tracker = TRACKERS[base_tracker_name]()
+                                tracker.init(frame, reinit_box)
+
+                        samples.append({
+                            "timestamp_s": round(t, 6),
+                            "state": "tracked",
+                            "center_px": {
+                                "x_px": round(ref_res.center_px[0], 3),
+                                "y_px": round(ref_res.center_px[1], 3),
+                            },
+                            "confidence": round(ref_res.confidence, 4),
+                        })
+                        sidecar_samples.append({
+                            "timestamp_s": round(t, 6),
+                            "fit_attempted": ref_res.fit_attempted,
+                            "accepted": ref_res.accepted,
+                            "reject_reasons": ref_res.reject_reasons,
+                            "radius_px": round(ref_res.radius_px, 3) if ref_res.radius_px is not None else None,
+                            "inlier_count": ref_res.inlier_count,
+                            "edge_count": ref_res.edge_count,
+                            "coverage_bins": ref_res.coverage_bins,
+                            "canny_lower": ref_res.canny_lower,
+                            "canny_upper": ref_res.canny_upper,
+                            "ellipse": ref_res.ellipse,
+                            "base_confidence": round(base_conf, 4),
+                        })
+                    else:
+                        samples.append({"timestamp_s": round(t, 6), "state": "lost"})
+                        sidecar_samples.append({
+                            "timestamp_s": round(t, 6),
+                            "fit_attempted": False,
+                            "accepted": False,
+                            "reject_reasons": ["base_lost"],
+                            "radius_px": None,
+                            "inlier_count": None,
+                            "edge_count": None,
+                            "coverage_bins": None,
+                            "canny_lower": None,
+                            "canny_upper": None,
+                            "ellipse": None,
+                            "base_confidence": 0.0,
+                        })
 
         processing_wall_s = time.perf_counter() - started
 
@@ -504,6 +612,37 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
                 "rejected_fit_confidence_multiplier": 0.7,
                 "reinit_period": ref_spec["reinit_period"],
             }
+    elif is_point_motion:
+        config["license"] = "Apache-2.0"
+        config["confidence"] = (
+            "ransac_inliers_fraction_clamped"
+            if tracker_name == "lk-affine"
+            else "lk_inliers_fraction_or_csrt_x_0.7_on_fallback"
+        )
+        config["point_motion"] = {
+            "query_annulus_fraction": [0.25, 0.90],
+            "good_features_to_track": {
+                "maxCorners": 200,
+                "qualityLevel": 0.01,
+                "minDistance": 5,
+                "blockSize": 7,
+            },
+            "pyr_lk": {
+                "winSize": [21, 21],
+                "maxLevel": 3,
+                "max_fb_error_px": 1.0,
+            },
+            "ransac_similarity": {
+                "method": "cv2.RANSAC",
+                "ransacReprojThreshold": 1.5,
+                "maxIters": 2000,
+                "confidence": 0.999,
+                "refineIters": 10,
+                "min_inliers": 12,
+            },
+            "fallback": "csrt" if tracker_name == "csrt+lk" else None,
+            "fallback_confidence_multiplier": 0.7 if tracker_name == "csrt+lk" else None,
+        }
     elif tracker_name in MODELS:
         spec = MODELS[tracker_name]
         config["confidence"] = "model_tracking_score_clamped"
@@ -537,7 +676,7 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
     }
 
     sidecar_doc: dict[str, Any] | None = None
-    if is_refined:
+    if is_refined or (tracker_name == "csrt+lk"):
         sidecar_doc = {
             "format": "openbar-research-geometry-sidecar",
             "format_version": 0,

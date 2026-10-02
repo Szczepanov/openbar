@@ -164,6 +164,73 @@ def compute_coverage_bins(inlier_points: np.ndarray, center_x: float, center_y: 
     return int(len(np.unique(bins)))
 
 
+def fit_circle_ransac(
+    points: np.ndarray,
+    r_ref: float,
+    frame_index: int,
+    num_iterations: int = 1000,
+    inlier_tolerance: float = 1.5,
+) -> tuple[float, float, float, np.ndarray] | None:
+    """RANSAC + Taubin circle fit on 2D points.
+
+    Args:
+        points: (N, 2) array of coordinates.
+        r_ref: reference radius (used for degenerate circumradius check: c_r > 10 * r_ref).
+        frame_index: frame index for deterministic RNG seed [42, frame_index].
+        num_iterations: RANSAC iterations (default 1000).
+        inlier_tolerance: inlier distance threshold in pixels (default 1.5).
+
+    Returns:
+        (cx, cy, r, inlier_points) or None if fit failed.
+    """
+    n_points = points.shape[0]
+    if n_points < 3:
+        return None
+
+    # RANSAC with 1000 iterations and per-frame seed [42, frame_index]
+    rng = np.random.default_rng([42, frame_index])
+    best_inlier_mask: np.ndarray | None = None
+    best_inlier_count = 0
+
+    for _ in range(num_iterations):
+        sample_indices = rng.choice(n_points, size=3, replace=False)
+        cand_circle = circumcircle_3pts(
+            points[sample_indices[0]],
+            points[sample_indices[1]],
+            points[sample_indices[2]],
+        )
+        if cand_circle is None:
+            continue
+        c_cx, c_cy, c_r = cand_circle
+        # Degenerate check: circumradius > 10 * r_ref
+        if c_r > 10.0 * r_ref:
+            continue
+        residuals = np.abs(np.hypot(points[:, 0] - c_cx, points[:, 1] - c_cy) - c_r)
+        inlier_mask = residuals <= inlier_tolerance
+        count = int(np.sum(inlier_mask))
+        if count > best_inlier_count:
+            best_inlier_count = count
+            best_inlier_mask = inlier_mask
+
+    if best_inlier_mask is None or best_inlier_count < 3:
+        return None
+
+    # Taubin refit on inliers
+    try:
+        refit_cx, refit_cy, refit_r = fit_circle_taubin(points[best_inlier_mask])
+    except (ValueError, ZeroDivisionError):
+        return None
+
+    # Recompute inliers against refit circle
+    refit_residuals = np.abs(np.hypot(points[:, 0] - refit_cx, points[:, 1] - refit_cy) - refit_r)
+    final_inliers_mask = refit_residuals <= inlier_tolerance
+    final_inliers = points[final_inliers_mask]
+    if len(final_inliers) < 3:
+        return None
+
+    return refit_cx, refit_cy, refit_r, final_inliers
+
+
 def refine_circle(
     frame_bgr: np.ndarray,
     base_box: tuple[float, float, float, float] | None,
@@ -357,32 +424,8 @@ def refine_circle(
             base_confidence=base_confidence,
         )
 
-    # RANSAC with 1000 iterations and per-frame seed [42, frame_index]
-    rng = np.random.default_rng([42, frame_index])
-    best_inlier_mask: np.ndarray | None = None
-    best_inlier_count = 0
-
-    for _ in range(1000):
-        sample_indices = rng.choice(edge_count, size=3, replace=False)
-        cand_circle = circumcircle_3pts(
-            annulus_pts[sample_indices[0]],
-            annulus_pts[sample_indices[1]],
-            annulus_pts[sample_indices[2]],
-        )
-        if cand_circle is None:
-            continue
-        c_cx, c_cy, c_r = cand_circle
-        # Degenerate check: circumradius > 10 * r_prev
-        if c_r > 10.0 * r_prev:
-            continue
-        residuals = np.abs(np.hypot(annulus_pts[:, 0] - c_cx, annulus_pts[:, 1] - c_cy) - c_r)
-        inlier_mask = residuals <= 1.5
-        count = int(np.sum(inlier_mask))
-        if count > best_inlier_count:
-            best_inlier_count = count
-            best_inlier_mask = inlier_mask
-
-    if best_inlier_mask is None or best_inlier_count < 3:
+    fit_res = fit_circle_ransac(annulus_pts, r_prev, frame_index)
+    if fit_res is None:
         return RefinementResult(
             accepted=False,
             center_px=(base_cx, base_cy),
@@ -391,34 +434,13 @@ def refine_circle(
             fit_attempted=True,
             reject_reasons=["ransac_failed"],
             edge_count=edge_count,
-            inlier_count=best_inlier_count,
+            inlier_count=0,
             canny_lower=round(lower, 2),
             canny_upper=round(upper, 2),
             base_confidence=base_confidence,
         )
 
-    # Taubin refit on inliers
-    try:
-        refit_cx, refit_cy, refit_r = fit_circle_taubin(annulus_pts[best_inlier_mask])
-    except (ValueError, ZeroDivisionError):
-        return RefinementResult(
-            accepted=False,
-            center_px=(base_cx, base_cy),
-            radius_px=r_prev,
-            confidence=round(base_confidence * 0.7, 4),
-            fit_attempted=True,
-            reject_reasons=["taubin_refit_failed"],
-            edge_count=edge_count,
-            inlier_count=best_inlier_count,
-            canny_lower=round(lower, 2),
-            canny_upper=round(upper, 2),
-            base_confidence=base_confidence,
-        )
-
-    # Recompute inliers against refit circle
-    refit_residuals = np.abs(np.hypot(annulus_pts[:, 0] - refit_cx, annulus_pts[:, 1] - refit_cy) - refit_r)
-    final_inliers_mask = refit_residuals <= 1.5
-    final_inliers = annulus_pts[final_inliers_mask]
+    refit_cx, refit_cy, refit_r, final_inliers = fit_res
     final_inlier_count = int(len(final_inliers))
 
     # Coverage bins check: inliers must occupy >= 18 of 36 x 10-deg angular bins

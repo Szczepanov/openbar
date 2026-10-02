@@ -1,0 +1,15 @@
+# GPU Tracking environment requirements (#57 Phase 3 bake-off)
+# PyTorch with CUDA 12.4
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.4.0
+torchvision>=0.19.0
+numpy>=1.26.0,<3.0.0
+opencv-python>=4.10.0
+timm
+hydra-core
+iopath
+matplotlib
+pyyaml
+scipy
+einops
+packaging
