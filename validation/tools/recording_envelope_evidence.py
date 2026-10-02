@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 ARTIFACT_TYPE = "recording-envelope-evidence-v1"
+# Stdlib-only by design so the validation job needs no extra Python dependencies.
 
 
 class EvidenceError(ValueError):
