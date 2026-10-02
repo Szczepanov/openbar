@@ -294,7 +294,13 @@ fn run(args: &Args) -> CliResult<()> {
             fixture_id: fixture.as_ref().map(|fixture| fixture.id.clone()),
             source_sha256: Some(source_sha256),
         },
-        video_metadata(&clip, &stream, seed.seed().timestamp_s(), args.selection),
+        analysis_video_metadata(
+            &clip,
+            &stream,
+            seed.seed().timestamp_s(),
+            args.selection,
+            args.observations.is_some().then_some(&raw_observations),
+        ),
         seed.seed().clone(),
         calibration,
         raw_observations,
@@ -1151,6 +1157,25 @@ fn write_recording_support(
                 path.display()
             ))
         })
+}
+
+fn analysis_video_metadata(
+    clip: &DecodedClip,
+    stream: &StreamProvenance,
+    seed_timestamp_s: f64,
+    selection: Option<MediaTimeRange>,
+    external_observations: Option<&[RawObservation]>,
+) -> VideoMetadata {
+    let mut video = video_metadata(clip, stream, seed_timestamp_s, selection);
+    if let Some(observations) = external_observations {
+        if let Some(first) = observations.first() {
+            video.trim.start_s = video.trim.start_s.min(first.timestamp_s);
+        }
+        if let Some(last) = observations.last() {
+            video.trim.end_s = video.trim.end_s.max(last.timestamp_s);
+        }
+    }
+    video
 }
 
 fn video_metadata(
