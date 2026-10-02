@@ -1,0 +1,149 @@
+name: Engineering task
+description: Define an implementation, validation, architecture, CI/tooling, research, or maintenance task.
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for work that should be clear enough for a human or coding agent to take from issue to PR.
+
+        OpenBar is currently **M0 — Validated Bar-Path Engine**. Keep work inside the current headless measurement/validation scope unless the issue explicitly reopens a documented scope decision.
+
+        External substantive code contributions remain subject to the contributor-rights process described in [CONTRIBUTING.md](https://github.com/Szczepanov/openbar/blob/main/CONTRIBUTING.md).
+
+  - type: dropdown
+    id: work_type
+    attributes:
+      label: Work type
+      options:
+        - Feature / behavior change
+        - Reliability / bug hardening
+        - Refactor / technical debt
+        - Architecture / ADR
+        - Validation / benchmark / evidence
+        - Fixture / annotation / dataset tooling
+        - CI / build / developer tooling
+        - Documentation
+        - Licensing / clean-room / data governance
+        - Maintenance
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: State the concrete outcome this issue should achieve.
+      placeholder: |
+        Make <capability/contract> do <desired outcome> so that <measurement/product benefit>.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and evidence
+      description: Explain why this work is needed now. Include current behavior, measurements, failure modes, benchmark evidence, or operational impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired outcome
+      description: Describe the observable end state rather than only a proposed implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      placeholder: |
+        In scope:
+        - ...
+
+        Out of scope:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Prefer verifiable behavior, contracts, and evidence over file-level implementation details.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Architecture, measurement, and M0 invariants
+      description: Link relevant ADRs/docs and identify invariants that must remain true. Write "Not applicable" where appropriate.
+      placeholder: |
+        Relevant ADRs / docs:
+        - ...
+
+        Invariants:
+        - Raw observations preserved:
+        - Explicit loss / uncertainty:
+        - Timestamp and units semantics:
+        - Determinism / provenance:
+        - openbar-core ownership:
+        - Serialized schema / version impact:
+        - M0 scope:
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and evidence plan
+      description: State how completion will be proved, including deterministic tests and benchmark/fixture evidence where measurement behavior changes.
+      placeholder: |
+        Focused tests:
+        Workspace checks:
+        Fixture / golden evidence:
+        Benchmark evidence:
+        Diagnostic/manual evidence:
+    validations:
+      required: true
+
+  - type: textarea
+    id: external_material
+    attributes:
+      label: External material / licensing / clean-room
+      description: Identify external code, datasets, models, papers, product documentation, or other material that will inform the work, including source/licence and compatibility. Write "None" when not applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and sequencing
+      description: List blockers, prerequisite issues/PRs, ordering constraints, or follow-up work.
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link related issues, PRs, ADRs, plans, validation docs, papers, or public product documentation.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and pull requests for duplicate or already-shipped work.
+          required: true
+        - label: The task does not depend on proprietary implementation details, leaked material, unauthorized datasets/models/media, or secrets.
+          required: true

@@ -2,13 +2,16 @@ name: CI
 
 on:
   pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -22,6 +25,7 @@ env:
 
 jobs:
   rust:
+    name: Rust / Linux
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
@@ -74,6 +78,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Build workspace
+        run: cargo build --locked --workspace --all-targets --all-features
       - name: Test
         run: cargo test --locked --workspace --all-targets --all-features
       - name: Labelling package build (FFmpeg + Node)
@@ -176,6 +182,7 @@ jobs:
           retention-days: 14
 
   rust-windows:
+    name: Rust / Windows
     # Primary development happens on Windows; this catches line-ending and path regressions.
     runs-on: windows-2025
     timeout-minutes: 20
@@ -200,6 +207,11 @@ jobs:
         run: |
           choco install ffmpeg --yes --no-progress
           ffmpeg -hide_banner -version
+      - name: Verify dependency lock
+        shell: pwsh
+        run: cargo metadata --locked --format-version 1 | Out-Null
+      - name: Build workspace
+        run: cargo build --locked --workspace --all-targets --all-features
       - name: Test
         run: cargo test --locked --workspace --all-targets --all-features
       - name: First tracker comparison
@@ -254,6 +266,7 @@ jobs:
           --output target/render-failure.svg
 
   dependencies:
+    name: Dependency Policy
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -268,6 +281,7 @@ jobs:
           arguments: --all-features --locked
 
   validation:
+    name: Validation Tooling
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -292,3 +306,37 @@ jobs:
           python validation/tools/annotations.py validate
           --manifest validation/fixtures/public/manifest.json
           validation/fixtures/public/annotations/synthetic-clean-side-12.annotation-v1.json
+
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs:
+      - rust
+      - rust-windows
+      - dependencies
+      - validation
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify required CI jobs
+        shell: bash
+        run: |
+          echo "Required CI job results:"
+          echo "  Rust / Linux:       ${{ needs.rust.result }}"
+          echo "  Rust / Windows:     ${{ needs.rust-windows.result }}"
+          echo "  Dependency Policy:  ${{ needs.dependencies.result }}"
+          echo "  Validation Tooling: ${{ needs.validation.result }}"
+
+          for result in \
+            "${{ needs.rust.result }}" \
+            "${{ needs.rust-windows.result }}" \
+            "${{ needs.dependencies.result }}" \
+            "${{ needs.validation.result }}"; do
+            if [ "$result" != "success" ]; then
+              echo "A required CI job did not succeed (status: $result)." >&2
+              exit 1
+            fi
+          done
+
+          echo "All required CI jobs completed successfully."

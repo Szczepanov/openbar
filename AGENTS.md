@@ -27,12 +27,13 @@ Flutter UI do **not** exist yet. Do not scaffold them unless asked.
 
 ## Commands
 
-Toolchain is pinned by `rust-toolchain.toml` (Rust 1.98.1, clippy + rustfmt). CI runs exactly
-these; run them before declaring work done:
+Toolchain is pinned by `rust-toolchain.toml` (Rust 1.98.1, clippy + rustfmt). CI's required
+Rust/measurement gates include these commands; run the applicable set before declaring work done:
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo build --locked --workspace --all-targets --all-features
 cargo test --locked --workspace --all-targets --all-features
 cargo run --locked -p openbar-cli -- tracker-experiment --output target/tracker-experiment.json
 cargo run --locked -p openbar-cli -- filter-experiment --output target/filter-experiment.json
