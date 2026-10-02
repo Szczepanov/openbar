@@ -111,6 +111,22 @@ class GateTests(unittest.TestCase):
         )
         self.assertEqual(gate["status"], "NOT MEASURABLE YET")
 
+    def test_requires_multiple_representative_cases(self):
+        gate = module.assess_gate(
+            self.env(),
+            [self.case("a")],
+            production_candidate_frozen=True,
+        )
+        self.assertEqual(gate["status"], "NOT MEASURABLE YET")
+
+    def test_missing_process_rss_stays_unmeasurable(self):
+        gate = module.assess_gate(
+            self.env(),
+            [self.case("a", rss=None), self.case("b")],
+            production_candidate_frozen=True,
+        )
+        self.assertEqual(gate["status"], "NOT MEASURABLE YET")
+
     def test_warning_or_synthetic_case_stays_unmeasurable(self):
         gate = module.assess_gate(
             self.env(),
