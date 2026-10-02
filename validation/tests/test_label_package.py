@@ -64,6 +64,7 @@ class FrameSelectionTests(unittest.TestCase):
             (0.0, 1.01, 0.5),
             (float("nan"), 1.0, 0.5),
             (0.0, 1.0, float("inf")),
+            (0.0, 1.0, 1e-300),
         ]:
             with self.assertRaises(label_package.PackageError):
                 label_package.select_frames([0.0, 0.5, 1.0], start, end, step, [])
@@ -212,6 +213,7 @@ class PageContractTests(unittest.TestCase):
         first = label_package.page_config("clip", "pass-a", (320, 240), frames)
 
         self.assertEqual(first, label_package.page_config("clip", "pass-a", (320, 240), frames))
+        self.assertEqual(first["tool_version"], label_package.TOOL["version"])
         self.assertNotEqual(first["package_id"], label_package.page_config("clip", "pass-b", (320, 240), frames)["package_id"])
         self.assertNotEqual(first["package_id"], label_package.page_config("clip", "pass-a", (320, 240), [])["package_id"])
 
