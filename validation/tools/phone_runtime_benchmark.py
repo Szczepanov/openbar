@@ -631,6 +631,9 @@ def main(argv: list[str] | None = None) -> int:
             "benchmark_version": BENCHMARK_VERSION,
             "evaluated_commit": evaluated_commit(root),
             "frozen_configuration": {
+                "production_candidate_frozen": bool(
+                    suite.get("production_candidate_frozen", False)
+                ),
                 "tracker": f"{PROBE_TRACKER_ID}@1",
                 "filter": "raw-identity@1",
                 "kinematics": "backward-difference@1",
