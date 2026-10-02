@@ -41,6 +41,8 @@ from typing import Any, Iterator
 import cv2
 import numpy as np
 
+import refine_circle
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "validation" / "tools"))
 import label_package  # noqa: E402  (shared probe/decode contract with the labelling tool)
@@ -182,6 +184,15 @@ TRACKERS = {
     "nano": create_nano,
     "dasiamrpn": create_dasiamrpn,
 }
+
+REFINEMENT_VARIANTS: dict[str, dict[str, Any]] = {
+    "csrt+circle-a": {"base": "csrt", "method": "circle", "reinit_period": None},
+    "csrt+circle-b1": {"base": "csrt", "method": "circle", "reinit_period": 1},
+    "csrt+circle-b5": {"base": "csrt", "method": "circle", "reinit_period": 5},
+    "csrt+hough": {"base": "csrt", "method": "hough", "reinit_period": None},
+}
+
+ALL_TRACKERS = sorted(list(TRACKERS.keys()) + list(REFINEMENT_VARIANTS.keys()))
 DECODE_ARGS = ["-map", "0:v:0", "-fps_mode", "passthrough", "-enc_time_base", "demux",
                "-pix_fmt", "bgr24", "-f", "rawvideo", "-"]
 
@@ -275,7 +286,7 @@ def load_inputs(manifest_path: Path, fixture_id: str, seed_path: Path, allow_hel
 
 
 def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: str,
-          end_s: float | None, allow_held_out: bool) -> dict[str, Any]:
+          end_s: float | None, allow_held_out: bool) -> tuple[dict[str, Any], dict[str, Any] | None]:
     started = time.perf_counter()
     fixture, media, seed_doc = load_inputs(manifest_path, fixture_id, seed_path, allow_held_out)
     probed = label_package.probe(media)
@@ -301,11 +312,20 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
     last_s = timestamps[-1] if end_s is None else end_s
     box = seed_box(float(center["x_px"]), float(center["y_px"]), float(radius), width, height)
 
+    is_refined = tracker_name in REFINEMENT_VARIANTS
+    ref_spec = REFINEMENT_VARIANTS.get(tracker_name)
+    base_tracker_name = ref_spec["base"] if is_refined else tracker_name
+
     cv2.setNumThreads(1)  # single-threaded for reproducible results
-    tracker = TRACKERS[tracker_name]()
+    tracker = TRACKERS[base_tracker_name]()
     template = None
     samples: list[dict[str, Any]] = []
+    sidecar_samples: list[dict[str, Any]] = []
     processing_wall_s: float | None = None
+
+    r_prev = float(radius)
+    r_seed = float(radius)
+
     for index, frame in enumerate(decode_frames(media, width, height, len(timestamps))):
         t = timestamps[index]
         if index < seed_index:
@@ -323,23 +343,112 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
             current = box
             ok = True
             conf = 1.0
+            cx, cy = float(center["x_px"]), float(center["y_px"])
+            samples.append({"timestamp_s": round(t, 6), "state": "tracked",
+                            "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
+                            "confidence": 1.0})
+            if is_refined:
+                sidecar_samples.append({
+                    "timestamp_s": round(t, 6),
+                    "fit_attempted": False,
+                    "accepted": False,
+                    "reject_reasons": [],
+                    "radius_px": round(r_seed, 3),
+                    "inlier_count": None,
+                    "edge_count": None,
+                    "coverage_bins": None,
+                    "canny_lower": None,
+                    "canny_upper": None,
+                    "ellipse": None,
+                    "base_confidence": 1.0,
+                })
         else:
+            frame_offset = index - seed_index
             ok, current = tracker.update(frame)
             if ok:
                 if hasattr(tracker, "getTrackingScore"):
                     raw_score = float(tracker.getTrackingScore())
-                    conf = min(1.0, max(0.0, raw_score)) if math.isfinite(raw_score) else 0.0
+                    base_conf = min(1.0, max(0.0, raw_score)) if math.isfinite(raw_score) else 0.0
                 else:
-                    conf = appearance_confidence(gray, current, template)
+                    base_conf = appearance_confidence(gray, current, template)
             else:
-                conf = 0.0
-        if ok and valid_box(current, width, height):
-            cx, cy = box_center(current)
-            samples.append({"timestamp_s": round(t, 6), "state": "tracked",
-                            "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
-                            "confidence": round(conf, 4)})
-        else:
-            samples.append({"timestamp_s": round(t, 6), "state": "lost"})
+                base_conf = 0.0
+
+            if not is_refined:
+                if ok and valid_box(current, width, height):
+                    cx, cy = box_center(current)
+                    samples.append({"timestamp_s": round(t, 6), "state": "tracked",
+                                    "center_px": {"x_px": round(cx, 3), "y_px": round(cy, 3)},
+                                    "confidence": round(base_conf, 4)})
+                else:
+                    samples.append({"timestamp_s": round(t, 6), "state": "lost"})
+            else:
+                if ok and valid_box(current, width, height):
+                    assert ref_spec is not None
+                    ref_res = refine_circle.refine_circle(
+                        frame,
+                        current,
+                        r_prev,
+                        r_seed,
+                        base_conf,
+                        frame_offset,
+                        seed_template=template,
+                        method=ref_spec["method"],
+                    )
+                    if ref_res.accepted:
+                        r_prev = ref_res.radius_px
+                        reinit_period = ref_spec["reinit_period"]
+                        if reinit_period is not None and (frame_offset % reinit_period == 0):
+                            reinit_box = seed_box(
+                                ref_res.center_px[0],
+                                ref_res.center_px[1],
+                                ref_res.radius_px,
+                                width,
+                                height,
+                            )
+                            tracker = TRACKERS[base_tracker_name]()
+                            tracker.init(frame, reinit_box)
+
+                    samples.append({
+                        "timestamp_s": round(t, 6),
+                        "state": "tracked",
+                        "center_px": {
+                            "x_px": round(ref_res.center_px[0], 3),
+                            "y_px": round(ref_res.center_px[1], 3),
+                        },
+                        "confidence": round(ref_res.confidence, 4),
+                    })
+                    sidecar_samples.append({
+                        "timestamp_s": round(t, 6),
+                        "fit_attempted": ref_res.fit_attempted,
+                        "accepted": ref_res.accepted,
+                        "reject_reasons": ref_res.reject_reasons,
+                        "radius_px": round(ref_res.radius_px, 3) if ref_res.radius_px is not None else None,
+                        "inlier_count": ref_res.inlier_count,
+                        "edge_count": ref_res.edge_count,
+                        "coverage_bins": ref_res.coverage_bins,
+                        "canny_lower": ref_res.canny_lower,
+                        "canny_upper": ref_res.canny_upper,
+                        "ellipse": ref_res.ellipse,
+                        "base_confidence": round(base_conf, 4),
+                    })
+                else:
+                    samples.append({"timestamp_s": round(t, 6), "state": "lost"})
+                    sidecar_samples.append({
+                        "timestamp_s": round(t, 6),
+                        "fit_attempted": False,
+                        "accepted": False,
+                        "reject_reasons": ["base_lost"],
+                        "radius_px": None,
+                        "inlier_count": None,
+                        "edge_count": None,
+                        "coverage_bins": None,
+                        "canny_lower": None,
+                        "canny_upper": None,
+                        "ellipse": None,
+                        "base_confidence": 0.0,
+                    })
+
         processing_wall_s = time.perf_counter() - started
 
     if not samples or processing_wall_s is None:
@@ -349,15 +458,55 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
         "opencv_version": cv2.__version__,
         "numpy_version": np.__version__,
         "tracker": tracker_name,
+        "base_tracker": base_tracker_name,
         "init_box": "seed circle bounding box",
-        "confidence": "model_tracking_score_clamped" if tracker_name in MODELS else "ncc_to_seed_template_clamped",
         "threads": 1,
         "seed_timestamp_s": seed_timestamp_s,
         "end_s": last_s,
         "decode_validation": "full_clip_count_and_ffmpeg_exit_status",
     }
-    if tracker_name in MODELS:
+    if is_refined:
+        config["license"] = "Apache-2.0"
+        config["confidence"] = "refined_ncc_to_seed_template_clamped_or_base_x_0.7_on_reject"
+        assert ref_spec is not None
+        if tracker_name == "csrt+hough":
+            config["refinement"] = {
+                "variant": f"opencv-{tracker_name}",
+                "method": "hough",
+                "hough_algorithm": "HOUGH_GRADIENT_ALT",
+                "dp": 1.5,
+                "minDist": "r_prev",
+                "param1": 300,
+                "param2": 0.9,
+                "minRadius": "floor(0.85 * r_prev)",
+                "maxRadius": "ceil(1.15 * r_prev)",
+                "frame_to_frame_radius_max_fraction": 0.10,
+                "seed_anchored_radius_max_fraction": 0.20,
+                "rejected_fit_confidence_multiplier": 0.7,
+                "reinit_period": None,
+            }
+        else:
+            config["refinement"] = {
+                "variant": f"opencv-{tracker_name}",
+                "method": "circle",
+                "roi_expansion": 1.3,
+                "gaussian_blur": {"ksize": [0, 0], "sigma": 1.5},
+                "canny_thresholds": "median_derived_0.66_1.33",
+                "annulus_fraction": [0.75, 1.25],
+                "ransac_iterations": 1000,
+                "ransac_rng": "np.random.default_rng([42, frame_index])",
+                "degenerate_circumradius_ratio": 10.0,
+                "inlier_tolerance_px": 1.5,
+                "refit": "taubin_algebraic_recomputed_inliers",
+                "coverage_min_bins_of_36": 18,
+                "frame_to_frame_radius_max_fraction": 0.10,
+                "seed_anchored_radius_max_fraction": 0.20,
+                "rejected_fit_confidence_multiplier": 0.7,
+                "reinit_period": ref_spec["reinit_period"],
+            }
+    elif tracker_name in MODELS:
         spec = MODELS[tracker_name]
+        config["confidence"] = "model_tracking_score_clamped"
         config["license"] = spec["license"]
         config["models"] = [
             {
@@ -370,9 +519,10 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
             for f in spec["files"]
         ]
     else:
+        config["confidence"] = "ncc_to_seed_template_clamped"
         config["license"] = "Apache-2.0"
 
-    return {
+    prediction: dict[str, Any] = {
         "schema_version": 1,
         "fixture_id": fixture_id,
         "source_video_sha256": fixture["media"]["sha256"],
@@ -386,24 +536,50 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
         "samples": samples,
     }
 
+    sidecar_doc: dict[str, Any] | None = None
+    if is_refined:
+        sidecar_doc = {
+            "format": "openbar-research-geometry-sidecar",
+            "format_version": 0,
+            "fixture_id": fixture_id,
+            "implementation": {
+                "name": f"opencv-{tracker_name}",
+                "version": SPIKE_VERSION,
+                "config": config,
+            },
+            "samples": sidecar_samples,
+        }
+
+    return prediction, sidecar_doc
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--fixture", required=True)
     parser.add_argument("--seed", type=Path, required=True)
-    parser.add_argument("--tracker", choices=sorted(TRACKERS), required=True)
+    parser.add_argument("--tracker", choices=ALL_TRACKERS, required=True)
     parser.add_argument("--end-s", type=float, help="last timestamp to track (default: end of clip)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--allow-held-out", action="store_true", help="only for the frozen held-out evaluation")
     args = parser.parse_args(argv)
     try:
-        prediction = track(args.manifest, args.fixture, args.seed, args.tracker, args.end_s, args.allow_held_out)
+        prediction, sidecar_doc = track(args.manifest, args.fixture, args.seed, args.tracker, args.end_s, args.allow_held_out)
     except (SpikeError, label_package.PackageError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(prediction, indent=2) + "\n", encoding="utf-8")
+    if sidecar_doc is not None:
+        stem = args.output.name
+        if stem.endswith(".prediction-v1.json"):
+            sidecar_name = stem.removesuffix(".prediction-v1.json") + ".geometry.json"
+        elif stem.endswith(".json"):
+            sidecar_name = stem.removesuffix(".json") + ".geometry.json"
+        else:
+            sidecar_name = stem + ".geometry.json"
+        sidecar_path = args.output.parent / sidecar_name
+        sidecar_path.write_text(json.dumps(sidecar_doc, indent=2) + "\n", encoding="utf-8")
     tracked = sum(s["state"] == "tracked" for s in prediction["samples"])
     print(f"{prediction['implementation']['name']}: {tracked}/{len(prediction['samples'])} tracked, "
           f"{prediction['runtime']['processing_wall_s']} s -> {args.output}")
