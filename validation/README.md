@@ -25,6 +25,9 @@ This directory holds the machine-readable inputs and tooling used to validate Op
 - `tools/annotations.py` — deterministic stdlib-only importer, validator, and repeatability metric tool.
 - `tools/label_package.py` + `tools/label_page.html` — optional stdlib-only helper that extracts frames on a
   uniform time grid and builds a local click-to-label page exporting the `import-csv` format.
+- `tools/fixture_probe.py` — stdlib-only media probe (`inspect`), contact-sheet generator, and fixture
+  manifest drafter (`draft`). Needs `ffmpeg`/`ffprobe` on `PATH`. Drafts default to a self-recorded side-view
+  clip in good conditions (override per clip); entries are schema-checked before any manifest write.
 - `tools/tracker_filter_selection.py` — issue #57 held-out study orchestration: freeze candidates,
   fail-closed real-fixture preflight, evaluate tracker/filter evidence, and record an explicit decision.
 - `tools/schema_check.py` — stdlib-only JSON Schema checker; validates every committed fixture against its schema and fails on unmapped JSON files.
