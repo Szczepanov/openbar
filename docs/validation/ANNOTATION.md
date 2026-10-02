@@ -62,6 +62,11 @@ should emit centres in `0 <= x < width - 0.5`, which is valid under both. The se
 `coordinate_system.origin` value `top_left` names the top-left pixel; it does not mean the
 outer corner.
 
+ADR-0007 treats this as a v1 contract erratum because repository-owned producers and fixtures
+already use pixel centres. If an externally authored v1 file followed the old "top-left corner"
+wording literally, its convention is ambiguous from JSON alone. Do not auto-shift it by 0.5 px;
+confirm its provenance and convert explicitly, or re-label it.
+
 The fixture manifest's `video.width_px` / `video.height_px` describe the encoded raster.
 For 90° or 270° rotation metadata, annotation display width/height are therefore swapped.
 Rotation values use FFmpeg's counter-clockwise display-matrix convention, normalised modulo

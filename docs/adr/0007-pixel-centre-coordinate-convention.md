@@ -46,6 +46,21 @@ OpenBar uses the **pixel-centre** convention for every pixel coordinate it store
 The serialized origin names (`display_top_left` in seeds, `top_left` in annotations) are
 unchanged. They name the top-left pixel, whose centre is the origin.
 
+### Versioning determination
+
+ADR-0007 is a **v1 contract erratum**, not a new coordinate mode. Repository-owned trackers,
+synthetic generators, committed fixtures and the labelling tool already produce/consume
+pixel-centre coordinates; this change makes the written contract match that behaviour. No
+serialized field, producer output or measurement computation changes, so the existing v1 schema
+and method identifiers remain in place.
+
+A v1 document authored outside repository tooling under the old literal "top-left corner" wording
+is inherently ambiguous: its bytes do not say whether the author used pixel edges or centres. Do
+not apply a blanket half-pixel correction. Confirm provenance and convert explicitly
+(`x_center = x_edge - 0.5`, likewise Y) only when the edge convention is known; otherwise re-label
+or reject the data rather than guessing. Any future intentional semantic change from the
+pixel-centre convention requires the normal schema/method versioning process.
+
 ### v1 validation window
 
 The v1 validators keep their existing acceptance window instead of the exact pixel-centre geometry:

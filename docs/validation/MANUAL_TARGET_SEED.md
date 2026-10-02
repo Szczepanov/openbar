@@ -75,6 +75,12 @@ keeps its existing windows. Consequently, a v1 target bound may legally reach `r
 behaviour, not the preferred output of new producers. The name `display_top_left` refers to the
 top-left pixel, not its outer corner.
 
+ADR-0007 treats the wording correction as a v1 contract erratum: repository-owned seeds and
+trackers already use pixel centres. A v1 seed authored externally under the old literal corner
+wording cannot be distinguished from a pixel-centre seed by its serialized bytes. Do not apply an
+automatic 0.5 px correction without provenance; convert explicitly only when the old edge
+convention is known, otherwise recreate the seed.
+
 `source_rotation_deg` records the source rotation metadata used to obtain that display
 orientation and must be one of 0, 90, 180, or 270. A seed is rejected when this does not
 match the video context supplied by the caller. The value follows FFmpeg's display-matrix
