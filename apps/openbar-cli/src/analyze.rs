@@ -711,13 +711,12 @@ fn validate_tracker_specific_options(
     contrast_low: Option<f64>,
 ) -> CliResult<()> {
     match tracker {
-        None
-            if search_radius.is_some()
-                || template_low.is_some()
-                || template_max.is_some()
-                || contrast_seed.is_some()
-                || contrast_min.is_some()
-                || contrast_low.is_some() =>
+        None if search_radius.is_some()
+            || template_low.is_some()
+            || template_max.is_some()
+            || contrast_seed.is_some()
+            || contrast_min.is_some()
+            || contrast_low.is_some() =>
         {
             Err(CliError::invalid_input(
                 "tracker-specific options cannot be used with --observations",
@@ -1665,7 +1664,6 @@ mod tests {
         assert_eq!(parsed.kinematics.min_confidence, 0.0);
     }
 
-
     #[test]
     fn tracker_and_observations_are_exactly_one_required() {
         let mut both = base_args("analysis.json");
@@ -1746,7 +1744,6 @@ mod tests {
         assert!(error.to_string().contains("--seed"));
     }
 
-
     #[test]
     fn output_paths_cannot_alias_external_observations() {
         let mut args = base_args("prediction.json");
@@ -1758,7 +1755,8 @@ mod tests {
             tracker_index..=tracker_index + 1,
             strings(&["--observations", "prediction.json"]),
         );
-        let error = parse_args(args).expect_err("analysis output must not alias observations input");
+        let error =
+            parse_args(args).expect_err("analysis output must not alias observations input");
         assert_eq!(error.kind(), CliErrorKind::InvalidInput);
         assert!(error.to_string().contains("--observations"));
     }
@@ -1940,8 +1938,9 @@ mod tests {
         let _ = fs::remove_file(&output_a);
         let _ = fs::remove_file(&output_b);
 
-        let prediction =
-            repo_path("validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json");
+        let prediction = repo_path(
+            "validation/fixtures/public/predictions/synthetic-perfect.prediction-v1.json",
+        );
         let args_a = external_fixture_args(&output_a, &prediction);
         let args_b = external_fixture_args(&output_b, &prediction);
         run(&args_a).expect("first external analysis succeeds");
@@ -2000,7 +1999,10 @@ mod tests {
         );
         fs::write(
             &prediction,
-            format!("{}\n", serde_json::to_string_pretty(&document).expect("serialize prediction")),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&document).expect("serialize prediction")
+            ),
         )
         .expect("write invalid prediction");
 
@@ -2008,7 +2010,10 @@ mod tests {
         let error = run(&args).expect_err("wrong source hash must fail before output");
         assert_eq!(error.kind(), CliErrorKind::InvalidInput);
         assert!(error.to_string().contains("does not match decoded media"));
-        assert!(!output.exists(), "invalid prediction must not create analysis output");
+        assert!(
+            !output.exists(),
+            "invalid prediction must not create analysis output"
+        );
 
         let _ = fs::remove_file(output);
         let _ = fs::remove_file(prediction);
