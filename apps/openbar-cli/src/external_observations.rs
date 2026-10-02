@@ -385,9 +385,7 @@ fn is_valid_identifier(value: &str) -> bool {
         .next()
         .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
         && bytes.all(|byte| {
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || matches!(byte, b'.' | b'_' | b'-')
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
         })
 }
 
@@ -399,8 +397,7 @@ fn is_sha256(value: &str) -> bool {
 mod tests {
     use super::*;
 
-    const SOURCE_SHA256: &str =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const SOURCE_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     fn timeline() -> Vec<DecodedTimelineFrame> {
         vec![
@@ -512,8 +509,7 @@ mod tests {
                 .parameters
                 .get(PREDICTION_SHA256_PARAMETER),
             Some(&ParameterValue::Text(
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                    .to_owned()
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned()
             ))
         );
         assert_eq!(
@@ -531,9 +527,8 @@ mod tests {
     #[test]
     fn wrong_video_hash_is_rejected() {
         let mut document = valid_document();
-        document.source_video_sha256 = Some(
-            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
-        );
+        document.source_video_sha256 =
+            Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned());
         let error = validate(document).expect_err("wrong hash must fail");
         assert!(error.to_string().contains("does not match decoded media"));
     }
@@ -565,11 +560,7 @@ mod tests {
     #[test]
     fn non_finite_coordinate_is_rejected() {
         let mut document = valid_document();
-        document.samples[0]
-            .center_px
-            .as_mut()
-            .expect("center")
-            .x_px = f64::NAN;
+        document.samples[0].center_px.as_mut().expect("center").x_px = f64::NAN;
         let error = validate(document).expect_err("NaN coordinate must fail");
         assert!(error.to_string().contains("coordinates must be finite"));
     }
@@ -579,7 +570,9 @@ mod tests {
         let mut document = valid_document();
         document.samples[0].confidence = Some(1.01);
         let error = validate(document).expect_err("confidence > 1 must fail");
-        assert!(error.to_string().contains("confidence must be finite and in [0, 1]"));
+        assert!(error
+            .to_string()
+            .contains("confidence must be finite and in [0, 1]"));
     }
 
     #[test]
@@ -611,7 +604,6 @@ mod tests {
         assert!(error.to_string().contains("external tracker identifier"));
         assert!(error.to_string().contains("opencv-csrt+lk"));
     }
-
 
     #[test]
     fn blank_config_key_is_rejected_before_canonical_analysis() {
