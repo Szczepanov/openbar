@@ -86,12 +86,11 @@ Python is not the authoritative production implementation of calibration/kinemat
 
 Flutter is the preferred cross-platform application layer after M0. The UI consumes structured analysis results; it does not reimplement measurement algorithms.
 
-## Future measurement protocol boundary (post-M0)
+## Candidate future measurement protocol boundary (post-M0; non-normative)
 
-OpenBar should evolve toward a protocol-oriented measurement engine without changing the current
-barbell M0 implementation or acceptance criteria.
+This section records a **design hypothesis**, not an accepted architecture decision and not authorization to implement post-M0 scope. The current barbell M0 implementation, accepted ADRs, and acceptance criteria remain normative.
 
-The intended boundary is conceptual until a second measurement family is implemented and validated:
+If a second measurement family is implemented and validated, use its concrete evidence/events/results to decide through an ADR whether a protocol-oriented boundary is justified. One candidate boundary is:
 
 ```text
 media / decoded frames / authoritative timestamps
@@ -118,7 +117,7 @@ media / decoded frames / authoritative timestamps
        + confidence + provenance
 ```
 
-`MeasurementProtocol` is a **future domain abstraction**, not an M0 trait/API requirement. Its job
+`MeasurementProtocol` is a **candidate future domain abstraction**, not an M0 trait/API requirement. If adopted by a later ADR, its job
 is to represent measurement semantics independently from the mechanism that produced the evidence.
 
 A future protocol implementation should be responsible for:
@@ -150,9 +149,9 @@ Canonical evidence may include:
 This distinction is important because the first jump and sprint implementations can be event-based
 without pose estimation or continuous body tracking.
 
-### Future protocol modules
+### Candidate future protocol modules
 
-The intended measurement-family boundaries are:
+The hypothesized measurement-family boundaries are:
 
 #### LiftProtocol
 
@@ -197,7 +196,7 @@ The first sprint implementation should support known-distance gate/split timing:
 Continuous speed can be added later using a calibrated body trajectory (potentially from pose
 estimation), without changing the protocol boundary.
 
-### Future crate/module direction
+### Candidate future crate/module direction
 
 If implementation pressure justifies separate crates, the likely direction is:
 
@@ -233,7 +232,8 @@ In particular, M0 still does not require:
 
 Any implementation that changes the canonical persisted analysis shape, calibration semantics, or
 accepted M0 measurement behavior requires the normal schema/ADR review rather than being justified
-by this future direction alone.
+by this future direction alone. Until such an ADR is accepted, this candidate boundary must not be
+treated as a dependency rule, crate requirement, or persistence contract.
 
 ## Current lift frame pipeline target
 

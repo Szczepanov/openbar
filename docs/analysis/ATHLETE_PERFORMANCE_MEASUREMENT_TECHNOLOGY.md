@@ -4,6 +4,8 @@
 
 **Analysis / recommendation document. Not an accepted ADR.**
 
+External technology and licensing statements in this document are a point-in-time research snapshot reviewed on **2026-10-02**. They must be rechecked before adoption. A framework/repository licence does not, by itself, establish redistribution or commercial rights for downloaded model weights, datasets, or other assets.
+
 This document explores how OpenBar could evolve from a validated bar-path measurement engine into a broader local-first athlete performance measurement platform covering:
 
 - barbell path, velocity, and eventually acceleration;
@@ -57,7 +59,7 @@ They are tools, not the product architecture.
 
 OpenBar should remain a measurement system where pixels are converted into validated physical quantities through a reproducible pipeline.
 
-The current Rust + Python/PyTorch + ONNX + thin UI architecture is therefore still appropriate. The main future evolution should be the addition of protocol-specific modules for lift, jump, broad-jump, and sprint measurement.
+The current Rust + Python/PyTorch + ONNX + thin UI architecture is therefore still appropriate. A candidate future evolution is to add protocol-specific measurement semantics for lift, jump, broad-jump, and sprint. The concrete trait/module/crate split should remain uncommitted until a second protocol creates real shared requirements and an ADR accepts the boundary.
 
 ---
 
@@ -168,7 +170,7 @@ This aligns with the current OpenBar engineering principles:
 | --- | --- | --- |
 | Application UI | Flutter | Cross-platform UX, history, sessions, configuration, results |
 | iOS capture | Swift + AVFoundation | Camera formats, high-FPS capture, timestamps, buffers |
-| Android capture | Kotlin + Camera2/CameraX | High-speed capture, timestamps, buffers |
+| Android capture | Kotlin + CameraX / Camera2 | High-speed capture, timestamps, buffers; choose by device evidence and required control |
 | Production measurement core | Rust | Calibration, trajectories, filtering, kinematics, events, confidence, protocols |
 | Classical CV research | Python + OpenCV | Fast experimentation with tracking, calibration, geometry |
 | Production classical CV | Rust/native adapter + selective OpenCV | Only where benchmarked value justifies dependency |
@@ -240,7 +242,7 @@ Do not make the core architecture or persisted model format dependent on Ultraly
 
 OpenCV is much better aligned with OpenBar.
 
-OpenCV 4.x uses Apache-2.0 and provides mature implementations for:
+OpenCV **4.5.0 and later** use Apache-2.0; OpenCV 4.4.0 and earlier use the 3-clause BSD licence. Current 4.5+ releases provide mature implementations for:
 
 - optical flow;
 - feature detection;
@@ -758,6 +760,8 @@ The existing OpenBar timestamp-over-nominal-FPS rule must remain authoritative.
 
 Flutter should own UX, not the authoritative capture pipeline.
 
+As of 2026-10-02, CameraX 1.6.x exposes stable high-speed session APIs, while Camera2 remains the lower-level Android escape hatch for constrained high-speed modes and device-specific control. OpenBar should query device-reported capabilities and benchmark actual frame delivery/timestamps; support in an OEM camera app is not sufficient evidence that the same mode is available through the application API.
+
 Recommended future capture architecture:
 
 ```text
@@ -847,7 +851,8 @@ Pros:
 
 Risks:
 
-- exact pretrained-weight and training-data terms require audit;
+- Apache-2.0 describes the MMPose framework code; it does **not** automatically establish rights for every downloaded RTMPose checkpoint or its training datasets;
+- each exact checkpoint/model asset needs a separate source, licence, training-data/provenance, redistribution, and commercial-use review before it can ship;
 - production mobile latency must be benchmarked on real devices.
 
 ### Apple Vision
@@ -873,8 +878,8 @@ Useful as:
 
 Risks:
 
-- current API/product terms need review;
-- framework/model provenance and long-term dependency behavior should be assessed before foundational adoption.
+- the MediaPipe framework code is Apache-2.0, but any bundled/downloaded model asset still needs an explicit provenance and redistribution/commercial-use review;
+- current API/product terms and long-term dependency behavior should be assessed before foundational adoption.
 
 ### Recommendation
 
@@ -1103,26 +1108,25 @@ CSV can remain a convenience export.
 
 ---
 
-## 22. Recommended roadmap
+## 22. Illustrative post-re-entry sequencing (non-canonical)
 
-Do **not** widen the current M0.
+This section is **not** the project roadmap and does not authorize M1 work.
 
-Recommended sequence:
+ADR-0008 currently records **NO-GO / REWORK**. The project must first complete the re-entry evidence in #57, #53, #58, and #59 and record a new **GO** or **CONDITIONAL GO** review before automatic detection, Flutter/mobile measurement integration, or other M1 product-layer work becomes a production milestone.
 
-### M0 — validated bar-path engine
+### Current — M0 rework and re-entry
 
-Keep current scope:
+Finish the accepted re-entry path:
 
-- manual plate seed;
-- tracking;
-- calibration;
-- raw trajectory;
-- filtering;
-- velocity;
-- explicit confidence/loss;
-- deterministic benchmark.
+- select/reject the tracker and filter on held-out real-video evidence (#57);
+- establish a supported recording envelope (#53);
+- validate ROM/mean/peak velocity against an independent physical reference (#58);
+- measure the frozen pipeline on the designated phone-class reference hardware (#59);
+- perform the explicit re-review required by ADR-0008.
 
-### M1 — robust barbell target handling
+Only after that gate passes should the following stages be scheduled.
+
+### Stage A — robust barbell target handling
 
 Potential scope:
 
@@ -1132,7 +1136,7 @@ Potential scope:
 - recording-envelope expansion;
 - more device testing.
 
-### M2 — barbell product integration
+### Stage B — barbell product integration
 
 Potential scope:
 
@@ -1142,7 +1146,7 @@ Potential scope:
 - stable export;
 - device performance validation.
 
-### M3 — vertical-jump research spike
+### Stage C — vertical-jump research spike
 
 Compare:
 
@@ -1151,17 +1155,17 @@ Compare:
 - pose candidates;
 - force-plate/reference ground truth.
 
-### M4 — short-sprint research spike
+### Stage D — short-sprint research spike
 
 Start with:
 
 - 5/10/20 m;
 - static camera;
 - calibrated virtual gates;
-- 120+ fps where supported;
+- 120+ fps where supported and validated;
 - photocell ground truth.
 
-### M5 — broad-jump research spike
+### Stage E — broad-jump research spike
 
 Validate:
 
@@ -1170,15 +1174,13 @@ Validate:
 - takeoff/landing protocol;
 - physical-distance reference.
 
-### M6 — unified athlete-testing product architecture
+### Stage F — unified athlete-testing architecture decision
 
-Only after the individual protocols have demonstrated acceptable measurement quality:
+Only after individual protocols have demonstrated acceptable measurement quality:
 
-- common protocol interface;
-- athlete test sessions;
-- longitudinal analytics;
-- comparative dashboards;
-- shared calibration/camera UX.
+- compare real lift/jump/sprint evidence and result shapes;
+- decide through an ADR whether a common protocol interface is justified;
+- then consider athlete test sessions, longitudinal analytics, comparative dashboards, and shared calibration/camera UX.
 
 ### Later
 
@@ -1400,7 +1402,10 @@ These links are starting points for future spikes. Exact dependency, model-weigh
 - Ultralytics licensing: https://www.ultralytics.com/license
 - OpenCV repository: https://github.com/opencv/opencv
 - OpenCV licensing: https://opencv.org/license/
-- MMPose repository: https://github.com/open-mmlab/mmpose
+- Android CameraX release notes: https://developer.android.com/jetpack/androidx/releases/camera
+- Android Camera2 high-speed capability reference: https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO
+- MediaPipe repository/licence: https://github.com/google-ai-edge/mediapipe
+- MMPose repository/licence: https://github.com/open-mmlab/mmpose
 - RTMPose/MMPose deployment documentation: https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose
 - ONNX Runtime mobile documentation: https://onnxruntime.ai/docs/tutorials/mobile/
 - AprilTag repository: https://github.com/AprilRobotics/apriltag

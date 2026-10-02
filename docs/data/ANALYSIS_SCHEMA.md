@@ -53,7 +53,7 @@ ANALYSIS_SCHEMA_VERSION = 1
 The model intentionally contains no Flutter view state, cloud/database keys, accounts, or
 subscription concepts.
 
-## Future multi-protocol extensibility (post-M0; no v1 change)
+## Candidate future multi-protocol extensibility (post-M0; no v1 change; non-normative)
 
 The current `analysis-v1` model is intentionally **barbell/M0-specific**. Its required manual
 target seed, plate-diameter calibration, tracker observations, and trajectory layers are valid M0
@@ -68,9 +68,9 @@ families with materially different evidence:
 - sprint split timing can initially use known-distance gates plus crossing timestamps;
 - continuous sprint speed may later use a calibrated body trajectory.
 
-Therefore future multi-protocol persistence should introduce an explicit **protocol boundary**
-rather than turning today's lift-specific required fields into a large collection of optional
-fields.
+If future multi-protocol persistence is implemented, the leading hypothesis is an explicit
+**protocol boundary** rather than turning today's lift-specific required fields into a large
+collection of optional fields. The concrete envelope/trait/schema remains subject to implementation evidence and an ADR/schema-version decision.
 
 A conceptual future shape is:
 
@@ -93,11 +93,11 @@ MeasurementProtocol
   +-- SprintProtocol
 ```
 
-This is architectural direction, not a committed Rust trait or schema.
+This is non-normative architectural analysis, not a committed Rust trait, schema, or dependency boundary.
 
-### Shared future concepts
+### Candidate shared future concepts
 
-The following concepts are expected to generalize safely across measurement families:
+The following concepts are likely to generalize across measurement families, but must be confirmed against real protocol implementations:
 
 - authoritative media timestamps;
 - source/capture identity;
