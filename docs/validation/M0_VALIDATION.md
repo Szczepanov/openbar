@@ -22,6 +22,32 @@ These are provisional engineering targets, not scientific claims:
 
 Targets should be revised after the first benchmark exposes realistic error distributions.
 
+### M0 go/no-go status
+
+ADR-0008 records the 2026-10-02 review outcome as **NO-GO / REWORK**.
+
+At the evaluated M0 evidence state:
+
+| Metric | Review status |
+| --- | --- |
+| Plate-centre tracking MAE | NOT MEASURABLE YET |
+| Tracking availability in supported clips | NOT MEASURABLE YET |
+| Range-of-motion MAE | NOT MEASURABLE YET |
+| Mean velocity MAE | NOT MEASURABLE YET |
+| Peak velocity MAE | NOT MEASURABLE YET |
+| Repeat-analysis determinism | PASS |
+| Offline processing | NOT MEASURABLE YET |
+
+The statuses are evidence limitations, not implicit target revisions. M1 remains locked until the
+re-entry conditions in ADR-0008 are satisfied.
+
+Rework tracking:
+
+- #57 — held-out real-video tracker/filter selection and tracking gates;
+- #53 — evidence-backed recording-envelope boundaries;
+- #58 — independent physical ROM/velocity validation;
+- #59 — phone-class runtime gate.
+
 ## Dataset dimensions
 
 The fixture set should vary:
@@ -72,7 +98,7 @@ Every candidate filter runs behind the same Rust contract and benchmark semantic
 Initial candidates:
 
 - raw identity baseline;
-- centred moving average;
+- centred moving average baseline;
 - timestamp-aware Savitzky–Golay local polynomial fit;
 - causal constant-velocity Kalman/state-space baseline.
 
