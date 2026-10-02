@@ -283,6 +283,19 @@ jobs:
         run: python -m unittest discover -v -s validation/tests -p 'test_*.py'
       - name: Committed fixtures match their schemas
         run: python validation/tools/schema_check.py
+      - name: Recording-envelope evidence study
+        run: >-
+          python validation/tools/recording_envelope_evidence.py
+          --study validation/recording-envelope/m0-study-v1.json
+          --output target/recording-envelope-evidence-v1.json
+          --report target/RECORDING_ENVELOPE_EVIDENCE.md
+      - name: Recording-envelope evidence schema
+        run: >-
+          python validation/tools/schema_check.py
+          --schema validation/schema/recording-envelope-evidence-v1.schema.json
+          target/recording-envelope-evidence-v1.json
+      - name: Recording-envelope report is reproducible
+        run: diff -u docs/validation/RECORDING_ENVELOPE_EVIDENCE.md target/RECORDING_ENVELOPE_EVIDENCE.md
       - name: Validate committed annotation fixture
         run: >-
           python validation/tools/annotations.py validate
