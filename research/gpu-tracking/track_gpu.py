@@ -18,8 +18,10 @@ run (--sibling-output).
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import math
+import platform
 import shutil
 import subprocess
 import sys
@@ -43,6 +45,7 @@ sys.path.insert(0, str(OPENCV_DIR))
 sys.path.insert(0, str(GPU_DIR))
 
 import centres  # noqa: E402
+import download_models  # noqa: E402
 import label_package  # noqa: E402
 import point_motion  # noqa: E402
 
@@ -62,6 +65,107 @@ SEED_TOLERANCE_S = 0.0005
 
 class GpuTrackerError(RuntimeError):
     pass
+
+
+MODEL_KEY_BY_CANDIDATE = {
+    "sam2.1-small-centroid": "sam2.1_small",
+    "sam2.1-small-circle": "sam2.1_small",
+    "sam2.1-bplus-centroid": "sam2.1_bplus",
+    "sam2.1-bplus-circle": "sam2.1_bplus",
+    "cutie-base-centroid": "cutie_base",
+    "cutie-base-circle": "cutie_base",
+    "bootstapir-affine": "bootstapir",
+    "cotracker3-affine": "cotracker3",
+}
+TRACKER_IMPORT_BY_CANDIDATE = {
+    "sam2.1-small-centroid": "sam2",
+    "sam2.1-small-circle": "sam2",
+    "sam2.1-bplus-centroid": "sam2",
+    "sam2.1-bplus-circle": "sam2",
+    "cutie-base-centroid": "cutie",
+    "cutie-base-circle": "cutie",
+    "bootstapir-affine": "tapnet",
+    "cotracker3-affine": "cotracker",
+}
+
+
+def require_verified_model(model_key: str) -> Path:
+    """Return a checkpoint only after verifying it against the committed SHA-256."""
+    spec = download_models.MODEL_SPECS[model_key]
+    path = MODELS_DIR / spec["filename"]
+    if not path.is_file():
+        raise GpuTrackerError(f"checkpoint {spec['filename']} not found in {MODELS_DIR}")
+    actual = download_models.compute_sha256(path)
+    expected = spec["sha256"].lower()
+    if actual != expected:
+        raise GpuTrackerError(
+            f"checkpoint {spec['filename']} SHA-256 mismatch: expected {expected}, got {actual}"
+        )
+    return path
+
+
+def _distribution_provenance(distribution_name: str) -> dict[str, Any]:
+    try:
+        dist = importlib.metadata.distribution(distribution_name)
+    except importlib.metadata.PackageNotFoundError:
+        return {"distribution": distribution_name, "installed": False}
+
+    result: dict[str, Any] = {
+        "distribution": dist.metadata.get("Name", distribution_name),
+        "version": dist.version,
+    }
+    direct_text = dist.read_text("direct_url.json")
+    if direct_text:
+        try:
+            direct = json.loads(direct_text)
+        except json.JSONDecodeError:
+            direct = {}
+        source: dict[str, Any] = {}
+        url = direct.get("url")
+        if isinstance(url, str) and not url.startswith("file:"):
+            source["url"] = url
+        vcs_info = direct.get("vcs_info")
+        if isinstance(vcs_info, dict):
+            source["vcs_info"] = {
+                key: vcs_info[key]
+                for key in ("vcs", "commit_id", "requested_revision")
+                if key in vcs_info
+            }
+        dir_info = direct.get("dir_info")
+        if isinstance(dir_info, dict) and dir_info.get("editable"):
+            source["editable_local_install"] = True
+        if source:
+            result["direct_source"] = source
+    return result
+
+
+def _module_provenance(import_name: str) -> dict[str, Any]:
+    names = sorted(set(importlib.metadata.packages_distributions().get(import_name, [])))
+    return {
+        "import_name": import_name,
+        "distributions": [_distribution_provenance(name) for name in names],
+    }
+
+
+def runtime_dependency_provenance(candidate_name: str) -> dict[str, Any]:
+    """Capture critical installed packages and any pip VCS direct-source metadata."""
+    return {
+        "python": platform.python_version(),
+        "packages": [
+            _distribution_provenance(name)
+            for name in ("torch", "torchvision", "numpy", "opencv-python")
+        ],
+        "tracker_module": _module_provenance(TRACKER_IMPORT_BY_CANDIDATE[candidate_name]),
+    }
+
+
+def model_provenance(candidate_name: str) -> dict[str, str]:
+    spec = download_models.MODEL_SPECS[MODEL_KEY_BY_CANDIDATE[candidate_name]]
+    return {
+        "filename": spec["filename"],
+        "source_url": spec["url"],
+        "sha256": spec["sha256"],
+    }
 
 
 def get_driver_version() -> str:
@@ -147,10 +251,8 @@ def sam2_masks(
     from sam2.build_sam import build_sam2_video_predictor
 
     cfg_name = f"configs/sam2.1/sam2.1_hiera_{'s' if model_size == 'small' else 'b+'}.yaml"
-    ckpt_name = f"sam2.1_hiera_{'small' if model_size == 'small' else 'base_plus'}.pt"
-    ckpt_path = MODELS_DIR / ckpt_name
-    if not ckpt_path.is_file():
-        raise GpuTrackerError(f"checkpoint {ckpt_name} not found in {MODELS_DIR}")
+    model_key = "sam2.1_small" if model_size == "small" else "sam2.1_bplus"
+    ckpt_path = require_verified_model(model_key)
 
     predictor = build_sam2_video_predictor(cfg_name, str(ckpt_path), device="cuda")
     frames_dir = jpeg_paths[0].parent
@@ -369,9 +471,7 @@ def cutie_masks(
     from cutie.model.cutie import CUTIE
     from omegaconf import open_dict
 
-    ckpt_path = MODELS_DIR / "cutie-base-mega.pth"
-    if not ckpt_path.is_file():
-        raise GpuTrackerError(f"checkpoint cutie-base-mega.pth not found in {MODELS_DIR}")
+    ckpt_path = require_verified_model("cutie_base")
 
     with hydra.initialize_config_module("cutie.config", version_base="1.3.2"):
         cfg = hydra.compose(config_name="eval_config")
@@ -422,9 +522,7 @@ def track_cotracker(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from cotracker.predictor import CoTrackerPredictor
 
-    ckpt_path = MODELS_DIR / "scaled_offline.pth"
-    if not ckpt_path.is_file():
-        raise GpuTrackerError(f"checkpoint scaled_offline.pth not found in {MODELS_DIR}")
+    ckpt_path = require_verified_model("cotracker3")
 
     model = CoTrackerPredictor(checkpoint=str(ckpt_path)).to("cuda")
 
@@ -512,9 +610,7 @@ def track_bootstapir(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     from tapnet.torch import tapir_model
 
-    ckpt_path = MODELS_DIR / "bootstapir_checkpoint_v2.pt"
-    if not ckpt_path.is_file():
-        raise GpuTrackerError(f"checkpoint bootstapir_checkpoint_v2.pt not found in {MODELS_DIR}")
+    ckpt_path = require_verified_model("bootstapir")
 
     model = tapir_model.TAPIR(pyramid_level=1, use_casual_conv=False)
     model.load_state_dict(torch.load(str(ckpt_path)))
@@ -625,21 +721,76 @@ def sibling_candidate(candidate_name: str) -> str:
 
 
 def candidate_config(candidate_name: str) -> dict[str, Any]:
+    method = "circle" if candidate_name.endswith("-circle") else (
+        "centroid" if candidate_name.endswith("-centroid") else "affine"
+    )
+    config: dict[str, Any] = {
+        "model": model_provenance(candidate_name),
+        "dependencies": runtime_dependency_provenance(candidate_name),
+        "center_method": method,
+    }
+
     if candidate_name.startswith("sam2"):
-        return {
+        config.update({
             "license": "Apache-2.0 / Apache-2.0",
             "family": "video_segmentation",
+            "initialization": "seed_circle_box_plus_positive_center_point",
             "mask_logits_threshold": 0.0,
+            "mask_area_ratio_bounds": [0.5, 1.5],
+            "confidence": "sigmoid_object_score_logit",
             "autocast": "bfloat16",
             "offload_video_to_cpu": True,
+        })
+    elif candidate_name.startswith("cutie"):
+        config.update({
+            "license": "MIT / unconfirmed weights",
+            "family": "video_segmentation",
+            "initialization": "rasterized_seed_disk",
+            "mask": "foreground_argmax",
+            "mask_area_ratio_bounds": [0.5, 1.5],
+            "confidence": "mean_foreground_probability_over_mask",
+        })
+    elif candidate_name == "bootstapir-affine":
+        config.update({
+            "license": "Apache-2.0 / Apache-2.0",
+            "family": "neural_point_tracking",
+            "query_annulus_fraction": [0.25, 0.90],
+            "query_max_corners": 200,
+            "visibility": "(1-sigmoid(occlusion))*(1-sigmoid(expected_dist)) > 0.5",
+            "target_model_resolution": [512, 512],
+            "oom_fallback_resolution": [256, 256],
+            "confidence": "ransac_inliers_fraction_of_initial_queries",
+        })
+    elif candidate_name == "cotracker3-affine":
+        config.update({
+            "license": "CC-BY-NC-4.0 / CC-BY-NC-4.0",
+            "family": "neural_point_tracking",
+            "query_annulus_fraction": [0.25, 0.90],
+            "query_max_corners": 200,
+            "visibility_threshold": 0.5,
+            "confidence": "ransac_inliers_fraction_of_initial_queries",
+        })
+    else:
+        raise GpuTrackerError(f"unhandled candidate {candidate_name}")
+
+    if method == "circle":
+        config["circle_fit"] = {
+            "ransac_iterations": 1000,
+            "inlier_tolerance_px": 1.5,
+            "coverage_bins_min": 18,
+            "coverage_bins_total": 36,
+            "seed_radius_relative_tolerance": 0.20,
+            "rejected_fit_confidence_multiplier": 0.7,
         }
-    if candidate_name.startswith("cutie"):
-        return {"license": "MIT / unconfirmed weights", "family": "video_segmentation"}
-    if candidate_name == "bootstapir-affine":
-        return {"license": "Apache-2.0 / Apache-2.0", "family": "neural_point_tracking"}
-    if candidate_name == "cotracker3-affine":
-        return {"license": "CC-BY-NC-4.0 / CC-BY-NC-4.0", "family": "neural_point_tracking"}
-    raise GpuTrackerError(f"unhandled candidate {candidate_name}")
+    if method == "affine":
+        config["center_estimator"] = {
+            "ransac_reprojection_threshold_px": 1.5,
+            "ransac_max_iterations": 2000,
+            "ransac_confidence": 0.999,
+            "ransac_refine_iterations": 10,
+            "minimum_inliers": 12,
+        }
+    return config
 
 
 def run_candidates(
