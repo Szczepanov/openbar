@@ -193,3 +193,52 @@ annotated, non-synthetic fixtures that vary one recording dimension at a time wh
 Each boundary decision should retain tested values, sample counts, error distributions/failure
 impact and the resulting supported/warning/unsupported classification. Until then, unknown remains
 the correct state.
+
+## Issue #53 evidence-study workflow
+
+Issue #53 is intentionally not allowed to turn development observations into recording cutoffs.
+The repository now carries a reproducible evidence-study declaration and fail-closed builder:
+
+- `validation/recording-envelope/m0-study-v1.json` — preregistered study inputs, candidate state,
+  evidence minima, tested values, fixture IDs, and requested classifications;
+- `validation/schema/recording-envelope-study-v1.schema.json` — study contract;
+- `validation/tools/recording_envelope_evidence.py` — deterministic evidence ledger builder;
+- `validation/schema/recording-envelope-evidence-v1.schema.json` — generated artifact contract;
+- `RECORDING_ENVELOPE_EVIDENCE.md` — human-readable snapshot generated from the same declaration.
+
+The current snapshot remains blocked and therefore leaves every boundary **unknown**. In particular:
+
+- no tracker/filter candidate has been frozen;
+- held-out fixture/sample minima have not been preregistered;
+- no held-out non-synthetic validation fixture exists in the repository evidence set;
+- no candidate-matched benchmark result is referenced;
+- no matched-reference physical evidence yet covers calibrated position and velocity.
+
+The last two requirements are intentionally separate. Low plate-centre pixel error does not prove that
+camera geometry produces valid physical displacement or velocity. For yaw, pitch, roll, distance,
+framing and camera-motion decisions especially, tracking can look accurate while projection or the
+reference frame is physically wrong.
+
+### Promotion protocol
+
+Before changing a boundary from `unknown`:
+
+1. preregister the minimum distinct held-out fixtures and comparable samples;
+2. add/identify non-synthetic fixtures with `purpose = validation` and complete annotations;
+3. freeze the exact git commit, tracker implementation/configuration, and filter
+   implementation/configuration;
+4. generate candidate-matched tracker benchmark results and reference them from the study;
+5. reference matched physical/kinematic evidence from the same frozen commit covering calibrated
+   position and velocity;
+6. record exact tested values/ranges and fixture IDs for the boundary;
+7. request `supported`, `warning_boundary`, or `unsupported` only after the evidence has been
+   reviewed.
+
+The builder rejects a non-`unknown` classification if development/synthetic fixtures are being
+counted as held-out evidence, the frozen tracker/provenance does not match, required metrics are
+missing, physical-reference evidence is missing, or preregistered evidence minima are not met.
+
+This workflow does **not** change the #15 runtime policy by itself. Declared side + fixed-camera
+footage remains warning-only, and the existing non-side/moving-camera fail-closed rules remain in
+force until actual held-out evidence supports a policy change.
+

@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/recording-envelope-evidence-v1.schema.json",
+  "title": "OpenBar recording-envelope evidence artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "study_id",
+    "fixture_manifest",
+    "frozen_candidate",
+    "evidence_policy",
+    "benchmark_results",
+    "measurement_evidence",
+    "readiness",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "artifact_type": {
+      "const": "recording-envelope-evidence-v1"
+    },
+    "study_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fixture_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        }
+      }
+    },
+    "frozen_candidate": {
+      "type": "object"
+    },
+    "evidence_policy": {
+      "type": "object"
+    },
+    "benchmark_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256",
+          "git_commit",
+          "pipeline_version",
+          "benchmark_metric_version"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          },
+          "git_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pipeline_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "benchmark_metric_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "can_promote_boundaries",
+        "blockers"
+      ],
+      "properties": {
+        "can_promote_boundaries": {
+          "type": "boolean"
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "boundaries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/boundary"
+      }
+    },
+    "measurement_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256",
+          "git_commit",
+          "constructs",
+          "note"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          },
+          "git_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "constructs": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "calibrated_position",
+                "velocity"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "summary": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "min",
+            "median",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "number"
+            },
+            "median": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
+          }
+        }
+      ]
+    },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dimension",
+        "variable",
+        "unit",
+        "tested_values",
+        "fixture_ids",
+        "requested_classification",
+        "classification",
+        "decision_rationale",
+        "evidence",
+        "blockers"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "dimension": {
+          "type": "string"
+        },
+        "variable": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tested_values": {
+          "type": "array"
+        },
+        "fixture_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requested_classification": {
+          "enum": [
+            "supported",
+            "warning_boundary",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "classification": {
+          "enum": [
+            "supported",
+            "warning_boundary",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "decision_rationale": {
+          "type": "string"
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fixture_count",
+            "eligible_fixture_count",
+            "roles",
+            "source_kinds",
+            "benchmark_case_count",
+            "comparable_samples",
+            "case_metric_summary",
+            "cases"
+          ],
+          "properties": {
+            "fixture_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "eligible_fixture_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "roles": {
+              "type": "object"
+            },
+            "source_kinds": {
+              "type": "object"
+            },
+            "benchmark_case_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "comparable_samples": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "case_metric_summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "plate_center_mae_px",
+                "plate_center_rmse_px",
+                "plate_center_p95_px",
+                "tracking_availability",
+                "lost_frame_percentage",
+                "max_consecutive_tracking_loss_duration_s",
+                "comparable_samples_total"
+              ],
+              "properties": {
+                "plate_center_mae_px": {
+                  "$ref": "#/$defs/summary"
+                },
+                "plate_center_rmse_px": {
+                  "$ref": "#/$defs/summary"
+                },
+                "plate_center_p95_px": {
+                  "$ref": "#/$defs/summary"
+                },
+                "tracking_availability": {
+                  "$ref": "#/$defs/summary"
+                },
+                "lost_frame_percentage": {
+                  "$ref": "#/$defs/summary"
+                },
+                "max_consecutive_tracking_loss_duration_s": {
+                  "$ref": "#/$defs/summary"
+                },
+                "comparable_samples_total": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "cases": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
