@@ -246,3 +246,14 @@ automatic rep detection, pose estimation or live camera processing to M0.
 
 The immediate value is to improve the experiment backlog and validation contracts while preserving
 the current Rust-first, timestamp-authoritative, explicit-uncertainty architecture.
+
+
+## Execution plan
+
+The ordered implementation plan, decision gates, stop conditions and integration points with #57 and
+#58 are maintained in
+[`docs/plans/VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md`](../plans/VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md).
+
+The plan is intentionally stricter than this analysis note: it separates implementation from
+evaluation and production promotion, and allows the correct outcome of an experiment to be
+**reject/defer with no production change**.
