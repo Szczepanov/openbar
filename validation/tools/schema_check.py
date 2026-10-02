@@ -54,6 +54,7 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "tracker-prediction-v1.schema.json": ("validation/fixtures/public/predictions/*.prediction-v1.json",),
     "benchmark-suite-v1.schema.json": ("validation/benchmarks/*.benchmark-v1.json",),
     "analysis-v1.schema.json": ("crates/openbar-core/tests/fixtures/analysis-v1.golden.json",),
+    "recording-support-v1.schema.json": ("validation/examples/recording-support.example.json",),
 }
 
 # Committed JSON documents that intentionally have no JSON Schema, with the reason.

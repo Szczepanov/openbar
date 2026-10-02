@@ -110,7 +110,11 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
     );
     assert!(
         String::from_utf8_lossy(&first.stderr).contains("status=warning"),
-        "unassessed calibration should remain visible"
+        "recording/calibration warning should remain visible"
+    );
+    assert!(
+        String::from_utf8_lossy(&first.stderr).contains("recording_support=warning"),
+        "recording support must be explicit in CLI diagnostics"
     );
 
     let second = analyze_fixture(&output_b)
@@ -200,6 +204,165 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
     let _ = fs::remove_file(output_a);
     let _ = fs::remove_file(output_b);
     let _ = fs::remove_file(render_output);
+}
+
+#[test]
+fn analyze_emits_recording_support_and_rejects_unsupported_geometry() {
+    if !ffmpeg_available() {
+        return;
+    }
+
+    let analysis = scratch("support-warning-analysis.json");
+    let support = scratch("support-warning.json");
+    let _ = fs::remove_file(&analysis);
+    let _ = fs::remove_file(&support);
+
+    let warning = analyze_fixture(&analysis)
+        .arg("--recording-support-output")
+        .arg(&support)
+        .output()
+        .expect("run warning recording support analysis");
+    assert!(
+        warning.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&warning.stdout),
+        String::from_utf8_lossy(&warning.stderr)
+    );
+    let support_json: Value =
+        serde_json::from_slice(&fs::read(&support).expect("read support sidecar"))
+            .expect("support JSON");
+    assert_eq!(support_json["schema_version"], 1);
+    assert_eq!(support_json["status"], "warning");
+    assert_eq!(support_json["conditions"]["camera_view"], "side");
+    assert_eq!(support_json["conditions"]["camera_movement"], "fixed");
+    assert_eq!(
+        support_json["metrics"]["horizontal_displacement"],
+        "warning"
+    );
+
+    let rejected_analysis = scratch("support-rejected-analysis.json");
+    let rejected_support = scratch("support-rejected.json");
+    let _ = fs::remove_file(&rejected_analysis);
+    let _ = fs::remove_file(&rejected_support);
+
+    let rejected = Command::new(binary())
+        .arg("analyze")
+        .arg("--video")
+        .arg(repo_path(
+            "validation/fixtures/public/synthetic-clean-side-12.mp4",
+        ))
+        .arg("--camera-view")
+        .arg("front")
+        .arg("--camera-movement")
+        .arg("fixed")
+        .arg("--seed")
+        .arg(repo_path(
+            "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+        ))
+        .arg("--plate-diameter-m")
+        .arg("0.45")
+        .arg("--tracker")
+        .arg("template")
+        .arg("--filter")
+        .arg("raw")
+        .arg("--kinematics-max-gap-s")
+        .arg("0.2")
+        .arg("--kinematics-min-confidence")
+        .arg("0")
+        .arg("--recording-support-output")
+        .arg(&rejected_support)
+        .arg("--output")
+        .arg(&rejected_analysis)
+        .output()
+        .expect("run unsupported recording geometry");
+
+    assert_exit(&rejected, 4, "status=failure error[unsupported]");
+    assert!(
+        !rejected_analysis.exists(),
+        "unsupported geometry must not produce physical analysis"
+    );
+    let rejected_json: Value =
+        serde_json::from_slice(&fs::read(&rejected_support).expect("read rejected support"))
+            .expect("rejected support JSON");
+    assert_eq!(rejected_json["status"], "unsupported");
+    assert_eq!(
+        rejected_json["metrics"]["horizontal_displacement"],
+        "unsupported"
+    );
+
+    let _ = fs::remove_file(analysis);
+    let _ = fs::remove_file(support);
+    let _ = fs::remove_file(rejected_analysis);
+    let _ = fs::remove_file(rejected_support);
+}
+
+#[test]
+fn analyze_validates_seed_before_writing_recording_support() {
+    if !ffmpeg_available() {
+        return;
+    }
+
+    let invalid_seed = scratch("support-invalid-seed.json");
+    let analysis = scratch("support-invalid-seed-analysis.json");
+    let support = scratch("support-invalid-seed-sidecar.json");
+    let _ = fs::remove_file(&invalid_seed);
+    let _ = fs::remove_file(&analysis);
+    let _ = fs::remove_file(&support);
+
+    let valid_seed = repo_path(
+        "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+    );
+    let mut seed_json: Value =
+        serde_json::from_slice(&fs::read(valid_seed).expect("read valid seed")).expect("seed JSON");
+    seed_json["seed"]["target"]["radius_px"] = Value::from(0.0);
+    fs::write(
+        &invalid_seed,
+        format!("{}\n", serde_json::to_string_pretty(&seed_json).unwrap()),
+    )
+    .expect("write invalid seed");
+
+    let output = Command::new(binary())
+        .arg("analyze")
+        .arg("--manifest")
+        .arg(repo_path("validation/fixtures/public/manifest.json"))
+        .arg("--fixture")
+        .arg("synthetic-clean-side-12")
+        .arg("--video")
+        .arg(repo_path(
+            "validation/fixtures/public/synthetic-clean-side-12.mp4",
+        ))
+        .arg("--seed")
+        .arg(&invalid_seed)
+        .arg("--plate-diameter-m")
+        .arg("0.45")
+        .arg("--tracker")
+        .arg("template")
+        .arg("--filter")
+        .arg("raw")
+        .arg("--kinematics-max-gap-s")
+        .arg("0.2")
+        .arg("--kinematics-min-confidence")
+        .arg("0")
+        .arg("--recording-support-output")
+        .arg(&support)
+        .arg("--output")
+        .arg(&analysis)
+        .output()
+        .expect("run invalid-seed analysis");
+
+    assert_exit(&output, 5, "status=failure error[seed-calibration]");
+    assert!(
+        !support.exists(),
+        "invalid seed must not produce recording-support metadata derived from that seed"
+    );
+    assert!(
+        !analysis.exists(),
+        "invalid seed must not produce canonical analysis"
+    );
+
+    let _ = fs::remove_file(invalid_seed);
+    let _ = fs::remove_file(analysis);
+    let _ = fs::remove_file(support);
 }
 
 #[test]
@@ -299,6 +462,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&valid_seed)
         .arg("--plate-diameter-m")
@@ -321,6 +488,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&malformed_seed)
         .arg("--plate-diameter-m")
@@ -343,6 +514,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&valid_seed)
         .arg("--plate-diameter-m")
@@ -369,6 +544,10 @@ fn major_cli_failure_paths_have_stable_categories_and_nonzero_codes() {
         .arg("analyze")
         .arg("--video")
         .arg(&missing_video)
+        .arg("--camera-view")
+        .arg("side")
+        .arg("--camera-movement")
+        .arg("fixed")
         .arg("--seed")
         .arg(&valid_seed)
         .arg("--plate-diameter-m")
@@ -421,12 +600,23 @@ fn assert_runtime_media_failures(output_path: &Path) {
         "fixtures": [{
             "id": "synthetic-clean-side-12",
             "video": {
+                "nominal_fps": 12.0,
                 "width_px": 999,
                 "height_px": 96,
                 "rotation_deg": 0
             },
+            "camera": {
+                "view": "side",
+                "movement": "fixed"
+            },
             "load": {
                 "plate_diameter_m": 0.45
+            },
+            "conditions": {
+                "lighting": "good",
+                "plate_visibility": "clear",
+                "occlusion": "none",
+                "motion_blur": "none"
             }
         }]
     });

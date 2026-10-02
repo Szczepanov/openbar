@@ -9,6 +9,7 @@ pub mod filtering;
 pub mod kinematics;
 pub mod manual_seed;
 pub mod math;
+pub mod recording_support;
 #[cfg(test)]
 pub mod test_utils;
 pub mod trajectory;
