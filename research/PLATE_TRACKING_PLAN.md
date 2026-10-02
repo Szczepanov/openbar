@@ -25,23 +25,47 @@ Research only. Nothing here goes into the Rust workspace or the product without 
 
 Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confidence` 0:
 
-| Clip | Tracker | Availability | MAE px | p90 px | Max px |
-|---|---|---:|---:|---:|---:|
-| `self-back-squat-side-002` | opencv-csrt | 100 % | 3.1 | 5.0 | 5.8 |
-| | opencv-kcf | 72 % | 19.6 | 88.4 | 89.2 |
-| | template-sad-v1 (OpenBar) | 100 % | 52.2 | 166.0 | 178.3 |
-| | local-contrast-centroid-v1 (OpenBar) | 100 % | 108.9 | 251.5 | 281.6 |
-| `self-clean-jerk-side-002` | opencv-csrt | 100 % | 6.1 | 10.2 | 14.3 |
-| | opencv-kcf | 86 % | 231.2 | 509.8 | 520.5 |
-| | template-sad-v1 (OpenBar) | 100 % | 198.8 | 423.3 | 439.8 |
-| | local-contrast-centroid-v1 (OpenBar) | 100 % | 746.1 | 1144.2 | 1162.2 |
+### All labelled frames
+
+| Clip | Tracker | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | opencv-csrt | 100.0 % | 3.1 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| | opencv-kcf | 72.0 % | 19.6 | 4.3 | 88.4 | 89.2 | 7 | 4 |
+| | template-sad-v1 (OpenBar) | 100.0 % | 52.2 | 10.3 | 166.0 | 178.3 | 0 | 13 |
+| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 108.9 | 75.3 | 251.5 | 281.6 | 0 | 24 |
+| `self-clean-jerk-side-002` | opencv-csrt | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| | opencv-kcf | 85.7 % | 231.2 | 65.3 | 509.8 | 520.5 | 3 | 3 |
+| | template-sad-v1 (OpenBar) | 100.0 % | 198.8 | 199.4 | 423.3 | 439.8 | 0 | 18 |
+| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 746.1 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
+| `self-snatch-side-002` | opencv-csrt | 100.0 % | 7.2 | 7.8 | 10.3 | 11.4 | 0 | 3 |
+| | opencv-kcf | 87.0 % | 17.9 | 11.5 | 23.0 | 127.2 | 3 | 0 |
+| | template-sad-v1 (OpenBar) | 95.7 % | 32.9 | 8.2 | 119.3 | 243.0 | 1 | 19 |
+| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 57.3 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+
+### Excluding seed frame (true tracking performance)
+
+| Clip | Tracker | Availability | MAE px | p50 px | p90 px | Max px | Max Loss | False Tracks |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `self-back-squat-side-002` | opencv-csrt | 100.0 % | 3.2 | 3.2 | 5.0 | 5.8 | 0 | 5 |
+| | opencv-kcf | 70.8 % | 20.8 | 4.5 | 88.4 | 89.2 | 7 | 4 |
+| | template-sad-v1 (OpenBar) | 100.0 % | 54.3 | 10.3 | 166.0 | 178.3 | 0 | 13 |
+| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 113.4 | 75.3 | 251.5 | 281.6 | 0 | 24 |
+| `self-clean-jerk-side-002` | opencv-csrt | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 2 |
+| | opencv-kcf | 85.0 % | 244.8 | 82.3 | 509.8 | 520.5 | 3 | 3 |
+| | template-sad-v1 (OpenBar) | 100.0 % | 208.7 | 199.4 | 423.3 | 439.8 | 0 | 18 |
+| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 783.4 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
+| `self-snatch-side-002` | opencv-csrt | 100.0 % | 7.5 | 7.8 | 10.3 | 11.4 | 0 | 3 |
+| | opencv-kcf | 86.4 % | 18.8 | 12.2 | 31.8 | 127.2 | 3 | 0 |
+| | template-sad-v1 (OpenBar) | 95.5 % | 34.5 | 8.3 | 119.3 | 243.0 | 1 | 19 |
+| | local-contrast-centroid-v1 (OpenBar) | 100.0 % | 59.9 | 19.1 | 211.5 | 392.6 | 0 | 9 |
 
 Reading: OpenBar's trackers report "tracked" on every frame while hundreds of pixels off. That is the
 silent false-track failure ADR-0008 lists as a blocker. CSRT stays on the plate; its error grows in the fast
-pull. Manual-label repeatability on `self-back-squat-side-001` is 2.06 px mean (2.45 px RMSE) between two
-passes, so a perfect tracker would still score about 1.5–2 px MAE against these labels.
+pull (3 px on squat, 6–8 px on clean and snatch). Manual-label repeatability on `self-back-squat-side-001` is
+2.06 px mean (2.45 px RMSE) between two passes, so a perfect tracker would still score about 1.5–2 px MAE
+against these labels.
 
-Reproduce: `research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --output-dir target/opencv-spike/dev-compare`
+Reproduce: `research/opencv-tracking/.venv/Scripts/python research/opencv-tracking/compare.py --manifest validation/private/manifest.json --fixture self-back-squat-side-002 --fixture self-clean-jerk-side-002 --fixture self-snatch-side-002 --output-dir target/opencv-spike/dev-compare-3clips --visual-qa`
 
 ## 3. Non-negotiable rules
 
@@ -118,7 +142,7 @@ These come from `AGENTS.md`, ADR-0003/0005/0006/0007/0008 and lessons from this 
 |---|---|---|---|---|
 | `self-back-squat-side-002` | development | 25 | — | yes |
 | `self-clean-jerk-side-002` | development | 21 | — | yes |
-| `self-snatch-side-002` | development | **not yet** (package built: `annotations/work/self-snatch-side-002/`) | — | no |
+| `self-snatch-side-002` | development | 23 | — | yes |
 | `self-hang-snatch-side-002` (2023) | development | no (old-format package) | — | Claude-estimated, **owner has not confirmed** |
 | `self-snatch-ohs-side-001` (2023) | development | no | — | no |
 | `self-back-squat-side-001` | validation | 22 | 22 + `repeatability.json` | yes |
@@ -133,8 +157,7 @@ Paths: `annotations/<id>.annotation-v1.json`, `annotations/<id>.owner-pass-b.ann
 `annotations/work/<id>/` (pass A) and `annotations/work/<id>.owner-pass-b/` (pass B). Every seed is the
 owner's first labelled frame of the package window.
 
-Owner tasks that unblock this plan: label `self-snatch-side-002` (Phase 0) and finish pass B for the five
-remaining validation clips (Phase 5).
+Owner tasks that unblock this plan: finish pass B for the five remaining validation clips (Phase 5).
 
 ## 5. Known gotchas (each one hit during this session)
 
@@ -171,8 +194,7 @@ done.
 3. Add a visual QA overlay command that draws the label (yellow) and each tracker's prediction (one colour per
    tracker) on crops of the labelled frames and tiles them per clip. This session did it with ffmpeg
    `drawbox`; OpenCV drawing is fine in the research venv.
-4. When the owner has labelled `self-snatch-side-002`, import it (gotcha 4), write its seed from the first
-   labelled frame (same document shape as the existing seeds), and include it in every comparison.
+4. Import `self-snatch-side-002` (done: 23 labels, seed created from the first labelled frame) and include it in every comparison.
 5. Open a PR with `research/` (code, requirements and this plan only).
 
 Acceptance: re-running `compare.py` on the development clips reproduces the Section 2 numbers within 0.1 px.
