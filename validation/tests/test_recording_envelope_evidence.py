@@ -21,6 +21,7 @@ def load(name: str):
 
 
 recording_envelope = load("recording_envelope_evidence")
+schema_check = load("schema_check")
 
 
 def write_json(path: Path, value) -> None:
@@ -101,6 +102,32 @@ def benchmark_result(*, implementation=None, commit: str = "abc"):
             "warnings": [],
         }],
     }
+
+
+class CommittedBaselineTests(unittest.TestCase):
+    def test_committed_baseline_is_fail_closed_and_report_is_reproducible(self):
+        study_path = ROOT / "validation" / "recording-envelope" / "m0-study-v1.json"
+        artifact = recording_envelope.build_artifact(study_path)
+
+        self.assertFalse(artifact["readiness"]["can_promote_boundaries"])
+        self.assertTrue(artifact["readiness"]["blockers"])
+        self.assertTrue(
+            all(item["classification"] == "unknown" for item in artifact["boundaries"])
+        )
+        report = (ROOT / "docs" / "validation" / "RECORDING_ENVELOPE_EVIDENCE.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(recording_envelope.render_report(artifact), report)
+
+    def test_generated_baseline_matches_evidence_schema(self):
+        artifact = recording_envelope.build_artifact(
+            ROOT / "validation" / "recording-envelope" / "m0-study-v1.json"
+        )
+        schema = schema_check.load_strict(
+            ROOT / "validation" / "schema" / "recording-envelope-evidence-v1.schema.json"
+        )
+
+        self.assertEqual(schema_check.Validator(schema).errors(artifact), [])
 
 
 class RecordingEnvelopeEvidenceTests(unittest.TestCase):
