@@ -836,8 +836,8 @@ def render_report(document: dict[str, Any]) -> str:
     lines = [
         "# Held-out tracker/filter selection evidence",
         "",
-        f"- Study: \`{document['study_version']}\`",
-        f"- Evaluated commit: \`{document['evaluated_commit']}\`",
+        f"- Study: `{document['study_version']}`",
+        f"- Evaluated commit: `{document['evaluated_commit']}`",
         f"- Held-out fixtures: {document['readiness']['fixture_count']}",
         "",
         "## Tracker gates",
