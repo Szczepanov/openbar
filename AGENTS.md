@@ -112,7 +112,7 @@ These come from VISION.md and ADR-0003/0005. Violating them is a bug even if tes
   (`CalibrationError`, `BenchmarkError`, `TrackerError`, …). No `thiserror`/`anyhow`.
   Constructors that validate are `try_new(...) -> Result<Self, _>`.
 - Units are in field names: `_px`, `_m`, `_mm`, `_s`. Keep that suffix convention.
-- Pixel coordinates are display-oriented, origin top-left, +X right, +Y down.
+- Pixel coordinates are display-oriented, +X right, +Y down, with integer `(i, j)` at pixel centres; `(0, 0)` is the centre of the top-left pixel (ADR-0007). v1 deliberately keeps `[0, width)` / `[0, height)` for points and `[0, width]` / `[0, height]` for bounds; changing those windows requires contract versioning.
 - Inline format args (`format!("{x}")`), collapse nested `if`s, keep clippy clean with
   `-D warnings`.
 - Unit tests live in `#[cfg(test)] mod tests` in the same file; shared test helpers go in

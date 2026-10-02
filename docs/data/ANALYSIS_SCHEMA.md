@@ -99,6 +99,14 @@ Each sample records:
 - optional target bounds;
 - the tracker provenance ID that produced the sample.
 
+Pixel geometry follows ADR-0007. `PixelObservation` centres and `PixelBoundingBox` edges use one
+continuous display-oriented coordinate frame: integer `(i, j)` is the centre of pixel `(i, j)`,
+and the outer top-left raster edge is `(-0.5, -0.5)`. The v1 validator intentionally retains its
+legacy acceptance windows (`0 <= x < width` for points; `0 <= left` and `right <= width` for
+bounds, likewise on Y) rather than silently changing persisted v1 semantics. Those windows can
+admit the half-pixel right/bottom compatibility region that exact pixel-centre geometry would
+exclude; first-party producers should prefer their intersection with the exact geometry.
+
 A `lost` observation contains no measured coordinate or target bounds. A tracked or
 low-confidence observation requires a measured coordinate. Missing tracking therefore never
 requires `(0, 0)`, the previous position, interpolation, or another fabricated value.

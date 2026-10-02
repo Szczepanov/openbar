@@ -443,6 +443,9 @@ pub(crate) fn bounds_for_center(center: PixelPoint, radius: f64) -> PixelBoundin
     }
 }
 
+/// Uses the same v1 `[0, width]` bounds window as canonical analysis validation (ADR-0007), so a
+/// tracked observation never fails `Analysis` validation on its bounds. This intentionally preserves
+/// v1's half-pixel-looser right/bottom compatibility region; changing it is a tracker behaviour change.
 pub(crate) fn bounds_fit(frame: &dyn GrayscaleImage, bounds: PixelBoundingBox) -> bool {
     bounds.left_px >= 0.0
         && bounds.top_px >= 0.0

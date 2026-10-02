@@ -129,6 +129,27 @@ class AnnotationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(annotations.AnnotationError, "include a timezone"):
             annotations.validate_annotation(doc, self.manifest)
 
+    def test_centre_keeps_v1_window_in_half_pixel_border(self):
+        # ADR-0007: integer coordinates are pixel centres, so the raster spans
+        # [-0.5, width - 0.5). v1 keeps [0, width); these points sit where the two differ.
+        width = self.example["coordinate_system"]["width_px"]
+        height = self.example["coordinate_system"]["height_px"]
+
+        doc = copy.deepcopy(self.example)
+        doc["samples"][0]["center_px"] = {"x_px": width - 0.25, "y_px": height - 0.25}
+        annotations.validate_annotation(doc, self.manifest)
+
+        for x, y in ((-0.25, 100.0), (100.0, -0.25)):
+            doc = copy.deepcopy(self.example)
+            doc["samples"][0]["center_px"] = {"x_px": x, "y_px": y}
+            with self.assertRaisesRegex(annotations.AnnotationError, "must be >= 0"):
+                annotations.validate_annotation(doc, self.manifest)
+
+        doc = copy.deepcopy(self.example)
+        doc["samples"][0]["center_px"] = {"x_px": float(width), "y_px": 100.0}
+        with self.assertRaisesRegex(annotations.AnnotationError, "must lie inside display dimensions"):
+            annotations.validate_annotation(doc, self.manifest)
+
     def test_rotated_fixture_uses_display_oriented_dimensions(self):
         manifest = copy.deepcopy(self.manifest)
         fixture = copy.deepcopy(manifest["fixtures"][0])

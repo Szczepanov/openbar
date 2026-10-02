@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub(crate) const RENDERER_ID: &str = "diagnostic-svg";
-pub(crate) const RENDERER_VERSION: &str = "1";
+pub(crate) const RENDERER_VERSION: &str = "2";
 
 const X: f64 = 50.0;
 const PW: f64 = 1100.0;
@@ -126,10 +126,11 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
     for (index, sample) in analysis.raw_observations().iter().enumerate() {
         if let Some(bounds) = sample.target_bounds_px {
             if index % stride == 0 || sample.tracking_state == TrackingState::LowConfidence {
+                let (bx, by) = image_point(bounds.left_px, bounds.top_px, left, y, scale);
                 rect(
                     out,
-                    left + bounds.left_px * scale,
-                    y + bounds.top_px * scale,
+                    bx,
+                    by,
                     bounds.width_px * scale,
                     bounds.height_px * scale,
                     "b",
@@ -153,18 +154,17 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
         }
     }
     let seed = analysis.manual_seed().target();
+    let (sx, sy) = image_point(seed.center().x_px(), seed.center().y_px(), left, y, scale);
     writeln!(
         out,
-        r#"<circle class="seed" data-layer="manual-seed" cx="{:.3}" cy="{:.3}" r="{:.3}"/>"#,
-        left + seed.center().x_px() * scale,
-        y + seed.center().y_px() * scale,
+        r#"<circle class="seed" data-layer="manual-seed" cx="{sx:.3}" cy="{sy:.3}" r="{:.3}"/>"#,
         seed.radius_px() * scale
     )
     .unwrap();
 
     for sample in analysis.raw_observations() {
         if let Some(m) = sample.measurement {
-            let (px, py) = (left + m.x_px * scale, y + m.y_px * scale);
+            let (px, py) = image_point(m.x_px, m.y_px, left, y, scale);
             match sample.tracking_state {
                 TrackingState::Tracked => dot(out, px, py, 3.0, "tracked"),
                 TrackingState::LowConfidence => writeln!(out, r#"<circle class="low" data-state="low_confidence" cx="{px:.3}" cy="{py:.3}" r="6"/>"#).unwrap(),
@@ -454,14 +454,8 @@ fn pixel_path(
 ) {
     let mut d = String::new();
     for (i, (x, y)) in pts.iter().copied().enumerate() {
-        write!(
-            d,
-            "{}{:.3},{:.3} ",
-            if i == 0 { 'M' } else { 'L' },
-            left + x * scale,
-            top + y * scale
-        )
-        .unwrap();
+        let (px, py) = image_point(x, y, left, top, scale);
+        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' }).unwrap();
     }
     if !d.is_empty() {
         writeln!(
@@ -472,6 +466,13 @@ fn pixel_path(
         .unwrap();
     }
 }
+/// Maps a display pixel coordinate onto the drawn source frame. Integer coordinates are pixel
+/// centres (ADR-0007), and the frame image places pixel `i` between `i` and `i + 1` image units,
+/// so the coordinate lands at `x + 0.5`.
+fn image_point(x_px: f64, y_px: f64, left: f64, top: f64, scale: f64) -> (f64, f64) {
+    (left + (x_px + 0.5) * scale, top + (y_px + 0.5) * scale)
+}
+
 fn labels(out: &mut String, analysis: &Analysis, top: f64, limits: (f64, f64), unit: &str) {
     line(out, X, top + PH / 2.0, X + PW, top + PH / 2.0, "g");
     text(
@@ -629,6 +630,15 @@ mod tests {
 
         assert!(report.contains("rotation=90°"));
         assert!(report.contains("data-layer=\"raw-trajectory\""));
+    }
+
+    #[test]
+    fn overlays_place_integer_coordinates_at_drawn_pixel_centres() {
+        // The frame image draws pixel i over [i, i + 1) image units (ADR-0007).
+        assert_eq!(image_point(0.0, 0.0, 10.0, 20.0, 2.0), (11.0, 21.0));
+        assert_eq!(image_point(3.0, 4.0, 0.0, 0.0, 1.0), (3.5, 4.5));
+        // The raster's outer top-left corner is (-0.5, -0.5) and lands on the image origin.
+        assert_eq!(image_point(-0.5, -0.5, 10.0, 20.0, 2.0), (10.0, 20.0));
     }
 
     #[test]

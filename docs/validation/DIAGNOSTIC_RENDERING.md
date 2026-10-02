@@ -32,6 +32,11 @@ The report contains:
 - confidence and tracking state versus authoritative timestamp;
 - analysis/pipeline/render provenance.
 
+Overlays follow the pixel-centre convention (ADR-0007). The embedded source frame draws pixel `i`
+between `i` and `i + 1` source-pixel units, so a coordinate `x` is drawn at `x + 0.5`. Version 1
+drew overlays at `x`, half a source pixel up and left of the measured centre; version 2 corrects
+this.
+
 Filtered metric positions are inverse-projected through the recorded plate scale only to place the
 already-persisted filtered points in the spatial diagnostic view. That is a rendering coordinate
 transform, not recalibration or refiltering.
@@ -63,7 +68,7 @@ the existing external runtime prerequisite only when a source frame is requested
 
 The SVG records:
 
-- renderer id/version (`diagnostic-svg@1`);
+- renderer id/version (`diagnostic-svg@2`);
 - source analysis path and schema version;
 - source id/hash;
 - pipeline version and Git commit when recorded;

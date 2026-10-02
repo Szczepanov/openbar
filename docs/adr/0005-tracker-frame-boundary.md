@@ -20,7 +20,8 @@ Add `openbar-tracking`, a small Rust crate for M0 manual-seed tracker experiment
 
 Its input boundary is decoder-agnostic:
 
-- display-oriented 8-bit grayscale image access;
+- display-oriented 8-bit grayscale image access, where `intensity(x, y)` is the pixel centred on
+  integer coordinate `(x, y)` (pixel-centre convention, ADR-0007);
 - explicit image dimensions;
 - authoritative presentation timestamps supplied by the caller;
 - optional frame index as auxiliary provenance;

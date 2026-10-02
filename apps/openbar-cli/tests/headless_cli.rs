@@ -169,7 +169,7 @@ fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
         "rendering must not modify canonical analysis"
     );
     let svg = fs::read_to_string(&render_output).expect("read render artifact");
-    assert!(svg.contains("renderer=diagnostic-svg@1"));
+    assert!(svg.contains("renderer=diagnostic-svg@2"));
     assert!(svg.contains("data-layer=\"source-frame\""));
     assert!(svg.contains("data-layer=\"raw-trajectory\""));
     assert!(svg.contains("data-layer=\"filtered-trajectory\""));
