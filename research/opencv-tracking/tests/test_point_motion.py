@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import cv2
@@ -54,6 +55,17 @@ class TestFitCircleRansac(unittest.TestCase):
         err_b = math.hypot(cx_b - cx, cy_b - cy)
         self.assertLess(err_b, 0.1, f"Arc with outliers centre error {err_b:.4f} >= 0.1 px")
         self.assertLess(abs(r_b - r), 0.1, f"Arc with outliers radius error {abs(r_b - r):.4f} >= 0.1 px")
+
+    def test_refactor_preserves_taubin_failure_diagnostic(self) -> None:
+        """The shared helper must not collapse a Phase 2 Taubin failure into RANSAC failure."""
+        theta = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+        points = np.column_stack([100.0 + 30.0 * np.cos(theta), 120.0 + 30.0 * np.sin(theta)])
+        with mock.patch.object(rc, "fit_circle_taubin", side_effect=ValueError("synthetic")):
+            attempt = rc._fit_circle_ransac_detailed(points, 30.0, 7)
+
+        self.assertIsNone(attempt.fit)
+        self.assertEqual(attempt.failure_reason, "taubin_refit_failed")
+        self.assertGreaterEqual(attempt.best_inlier_count, 3)
 
 
 class TestPointMotion(unittest.TestCase):
@@ -167,6 +179,17 @@ class TestPointMotion(unittest.TestCase):
         self.assertEqual(res_few.state, "lost")
         self.assertIsNone(res_few.center_px)
         self.assertEqual(res_few.confidence, 0.0)
+
+    def test_lk_api_failure_is_explicit(self) -> None:
+        """A failed OpenCV flow call returns no valid points instead of crashing."""
+        frame = np.zeros((32, 32), dtype=np.uint8)
+        points = np.array([[10.0, 10.0], [20.0, 20.0]], dtype=np.float32)
+        with mock.patch.object(pm.cv2, "calcOpticalFlowPyrLK", return_value=(None, None, None)):
+            output, valid = pm.track_points_lk(frame, frame, points)
+
+        self.assertEqual(output.shape, (2, 2))
+        self.assertTrue(np.array_equal(output, points))
+        self.assertFalse(np.any(valid))
 
     def test_05_determinism(self) -> None:
         """5. point_motion determinism: two runs produce identical output."""
