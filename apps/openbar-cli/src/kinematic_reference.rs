@@ -521,7 +521,7 @@ fn validate_study(study: &StudySpec) -> AnyResult<()> {
                         "cases[{index}] supported case must not set unsupported_reason"
                     )));
                 }
-                if case.analysis_path.as_deref().is_none_or(str::is_empty) {
+                if case\n                    .analysis_path\n                    .as_deref()\n                    .is_none_or(|value| value.trim().is_empty())\n                {
                     return Err(data_error(format!(
                         "cases[{index}] supported case requires analysis_path"
                     )));
