@@ -195,7 +195,7 @@ def validate_annotation(annotation: dict[str, Any], manifest: dict[str, Any]) ->
             x = _number(center["x_px"], f"{path}.center_px.x_px", minimum=0)
             y = _number(center["y_px"], f"{path}.center_px.y_px", minimum=0)
             # v1 window [0, width); integer coordinates are pixel centres, so the raster itself
-            # spans [-0.5, width - 0.5]. ADR-0007 records why v1 keeps this window.
+            # spans [-0.5, width - 0.5). ADR-0007 records why v1 keeps this window.
             _require(x < width and y < height, f"{path}.center_px must lie inside display dimensions")
         if has_size:
             _target_size(sample["target_size_px"], width, height, f"{path}.target_size_px")
