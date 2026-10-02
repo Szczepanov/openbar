@@ -66,7 +66,8 @@ all of the following:
 - `source_video_sha256` is present and matches the media OpenBar probed;
 - in fixture mode, `fixture_id` matches the selected fixture;
 - samples are strictly timestamp-increasing and every timestamp matches a selected decoded frame
-  within the same 0.5 ms tolerance used for the manual seed;
+  within the same 0.5 ms tolerance used for the manual seed; each sample must resolve to a distinct,
+  strictly advancing decoded frame;
 - the first sample matches the manual-seed timestamp;
 - tracked centres are finite and inside the ADR-0007 display window, with finite confidence in
   `[0, 1]`;
@@ -86,8 +87,9 @@ exact decoded-media trim bytes unchanged.
 External provenance uses the existing `analysis-v1` tracker provenance shape. The prediction
 implementation name becomes the tracker id/implementation, its version is preserved, and each
 config entry is retained in `provenance.tracker.implementation.parameters`. Scalar config values
-use the native canonical parameter type; object/array/null values are retained as deterministic
-compact JSON text because `analysis-v1` parameters are scalar. OpenBar also records
+use the native canonical parameter type when exactly representable; unsigned integers above the
+canonical i64 range, plus object/array/null values, are retained as deterministic compact text rather
+than rounded through a lossy floating-point conversion. OpenBar also records
 `prediction_sha256`, the SHA-256 of the exact prediction-file bytes. Tracker runtime is validated
 when present but intentionally does not enter canonical analysis output, so wall-clock timing
 cannot make repeated analysis non-deterministic.
@@ -221,8 +223,9 @@ frame, and proves rendering leaves canonical analysis bytes unchanged. The exter
 integration path likewise analyzes the committed `synthetic-perfect.prediction-v1.json` twice and
 requires byte-identical canonical output; invalid imported media identity is also proven to leave
 no analysis output. Focused importer tests cover wrong video hash, unmatched/non-monotonic
-timestamps, missing seed sample, non-finite coordinates, out-of-range confidence, invalid lost
-samples, unknown schema versions, and invalid tracker identifiers. A second render fixture
+timestamps, duplicate decoded-frame bindings, missing seed sample, non-finite coordinates,
+out-of-range confidence, invalid lost samples, unknown schema versions, invalid tracker identifiers,
+and lossless preservation of large unsigned provenance integers. A second render fixture
 preserves explicit lost/low-confidence state while filtered and kinematic layers are absent. CI
 additionally validates generated/committed JSON against the versioned schemas.
 
