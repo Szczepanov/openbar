@@ -61,6 +61,12 @@ outside Git. See [M0 fixture dataset and provenance](docs/validation/FIXTURE_DAT
 
 ## Product direction
 
+The intended athlete loop is: choose an exercise, record or import a set, identify/confirm the barbell target, analyze locally, then review path and validated kinematics before saving, comparing, or exporting the attempt.
+
+Recording in the future app does not require live tracking: the recommended first product path records a normal video file and runs the validated engine after capture. Exercise metadata may drive later rep/phase interpretation, but it must not silently change the underlying measurement.
+
+See [docs/product/ATHLETE_VIDEO_ANALYSIS_WORKFLOW.md](docs/product/ATHLETE_VIDEO_ANALYSIS_WORKFLOW.md) for the staged record-to-analysis product plan.
+
 The intended official app can be free for core athlete workflows while leaving room for optional paid features later, such as advanced longitudinal analytics, cloud sync, AI-assisted explanations, or coach/team workflows.
 
 The free product should remain useful; the architecture should not depend on intentionally crippling local analysis.
