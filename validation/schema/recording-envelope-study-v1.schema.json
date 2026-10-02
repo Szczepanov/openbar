@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/recording-envelope-study-v1.schema.json",
+  "title": "OpenBar recording-envelope evidence study",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "study_id",
+    "fixture_manifest",
+    "benchmark_results",
+    "measurement_evidence",
+    "frozen_candidate",
+    "evidence_policy",
+    "boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "study_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fixture_manifest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "benchmark_results": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "frozen_candidate": {
+      "$ref": "#/$defs/candidate"
+    },
+    "evidence_policy": {
+      "$ref": "#/$defs/policy"
+    },
+    "boundaries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/boundary"
+      },
+      "minItems": 1
+    },
+    "measurement_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/measurement_evidence"
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "config"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config": {
+          "type": "object"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "git_commit",
+        "pipeline_version",
+        "tracker",
+        "filter"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_frozen",
+            "frozen"
+          ]
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pipeline_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tracker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/implementation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/implementation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "frozen"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "git_commit": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tracker": {
+                "$ref": "#/$defs/implementation"
+              },
+              "filter": {
+                "$ref": "#/$defs/implementation"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_purposes",
+        "require_non_synthetic",
+        "minimum_distinct_held_out_fixtures_per_boundary",
+        "minimum_comparable_samples_per_boundary"
+      ],
+      "properties": {
+        "eligible_purposes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "development",
+              "validation",
+              "control",
+              "boundary",
+              "ood"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "require_non_synthetic": {
+          "type": "boolean"
+        },
+        "minimum_distinct_held_out_fixtures_per_boundary": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "minimum_comparable_samples_per_boundary": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dimension",
+        "variable",
+        "tested_values",
+        "fixture_ids",
+        "requested_classification",
+        "decision_rationale"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "dimension": {
+          "enum": [
+            "camera_geometry",
+            "framing",
+            "video_quality",
+            "target_visibility",
+            "camera_stability"
+          ]
+        },
+        "variable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tested_values": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "fixture_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "requested_classification": {
+          "enum": [
+            "supported",
+            "warning_boundary",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "decision_rationale": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "measurement_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "constructs"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "constructs": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "calibrated_position",
+              "velocity"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
