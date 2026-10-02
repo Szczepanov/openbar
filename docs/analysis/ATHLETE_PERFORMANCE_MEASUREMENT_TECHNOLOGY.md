@@ -298,9 +298,9 @@ Recommended primary approaches:
 | Protocol | Primary measurement approach |
 | --- | --- |
 | Barbell | target tracking + physical calibration |
-| Vertical jump | pose/body tracking + event detection |
-| Broad jump | pose/foot landmarks + calibrated ground plane |
-| Sprint | athlete/body tracking + calibrated virtual gates |
+| Vertical jump | take-off/landing event timing first; optional pose automation later |
+| Broad jump | calibrated ground reference + take-off/landing points first; optional landmarks later |
+| Sprint | known-distance gate crossing events first; continuous body tracking later |
 | 100 m | likely multi-camera or specialized capture/timing architecture |
 
 The reusable components should be:
@@ -320,39 +320,61 @@ The actual observation generator may differ by protocol.
 
 ---
 
-## 7. Proposed future protocol abstraction
+## 7. Future protocol abstraction
 
-Do not add this to M0 immediately.
+The canonical architecture now records a future `MeasurementProtocol` boundary while explicitly
+keeping it out of M0 implementation scope.
 
-A future architecture could introduce a protocol boundary conceptually similar to:
+The intended measurement-family split is:
 
 ```text
 MeasurementProtocol
     |
     +-- LiftProtocol
-    +-- VerticalJumpProtocol
-    +-- BroadJumpProtocol
+    +-- JumpProtocol
+    |     +-- vertical jump
+    |     +-- broad jump
+    |
     +-- SprintProtocol
 ```
 
-Each protocol should consume canonical timed observations and produce domain-specific events and metrics.
+The abstraction should consume **protocol evidence**, not assume a continuous tracker trajectory.
+Evidence may include:
+
+- timestamped target observations;
+- manually marked events;
+- automatically detected events;
+- calibrated points/lines/planes;
+- later pose/landmark observations.
+
+A protocol should validate its required evidence and support assumptions, derive typed events and
+metrics deterministically, and preserve confidence/failure/provenance.
 
 Conceptually:
 
 ```text
-TimedObservation {
-    timestamp
-    raw_position
-    calibrated_position?
-    confidence
-    visibility
-    provenance
-}
+ProtocolEvidence
+    |
+    +-- lift trajectory evidence
+    +-- jump event/point evidence
+    +-- sprint gate/crossing evidence
+             |
+             v
+      MeasurementProtocol
+             |
+             v
+      typed ProtocolResult
 ```
 
-Protocol code should not own camera decoding or UI.
+This avoids coupling the domain model to whichever CV mechanism generated evidence. In particular:
 
-A more explicit future crate split could be:
+- #68 can start with manual take-off/landing timestamps and manually identified broad-jump points;
+- #69 can start with gate-crossing timestamps over known distances;
+- pose estimation remains an optional later evidence producer for automation/continuous speed.
+
+Protocol code should not own camera decoding, UI, or ML training.
+
+A possible future crate split is:
 
 ```text
 crates/
@@ -362,12 +384,13 @@ crates/
   openbar-inference/              # future
   openbar-video/                  # future
   openbar-protocol-lift/          # future
-  openbar-protocol-jump/          # future
-  openbar-protocol-broad-jump/    # future
-  openbar-protocol-sprint/        # future
+  openbar-protocol-jump/          # future (#68)
+  openbar-protocol-sprint/        # future (#69)
 ```
 
-This should remain a design hypothesis until actual protocol spikes demonstrate that the common abstractions are real rather than speculative.
+The architecture direction is now explicit, but the Rust trait/crate extraction should remain a
+design hypothesis until a second protocol produces concrete shared requirements. Do not refactor
+M0 purely to satisfy this future shape.
 
 ---
 
@@ -493,23 +516,34 @@ Metric names must describe the construct actually measured.
 
 ## 10. Vertical jump
 
-Vertical jump should primarily be treated as an event-detection and body-motion problem.
+Issue #68 defines the preferred first implementation as an **event-timing problem**, not a pose
+requirement.
 
-A likely pipeline:
+A first pipeline can be deliberately simple:
 
 ```text
-video
-  |
-person detection / crop
-  |
-pose estimation
-  |
-ankles + hips + shoulders + optional COM proxy
-  |
-takeoff / landing events
-  |
-jump metrics
+video + authoritative timestamps
+          |
+manual take-off / landing marks
+(or later automatic event detection)
+          |
+flight time + event uncertainty
+          |
+jump height
 ```
+
+This mirrors the successful M0 philosophy: prove the measurement construct with explicit manual
+evidence before adding automation.
+
+Pose estimation becomes useful later for:
+
+- automatic take-off/landing proposals;
+- takeoff-velocity methods;
+- body/COM proxies;
+- richer jump mechanics.
+
+It should therefore remain an optional evidence producer rather than a requirement of
+`JumpProtocol`.
 
 ### Candidate pose technology
 
@@ -577,7 +611,10 @@ Limitations:
 
 ### Recommendation
 
-Implement both as research pipelines and validate against force-plate/reference measurements before choosing a product default.
+Implement and validate the flight-time/event-timing method first, matching #68. Keep manual event
+marking available as a reference path. Then benchmark automatic event detection and the
+takeoff-velocity approach against force-plate/reference measurements before promoting either to a
+product default.
 
 ---
 
@@ -585,21 +622,22 @@ Implement both as research pipelines and validate against force-plate/reference 
 
 Broad jump should primarily be treated as a calibrated ground-plane geometry problem.
 
-A likely pipeline:
+A first pipeline should not require pose estimation:
 
 ```text
 camera view
    |
-ground-plane calibration
+known ground reference / calibration
    |
-pose / foot landmarks
+manual take-off point
    |
-takeoff foot reference
-   |
-landing foot reference
+manual landing point
    |
 distance in metres
 ```
+
+Pose/foot landmarks can later automate point proposals while preserving the same underlying
+distance protocol.
 
 ### Homography
 
@@ -638,21 +676,22 @@ The protocol must be persisted as part of the analysis provenance.
 
 Short sprint timing is a strong candidate for a single-phone virtual-gate approach.
 
-A likely setup:
+The first implementation in #69 can avoid pose estimation and continuous tracking:
 
 ```text
 0 m       5 m      10 m        20 m
  |---------|---------|-----------|
-          calibrated ground plane
+       known measured gates
 
-athlete trajectory
-        |
-body reference point
-        |
-gate crossing interpolation
-        |
-split timestamps
+manual / algorithmic crossing events
+              |
+       split timestamps
+              |
+     distance / split time
 ```
+
+Once this event-based construct is validated against timing gates, a later continuous-speed path
+can add a calibrated body trajectory and pose/landmark evidence.
 
 ### Reference point
 
@@ -1229,13 +1268,17 @@ Review whether current trajectory and observation types accidentally assume a ba
 
 Do not create generic abstractions prematurely, but avoid names or invariants that make future body/foot/athlete observations impossible.
 
-### R2 — define a protocol-analysis ADR only after the second protocol exists
+### R2 — promote the protocol boundary to implementation ADR/API only after the second protocol exists
 
-Avoid inventing a large generic `MeasurementProtocol` framework before M0 is complete.
+The architecture now records the intended `MeasurementProtocol` boundary so today's design does
+not accidentally block jump/sprint support.
 
-A better trigger is:
+Do not, however, invent a large generic Rust framework before M0 is complete.
 
-> implement the first jump or sprint research spike, compare its needs with lift analysis, then extract the smallest shared abstraction.
+A better trigger for committing the concrete trait/types/crates is:
+
+> implement the first jump research spike, compare its real evidence/events/results with lift
+> analysis, then extract the smallest shared abstraction.
 
 ### R3 — create a dependency/licensing ledger
 
@@ -1349,7 +1392,7 @@ The current M0 architecture is already aligned with that goal. The recommended p
 These links are starting points for future spikes. Exact dependency, model-weight, and dataset terms must be rechecked at adoption time.
 
 - OpenBar architecture: `docs/architecture/ARCHITECTURE.md`
-- OpenBar M0 roadmap: `docs/roadmap/M0_VALIDATED_BAR_PATH_ENGINE.md` or current canonical M0 document
+- OpenBar M0 roadmap: `docs/roadmap/M0.md`
 - OpenBar validation documentation: `docs/validation/`
 - OpenBar licensing strategy: `docs/legal/LICENSING_STRATEGY.md`
 - OpenBar clean-room rules: `docs/clean-room/COMPETITOR_BOUNDARIES.md`
