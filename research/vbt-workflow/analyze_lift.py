@@ -7,13 +7,18 @@ A thin orchestrator with no measurement logic. It chains existing tools:
             (default validation/private/vbt/manifest.json) with id `vbt-<first 16 hex of SHA-256>`,
             through validation/tools/fixture_probe.py. Idempotent: the same video gives the same id
             and an identical entry is never rewritten.
-  run       register (idempotent), then run research/opencv-tracking/track.py --omit-runtime with
-            CSRT over the whole clip, then `openbar-cli analyze --observations` with an explicit
-            filter and kinematics configuration. Writes the prediction, analysis-v1 and a run record
-            side by side; they replace earlier outputs only when the whole run succeeds.
+  run       register (idempotent), track the whole clip from the seed with an explicit --tracker, then
+            `openbar-cli analyze --observations` with an explicit filter and kinematics configuration.
+            Writes the prediction, analysis-v1 and a run record side by side (plus the circle-fit
+            geometry sidecar for SAM 2); they replace earlier outputs only when the whole run succeeds.
 
-Measurement stays where it lives: CSRT in track.py; calibration, filtering and kinematics in
-openbar-core through `analyze`. This script never edits a prediction or an analysis.
+Trackers (no default):
+  csrt                 research/opencv-tracking/track.py --tracker csrt --omit-runtime (CPU, this interpreter)
+  sam2.1-bplus-circle  research/gpu-tracking/track_gpu.py --candidate sam2.1-bplus-circle --omit-runtime,
+                       run with --gpu-python (the GPU venv); needs CUDA and the SHA-verified checkpoint
+
+Measurement stays where it lives: the trackers in track.py / track_gpu.py; calibration, filtering
+and kinematics in openbar-core through `analyze`. This script never edits a prediction or an analysis.
 
 Manifests are accepted only under validation/private/vbt/ or target/, and never one named
 validation/private/manifest.json (the #57 development/held-out manifest). Standard library only;
@@ -30,7 +35,6 @@ import os
 import platform
 import re
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -40,10 +44,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "validation" / "tools"))
 import fixture_probe  # noqa: E402
 import schema_check  # noqa: E402
+from vbt_process import ERROR_MESSAGE_CHARS, Runner, WorkflowError, last_error_line  # noqa: E402,F401
+from vbt_trackers import (  # noqa: E402,F401
+    CUDA_PROBE, TRACKERS, TrackerSpec, commands_note, require_cuda, require_tracker_outputs, tracker_arguments,
+    tracker_environment,
+)
 
-WORKFLOW_VERSION = "vbt-workflow-2"
+WORKFLOW_VERSION = "vbt-workflow-3"
 RUN_RECORD_FORMAT = "openbar-research-vbt-run-record"
-RUN_RECORD_FORMAT_VERSION = 1
+RUN_RECORD_FORMAT_VERSION = 2
 
 PERSONAL_ROOT = ROOT / "validation" / "private" / "vbt"
 TARGET_ROOT = ROOT / "target"
@@ -56,7 +65,6 @@ LABEL_WORK_DIR = ROOT / "validation" / "private" / "annotations" / "work"
 SEED_SCHEMA = ROOT / "validation" / "schema" / "manual-target-seed-v1.schema.json"
 PREDICTION_SCHEMA = ROOT / "validation" / "schema" / "tracker-prediction-v1.schema.json"
 ANALYSIS_SCHEMA = ROOT / "validation" / "schema" / "analysis-v1.schema.json"
-TRACK_SCRIPT = ROOT / "research" / "opencv-tracking" / "track.py"
 UNTRACKED_SOURCE_DIRS = ("crates", "apps", "research")
 
 FIXTURE_ID_PREFIX = "vbt-"
@@ -70,12 +78,9 @@ REGISTRATION_NOTES = (
 # Fields that bind an id to its media and metric scale. Conditions and notes may be hand-edited.
 BINDING_FIELDS = ("exercise", "media", "video", "load")
 
-TRACKER = "csrt"
-TRACKER_IMPLEMENTATION = "opencv-csrt"
 CARGO_ANALYZE = ["cargo", "run", "--locked", "--release", "-p", "openbar-cli", "--"]
 EXERCISES = ("snatch", "clean", "back_squat", "other")
 FILTERS = ("raw", "moving-average", "savitzky-golay", "kalman")
-OUTPUT_NAMES = ("prediction", "analysis", "run_record")  # promotion order: the run record last
 RENAME_ATTEMPTS = 5
 RENAME_RETRY_SLEEP_S = 0.2
 
@@ -90,10 +95,6 @@ PRESETS: dict[str, list[str]] = {
         "--kinematics-min-confidence", "0",
     ],
 }
-
-
-class WorkflowError(RuntimeError):
-    pass
 
 
 def finite_number(text: str) -> str:
@@ -130,48 +131,6 @@ KINEMATICS_FLAGS = ("--kinematics-max-gap-s", "--kinematics-min-confidence")
 
 def dest(flag: str) -> str:
     return flag.lstrip("-").replace("-", "_")
-
-
-class Runner:
-    """External process boundary; tests substitute a fake."""
-
-    def which(self, name: str) -> str | None:
-        return shutil.which(name)
-
-    def capture_bytes(self, argv: list[str]) -> bytes:
-        try:
-            completed = subprocess.run(self._resolve(argv), cwd=ROOT, check=False, capture_output=True)
-        except OSError as error:
-            raise WorkflowError(f"{argv[0]} could not be run: {error}") from error
-        if completed.returncode != 0:
-            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
-            raise WorkflowError(f"{argv[0]} failed: {stderr[-500:]}")
-        return completed.stdout
-
-    def capture(self, argv: list[str]) -> str:
-        return self.capture_bytes(argv).decode("utf-8", errors="replace")
-
-    def succeeds(self, argv: list[str]) -> bool:
-        try:
-            return subprocess.run(self._resolve(argv), cwd=ROOT, check=False, capture_output=True).returncode == 0
-        except OSError:
-            return False
-
-    def execute(self, argv: list[str]) -> None:
-        try:
-            completed = subprocess.run(self._resolve(argv), cwd=ROOT, check=False)
-        except OSError as error:
-            raise WorkflowError(f"{argv[0]} could not be run: {error}") from error
-        if completed.returncode != 0:
-            raise WorkflowError(f"{argv[0]} exited with status {completed.returncode}")
-
-    @staticmethod
-    def _resolve(argv: list[str]) -> list[str]:
-        # A repository-relative program path is resolved against the root, not the caller's cwd.
-        program = Path(argv[0])
-        if not program.is_absolute() and (ROOT / program).is_file():
-            return [str(ROOT / program), *argv[1:]]
-        return argv
 
 
 # --- Paths and locations -------------------------------------------------------------------------
@@ -251,7 +210,7 @@ def require_output_dir(path: Path, runner: Runner, paths: dict[str, Path]) -> No
         )
 
 
-def resolve_openbar_cli(value: str) -> Path:
+def find_executable(value: str, flag: str) -> Path:
     """Resolve like the other path flags (caller's cwd); `shutil.which` adds PATHEXT such as .exe."""
     candidate = Path(value)
     if not candidate.is_absolute():
@@ -260,10 +219,46 @@ def resolve_openbar_cli(value: str) -> Path:
     # skips it for names with a directory). Windows also searches the cwd first, so check the hit.
     found = shutil.which(candidate.name, path=str(candidate.parent))
     if found is None or safe_resolve(Path(found).parent) != safe_resolve(candidate.parent):
-        raise WorkflowError(f"--openbar-cli {value} was not found or is not executable")
-    binary = Path(found)
+        raise WorkflowError(f"{flag} {value} was not found or is not executable")
+    return Path(found)
+
+
+def resolve_openbar_cli(value: str) -> Path:
+    binary = find_executable(value, "--openbar-cli")
     require_in_repo(binary, "--openbar-cli", "use target/release/openbar-cli from `cargo build --locked --release`")
     return binary
+
+
+def on_disk_name(folder: Path, name: str, flag: str) -> str:
+    """`name` as the directory listing spells it (Windows matches case-insensitively, PATHEXT adds `.EXE`)."""
+    try:
+        entries = os.listdir(folder)
+    except OSError as error:
+        raise WorkflowError(f"{flag}: cannot list {folder}: {error}") from error
+    if name in entries:
+        return name
+    matches = [entry for entry in entries if entry.casefold() == name.casefold()]
+    if len(matches) != 1:
+        raise WorkflowError(f"{flag}: cannot find the on-disk spelling of {name} in {folder}")
+    return matches[0]
+
+
+def resolve_gpu_python(value: str) -> str:
+    """Return the GPU venv interpreter as a repository-relative path (run from the root and recorded).
+
+    Directory links are followed, so a venv folder that links outside the repository is refused. The
+    final file name is not followed: a POSIX venv `python` is a symlink to the base interpreter, and
+    the venv is identified by its own folder. The recorded path is the resolved folder plus the file
+    name as listed on disk, so the same interpreter is recorded identically however it was typed.
+    """
+    interpreter = find_executable(value, "--gpu-python")
+    folder = safe_resolve(interpreter.parent)
+    if not is_within(folder, ROOT):
+        raise WorkflowError(
+            f"--gpu-python {value} is outside the repository (its folder resolves to {folder}); use the GPU "
+            "venv, e.g. research/gpu-tracking/.venv/Scripts/python.exe"
+        )
+    return f"{display_path(folder)}/{on_disk_name(folder, interpreter.name, '--gpu-python')}"
 
 
 # --- Inputs --------------------------------------------------------------------------------------
@@ -433,12 +428,38 @@ def analysis_options(args: argparse.Namespace) -> list[str]:
     return options
 
 
-def output_paths(output_dir: Path, fixture_id: str) -> dict[str, Path]:
+def output_paths(output_dir: Path, fixture_id: str, tracker: str) -> dict[str, Path]:
+    """Every output name carries the tracker implementation, so trackers can share a folder.
+
+    The order is the promotion order; the run record is always last.
+    """
+    spec = TRACKERS[tracker]
+    stem = output_dir / f"{fixture_id}.{spec.implementation}"
+    paths = {"prediction": stem.with_name(f"{stem.name}.prediction-v1.json")}
+    if spec.geometry_sidecar:
+        paths["geometry"] = stem.with_name(f"{stem.name}.geometry.json")
     return {
-        "prediction": output_dir / f"{fixture_id}.{TRACKER_IMPLEMENTATION}.prediction-v1.json",
-        "analysis": output_dir / f"{fixture_id}.analysis-v1.json",
-        "run_record": output_dir / f"{fixture_id}.run-record.json",
+        **paths,
+        "analysis": stem.with_name(f"{stem.name}.analysis-v1.json"),
+        "run_record": stem.with_name(f"{stem.name}.run-record.json"),
     }
+
+
+def legacy_output_paths(output_dir: Path, fixture_id: str) -> list[Path]:
+    """Workflow-v2 names without the tracker; v3 never writes, renames or deletes them."""
+    return [output_dir / f"{fixture_id}.analysis-v1.json", output_dir / f"{fixture_id}.run-record.json"]
+
+
+def warn_about_legacy_outputs(output_dir: Path, fixture_id: str) -> None:
+    legacy = [path for path in legacy_output_paths(output_dir, fixture_id) if path.exists()]
+    if legacy:
+        print(
+            "warning: legacy workflow-v2 outputs (no tracker in the name) are next to this run's outputs: "
+            + ", ".join(display_path(path) for path in legacy)
+            + ". They are left untouched; import exactly one analysis-v1 per lift into the recommender "
+            "(the tracker your policy names) and delete stale files by hand.",
+            file=sys.stderr,
+        )
 
 
 def staged_paths(paths: dict[str, Path]) -> dict[str, Path]:
@@ -487,11 +508,16 @@ def tool_versions(runner: Runner, openbar_cli: Path | None) -> dict[str, Any]:
 
 # --- Commands ------------------------------------------------------------------------------------
 
-def track_command(manifest: Path, fixture_id: str, seed: Path, prediction: Path) -> list[str]:
+def track_command(tracker: str, interpreter: str, manifest: Path, fixture_id: str, seed: Path,
+                  files: dict[str, Path]) -> list[str]:
+    """The tracking step. Both trackers run with --omit-runtime, so the prediction has no wall-clock time."""
+    spec = TRACKERS[tracker]
+    geometry = files.get("geometry")
     return [
-        sys.executable, display_path(TRACK_SCRIPT),
+        interpreter, display_path(spec.script),
         "--manifest", display_path(manifest), "--fixture", fixture_id, "--seed", display_path(seed),
-        "--tracker", TRACKER, "--omit-runtime", "--output", display_path(prediction),
+        *tracker_arguments(spec, display_path(files["prediction"]),
+                           None if geometry is None else display_path(geometry)),
     ]
 
 
@@ -548,7 +574,8 @@ def promote_outputs(staged: dict[str, Path], paths: dict[str, Path]) -> None:
     """
     record = paths["run_record"]
     retry_on_permission_error(lambda: record.unlink(missing_ok=True), f"remove {display_path(record)}")
-    for name in OUTPUT_NAMES:
+    order = [name for name in paths if name != "run_record"] + ["run_record"]
+    for name in order:
         source, target = staged[name], paths[name]
         retry_on_permission_error(lambda: os.replace(source, target), f"move {display_path(target)} into place")
 
@@ -568,12 +595,10 @@ def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: P
                      plate: float, options: list[str], commands: list[tuple[str, list[str]]],
                      paths: dict[str, Path], staged: dict[str, Path],
                      prediction: dict[str, Any], git: dict[str, Any],
-                     versions: dict[str, Any]) -> dict[str, Any]:
+                     versions: dict[str, Any], gpu_python: str | None) -> dict[str, Any]:
+    spec = TRACKERS[args.tracker]
     config = prediction.get("implementation", {}).get("config", {})
-    recorded_commands = [
-        {"step": step, "argv": ["python", *argv[1:]] if step == "track" else argv}
-        for step, argv in commands
-    ]
+    recorded_commands = [{"step": step, "argv": argv} for step, argv in commands]
     return {
         "format": RUN_RECORD_FORMAT,
         "format_version": RUN_RECORD_FORMAT_VERSION,
@@ -594,23 +619,22 @@ def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: P
         "configuration": {
             "exercise": args.exercise,
             "plate_diameter_m": plate,
-            "tracker": TRACKER,
-            "tracker_implementation": TRACKER_IMPLEMENTATION,
+            "tracker": spec.name,
+            "tracker_implementation": spec.implementation,
+            "tracker_script": display_path(spec.script),
+            "tracker_determinism": dict(spec.determinism),
             "preset": args.preset,
             "analyze_options": options,
         },
         "commands": recorded_commands,
-        "commands_note": "Run from the repository root; 'python' is the research venv interpreter.",
+        "commands_note": commands_note(spec),
         "outputs": {
             name: {"file": paths[name].name, "sha256": file_sha256(staged[name])}
-            for name in ("prediction", "analysis")
+            for name in paths
+            if name != "run_record"
         },
         "openbar": git,
-        "environment": {
-            **versions,
-            "opencv_version": config.get("opencv_version"),
-            "numpy_version": config.get("numpy_version"),
-        },
+        "environment": {**versions, **tracker_environment(spec, config, gpu_python)},
     }
 
 
@@ -624,9 +648,12 @@ def print_summary(fixture_id: str, exercise: str, action: str, seed_document: di
     print(f"analyze_lift: {fixture_id} ({exercise}); manifest entry {action}")
     print(f"  SEED: {float(seed['timestamp_s']):.6f} s, frame {seed.get('frame_index')}. Tracking starts at the "
           "seed, so it must be before the first rep; check this before using the analysis.")
+    print(f"  tracker: {prediction.get('implementation', {}).get('name')}")
     print(f"  samples: {tracked} tracked, {lost} lost, {len(samples)} total")
-    for label, name in (("prediction", "prediction"), ("analysis  ", "analysis"), ("run record", "run_record")):
-        print(f"  {label}: {display_path(paths[name])}")
+    labels = {"prediction": "prediction", "geometry": "geometry  ", "analysis": "analysis  ",
+              "run_record": "run record"}
+    for name, path in paths.items():
+        print(f"  {labels[name]}: {display_path(path)}")
     print(f"  OpenBar commit: {git['git_commit']}")
     if git["tracked_changes"] or git["untracked_source_files"]:
         print("  WARNING: the OpenBar working tree has uncommitted or untracked source changes; "
@@ -658,23 +685,27 @@ def command_register(args: argparse.Namespace, runner: Runner) -> int:
     return 0
 
 
-def check_run_inputs(args: argparse.Namespace, runner: Runner) -> tuple[Path, float, list[str], Path | None]:
+def check_run_inputs(args: argparse.Namespace,
+                     runner: Runner) -> tuple[Path, float, list[str], Path | None, str | None]:
     manifest = require_personal_manifest(args.manifest)
     plate = parse_plate_diameter(args.plate_diameter_m)
     options = analysis_options(args)
     require_video(args.video)
     require_in_repo(args.seed, "--seed", f"keep seeds under {display_path(DEFAULT_SEED_DIR)}/")
     openbar_cli = None if args.openbar_cli is None else resolve_openbar_cli(args.openbar_cli)
+    gpu_python = None if args.gpu_python is None else resolve_gpu_python(args.gpu_python)
     require_tools(runner, ("ffmpeg", "ffprobe"))
-    return manifest, plate, options, openbar_cli
+    return manifest, plate, options, openbar_cli, gpu_python
 
 
 def command_run(args: argparse.Namespace, runner: Runner) -> int:
-    manifest, plate, options, openbar_cli = check_run_inputs(args, runner)
+    manifest, plate, options, openbar_cli, gpu_python = check_run_inputs(args, runner)
+    spec = TRACKERS[args.tracker]
     video_sha256 = file_sha256(args.video)
     fixture_id = fixture_id_for(video_sha256)
-    paths = output_paths(args.output_dir, fixture_id)
+    paths = output_paths(args.output_dir, fixture_id, args.tracker)
     require_output_dir(args.output_dir, runner, paths)
+    warn_about_legacy_outputs(args.output_dir, fixture_id)
     existing = [path for path in paths.values() if path.exists()]
     if existing and not args.force:
         raise WorkflowError(
@@ -684,6 +715,8 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
     seed_document = load_bound_seed(args.seed, fixture_id, args.video)
     if file_sha256(args.seed) != seed_sha256:
         raise WorkflowError("seed changed while it was being read; re-run with a stable seed file")
+    if gpu_python is not None:
+        require_cuda(runner, gpu_python)
     git = git_provenance(runner)
     versions = tool_versions(runner, openbar_cli)
     entry, action = register_video(args.video, manifest, video_sha256, plate, args.exercise)
@@ -691,15 +724,17 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
 
     staged = staged_paths(paths)
 
-    def commands_for(files: dict[str, Path]) -> list[tuple[str, list[str]]]:
+    def commands_for(files: dict[str, Path], interpreter: str) -> list[tuple[str, list[str]]]:
         return [
-            ("track", track_command(manifest, fixture_id, args.seed, files["prediction"])),
+            ("track", track_command(args.tracker, interpreter, manifest, fixture_id, args.seed, files)),
             ("analyze", analyze_command(openbar_cli, manifest, fixture_id, args.seed, args.plate_diameter_m,
                                         files["prediction"], options, files["analysis"])),
         ]
 
-    commands = commands_for(staged)  # what runs: staged .tmp outputs
-    recorded = commands_for(paths)  # what is recorded: final names (no output embeds its path)
+    # What runs: staged .tmp outputs. What is recorded: final names (no output embeds its path), with
+    # the CPU tracker's interpreter written as 'python' and the GPU venv by its repository path.
+    commands = commands_for(staged, gpu_python or sys.executable)
+    recorded = commands_for(paths, gpu_python or "python")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     remove_files(staged)  # leftovers of an interrupted run; never the real outputs
     try:
@@ -709,12 +744,14 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
             manifest=manifest, fixture_id=fixture_id, entry_sha256=entry_sha256,
         )
         prediction = load_validated_output(staged["prediction"], PREDICTION_SCHEMA, "tracker prediction")
+        require_tracker_outputs(spec, fixture_id, prediction, staged)
         load_validated_output(staged["analysis"], ANALYSIS_SCHEMA, "analysis-v1")
         record = build_run_record(
             fixture_id=fixture_id, video=args.video, video_sha256=video_sha256, seed=args.seed,
             seed_sha256=seed_sha256, seed_document=seed_document, manifest=manifest,
             entry_sha256=entry_sha256, args=args, plate=plate, options=options, commands=recorded,
             paths=paths, staged=staged, prediction=prediction, git=git, versions=versions,
+            gpu_python=gpu_python,
         )
         write_json(staged["run_record"], record)
         promote_outputs(staged, paths)
@@ -740,9 +777,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     add_common(subparsers.add_parser("register", help="add the video to the personal manifest (idempotent)"))
 
-    run = subparsers.add_parser("run", help="register, track with CSRT, analyze")
+    run = subparsers.add_parser("run", help="register, track, analyze")
     add_common(run)
     run.add_argument("--seed", type=Path, required=True, help="manual-target-seed-v1 made for this video")
+    run.add_argument("--tracker", required=True, choices=list(TRACKERS),
+                     help="csrt (CPU, OpenCV) or sam2.1-bplus-circle (CUDA GPU, needs --gpu-python); no default")
+    run.add_argument("--gpu-python", help="GPU venv interpreter for sam2.1-bplus-circle, inside the repository, "
+                                          "e.g. research/gpu-tracking/.venv/Scripts/python.exe")
     run.add_argument("--output-dir", type=Path, required=True,
                      help="git-ignored directory, e.g. validation/private/vbt/analyses")
     run.add_argument("--force", action="store_true", help="replace existing outputs once the new run succeeds")
@@ -761,6 +802,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.command != "run":
         return args
+    needs_gpu_python = TRACKERS[args.tracker].needs_gpu_python
+    if needs_gpu_python and args.gpu_python is None:
+        parser.error(f"--tracker {args.tracker} requires --gpu-python (the GPU venv interpreter); there is no default")
+    if not needs_gpu_python and args.gpu_python is not None:
+        parser.error(f"--gpu-python applies only to GPU trackers, not --tracker {args.tracker}")
     explicit = [flag for flag in ("--filter", *(f for f, _ in FILTER_FLAGS), *KINEMATICS_FLAGS)
                 if getattr(args, dest(flag)) is not None]
     if args.preset is not None and explicit:

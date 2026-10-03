@@ -87,16 +87,20 @@ Non-goals:
 - **Compatibility.** Existing `template` / `contrast` output stays byte-identical (golden test
   unchanged).
 
-Default tracker for the personal workflow: `opencv-csrt`, which runs on CPU and is Apache-2.0.
-`sam2.1-bplus-circle` is the optional higher-accuracy mode on a desktop GPU. Both run from
-`research/` to produce the prediction file; neither becomes an OpenBar production dependency here.
+Trackers for the personal workflow: `opencv-csrt` runs on CPU and is Apache-2.0.
+`sam2.1-bplus-circle` is an optional desktop-GPU research alternative. It reduced the specific
+fast-lift spikes described below, but it is not a selected production tracker: #57 Phase 3 remains
+PARTIAL and the SAM 2 circle candidates still fail some M0 tracker gates. The post-session command
+requires an explicit `--tracker` choice, so there is no default. Both run from `research/` to produce
+the prediction file; neither becomes an OpenBar production dependency here.
 
 ### Step 2, post-session command — `research/vbt-workflow/analyze_lift.py` (#86)
 
-One script turns a lift video and a seed into `analysis-v1`. It is orchestration only: CSRT stays
-in `research/opencv-tracking/track.py`, and calibration, filtering and kinematics stay in
-`openbar-core` through `analyze --observations`. It never edits a prediction or an analysis. It is
-stdlib-only, but run it with the research venv's Python because `track.py` needs OpenCV.
+One script turns a lift video and a seed into `analysis-v1`. It is orchestration only. Tracking
+stays in `research/opencv-tracking/track.py` (CSRT) or `research/gpu-tracking/track_gpu.py` (SAM 2),
+and calibration, filtering and kinematics stay in `openbar-core` through `analyze --observations`. It
+never edits a prediction or an analysis. It is stdlib-only, but run it with the research venv's Python
+because `track.py` needs OpenCV.
 
 **Personal manifest.** Personal videos go into a separate manifest,
 `validation/private/vbt/manifest.json` by default. Manifests are accepted only under
@@ -140,11 +144,51 @@ by `fixture_probe.py` as `purpose: development`, `private_only`, side view, fixe
      --video validation/private/vbt/media/<file>.mp4 \
      --seed validation/private/vbt/seeds/<id>.manual-target-seed-v1.json \
      --plate-diameter-m 0.45 --exercise clean --output-dir validation/private/vbt/analyses \
-     --preset vbt-sg-0.15s-v1
+     --tracker csrt --preset vbt-sg-0.15s-v1
    ```
 
    Check the `SEED:` line in the summary: the seed time must be before the first rep. The script
    cannot detect a late seed, so it does not fail on one.
+
+**Trackers.** `--tracker` is required and has no default:
+
+| `--tracker` | Runs | Needs | Cost |
+|---|---|---|---|
+| `csrt` | `track.py --tracker csrt --omit-runtime` with the interpreter running this script | the research venv (OpenCV) | seconds on CPU |
+| `sam2.1-bplus-circle` | `track_gpu.py --candidate sam2.1-bplus-circle --omit-runtime --geometry-output ...` with `--gpu-python` | an NVIDIA GPU with CUDA; the GPU research environment (the requirements file is bootstrap constraints, plus SAM 2 installed as documented in `research/PLATE_TRACKING_PLAN.md`); and `sam2.1_hiera_base_plus.pt` in `validation/private/models/` with its committed SHA-256 (`download_models.py`) | about 80 s per 13 s clip on an RTX 3060 Ti; about 150 s was observed for an 832-frame clip |
+
+For the personal/research workflow, SAM 2 is an opt-in diagnostic alternative when CSRT shows an
+obvious drift or velocity spike; that does not promote it to the production path. On two private
+owner 30 kg snatch clips, preliminary #79 agreement data found CSRT first-rep peaks of 3.1–3.4 m/s
+against WL Analysis's 2.44 and 2.65 m/s, while SAM 2.1 base-plus with the circle fit removed those
+spikes. With a separately measured stick scale, the SAM 2 per-rep peaks were within 0.01–0.09 m/s
+of WL Analysis and the velocity-shape correlation was r = 0.999. WL Analysis is a comparison, not
+ground truth, and these two private clips are not the pre-registered formal #79 study. Run the SAM 2
+path like this:
+
+```bash
+py research/vbt-workflow/analyze_lift.py run \
+  --video validation/private/vbt/media/<file>.mp4 \
+  --seed validation/private/vbt/seeds/<id>.manual-target-seed-v1.json \
+  --plate-diameter-m 0.45 --exercise snatch --output-dir validation/private/vbt/analyses \
+  --tracker sam2.1-bplus-circle --gpu-python research/gpu-tracking/.venv/Scripts/python.exe \
+  --preset vbt-sg-0.15s-v1
+```
+
+`--gpu-python` is required with `sam2.1-bplus-circle` and refused with `csrt`. It is resolved like
+`--openbar-cli` (from the current directory, `.exe` optional) and must be inside the repository.
+Directory links are followed, so a venv folder that links outside the repository is refused. The
+interpreter file itself is not followed, because a POSIX venv `python` is a symlink to the base
+interpreter. The run record stores the resolved folder plus the file name as it is spelled on disk.
+The same interpreter is therefore recorded identically whether you type `python`, `python.exe` or a
+different case, and a `--force` re-run gives a byte-identical record. Before
+registering or tracking, the workflow runs a short check in that interpreter. It stops with a clear
+error if torch or SAM 2 cannot import, or if no CUDA device is visible. `track_gpu.py` then verifies the
+checkpoint's SHA-256 before decoding. A missing or wrong checkpoint, or any other `track_gpu.py`
+failure, fails the run, and the error quotes `track_gpu.py`'s own last error line.
+`track_gpu.py` decodes the tracked window to temporary JPEGs under
+`validation/private/work/gpu-tracking/` and deletes them when it finishes. Calibration is still
+plate-based: the analyze step is the same for both trackers.
 
 **Outputs**, side by side in `--output-dir`. The directory must be inside the repository, under
 `validation/private/vbt/` or `target/`, or somewhere every output is git-ignored; anything else, such
@@ -152,15 +196,36 @@ as `validation/fixtures/public/`, is refused. The video, seed and manifest must 
 repository, so the run record only holds repository-relative paths. Outside the two dedicated
 roots, both the final output names and their `.tmp` staging names must be git-ignored.
 
-- `<id>.opencv-csrt.prediction-v1.json`: `track.py --omit-runtime` output, unedited, whole clip from
+Every name carries the tracker implementation (`<impl>` is `opencv-csrt` or `sam2.1-bplus-circle`).
+CSRT and SAM 2 outputs for the same video can therefore sit in one folder, and `--force` for one
+tracker never touches the other's files. Outputs written by workflow version 2 (`<id>.analysis-v1.json`,
+`<id>.run-record.json`) are not renamed or replaced. A run prints a `warning: legacy workflow-v2
+outputs ...` line when it finds them in `--output-dir`; delete them by hand if they are no longer
+wanted. Coexisting outputs mean one lift can have more than one `analysis-v1`; see step 3 for which
+one to import.
+
+- `<id>.<impl>.prediction-v1.json`: the tracker's `--omit-runtime` output, unedited, whole clip from
   the seed;
-- `<id>.analysis-v1.json`: canonical analysis for the recommender import (step 3a);
-- `<id>.run-record.json` (`openbar-research-vbt-run-record`, format version 1): both commands as
-  run from the repository root, the video, seed and manifest-entry SHA-256, the seed timestamp, the
-  explicit analyze options and preset name, and the output SHA-256. It also records the OpenBar
+- `<id>.sam2.1-bplus-circle.geometry.json` (SAM 2 only): `track_gpu.py`'s circle-fit geometry
+  sidecar (`openbar-research-geometry-sidecar`, format 0) for the same run. It has one entry per sample:
+  whether the fit was accepted, why not, the radius, inliers and edge coverage. A rejected fit that
+  still has a centre stays a tracked sample at 0.7× confidence, and this file shows which samples
+  those are. It is staged and
+  promoted with the other outputs and hashed in the run record. The centroid sibling prediction
+  (`--sibling-output`) is not produced: it is never analysed, so it would be an unrecorded side file;
+- `<id>.<impl>.analysis-v1.json`: canonical analysis for the recommender import (step 3a);
+- `<id>.<impl>.run-record.json` (`openbar-research-vbt-run-record`, format version 2, workflow
+  `vbt-workflow-3`): both commands as run from the repository root, the video, seed and manifest-entry
+  SHA-256, the seed timestamp, the tracker (`tracker`, `tracker_implementation`, `tracker_script`,
+  `tracker_determinism`), the explicit analyze options and preset name, and the SHA-256 of every
+  other output (`prediction`, `analysis`, and `geometry` for SAM 2). It also records the OpenBar
   git state: the commit, whether tracked files changed, the SHA-256 of `git diff HEAD --binary --no-ext-diff --no-textconv --no-color`, and
   the number of untracked files under `crates/`, `apps/` and `research/`. Tool versions: Python,
-  FFmpeg, ffprobe, cargo and rustc (or the `--openbar-cli` path and SHA-256), OpenCV and NumPy. It
+  FFmpeg, ffprobe, cargo and rustc (or the `--openbar-cli` path and SHA-256). For CSRT it also
+  records OpenCV and NumPy. For SAM 2 it records the `--gpu-python` repository-relative path (no
+  SHA-256), the GPU model, the driver version, and the torch/torchvision/NumPy/OpenCV/`sam2`
+  package provenance that `track_gpu.py` wrote into the prediction. In `commands`, the CSRT track
+  step's interpreter is written as `python`; the SAM 2 track step's is the `--gpu-python` path. It
   has no wall-clock time.
 
 **No silent defaults.** `--plate-diameter-m` and `--exercise` are required. The analyze
@@ -179,15 +244,21 @@ the repository.
 - a seed for a different video (its `fixture_id` is not the id derived from the video hash), or a
   seed with no `fixture_id`;
 - missing `ffmpeg` or `ffprobe`;
-- an existing output without `--force`;
-- a manifest, video, seed, output directory or `--openbar-cli` binary outside the allowed
-  locations above, or a missing `--openbar-cli` binary;
+- no `--tracker`, `sam2.1-bplus-circle` without `--gpu-python`, or `--gpu-python` with `csrt`;
+- a missing `--gpu-python` interpreter, one without torch, or no visible CUDA device;
+- an existing output of the same tracker without `--force`;
+- a manifest, video, seed, output directory, `--openbar-cli` binary or `--gpu-python` interpreter
+  outside the allowed locations above, or a missing `--openbar-cli` binary;
 - the #57 manifest, or a personal manifest that is not valid `fixture-manifest-v1`;
 - a registered entry with a different exercise, media, video metadata or plate diameter. The
   error shows the registered and new values. Conditions and notes may be hand-edited;
 - the same video already registered under another id;
 - no readable git state;
-- a generated tracker prediction or analysis that does not match its committed JSON schema;
+- a generated tracker prediction or analysis that does not match its committed JSON schema, a
+  prediction whose `implementation.name` or `fixture_id` is not the requested tracker and video, or
+  (SAM 2) a geometry sidecar that is not format 0 for the same tracker and video, does not carry
+  the same implementation/provenance as the prediction, or is not sample-for-sample timestamp
+  aligned with the prediction. This includes a missing sidecar;
 - the video, seed, or registered manifest entry changing while tracking/analysis is running.
 
 Every step writes to `.<name>.tmp` files in the output directory; leftovers of a crashed run are
@@ -197,25 +268,59 @@ Before promotion, the workflow re-checks the video SHA-256, seed SHA-256 and reg
 entry hash, and validates the generated prediction and analysis against
 `tracker-prediction-v1.schema.json` and `analysis-v1.schema.json`. A mismatch fails without
 promoting the staged set. Once everything has succeeded, the old run record is removed first. The files are then renamed in
-order: prediction, analysis, and the run record last. Each rename retries 5 times, 0.2 s apart, on
-a Windows `PermissionError`. Three renames cannot be atomic as a set, so the guarantee is: **an
+order: prediction, geometry sidecar (SAM 2), analysis, and the run record last. Each rename retries 5 times, 0.2 s apart, on
+a Windows `PermissionError`. Several renames cannot be atomic as a set, so the guarantee is: **an
 output set without a run record is incomplete**; re-run with `--force`. A set with a run record is
 complete, and the record's SHA-256 values identify its files. The recorded commands use the final
 file names; neither output embeds its own path.
 
-**Determinism.** Re-running on the same inputs gives byte-identical predictions and `analysis-v1`.
-The workflow always passes `track.py --omit-runtime`. With that flag, `track.py` leaves the
-wall-clock `runtime` out of the prediction, prints it to the console only, and writes LF line
-endings on every platform. Without the flag, `analyze` would hash a prediction that changes on
-every run into `prediction_sha256`. `track.py`'s default output is unchanged, because `compare.py`,
-the benchmark and `track_gpu.py` read `runtime`. The run record has no runtime either; re-running
-into the same output directory gives a byte-identical record. The opt-in test
-`OPENBAR_VBT_E2E=1 ... -k EndToEnd` in `research/vbt-workflow/tests` checks this with the real tools.
+**Determinism.** With CSRT, re-running on the same inputs gives byte-identical predictions and
+`analysis-v1`. The workflow always passes `--omit-runtime` to the tracker. With that flag,
+`track.py` and `track_gpu.py` leave the wall-clock `runtime` out of the prediction, print it to the
+console only, and write LF line endings on every platform. `track_gpu.py` also writes the geometry
+sidecar that way. Without the flag, `analyze` would hash a prediction that changes on every run into
+`prediction_sha256`. Both scripts' default output is unchanged, because `compare.py` and the
+benchmark read `runtime`. The run record has no runtime either; re-running into the same output
+directory gives a byte-identical record.
+
+SAM 2 runs on a GPU with bfloat16 autocast, so byte identity is an observation, not a guarantee. On
+one RTX 3060 Ti, two runs gave identical samples: max centre difference 0 px, and no state or
+confidence differences. That held for the 12-frame public synthetic fixture (byte-identical
+prediction and sidecar with `--omit-runtime`) and for an 832-frame private clip (identical apart from
+`runtime`, compared in default mode). Another GPU model, driver, or torch or CUDA build may give
+different numbers. The prediction records those under `implementation.config`, and the run record
+states this limit in `configuration.tracker_determinism`. The same applies to CSRT: its byte identity
+was observed with the OpenCV and NumPy versions in the run record, on CPU.
+
+`implementation.config` is part of the hashed prediction (`prediction_sha256`). For SAM 2 it also
+holds two fields that are not tracking results and can change between otherwise identical runs:
+
+- `peak_gpu_memory_mb`, the CUDA allocator's peak, which can move with allocator or kernel choices;
+- `driver_version`, which falls back to `"unknown"` if `nvidia-smi` fails during that run.
+
+Both were identical in the runs above. If two SAM 2 predictions differ only in those fields, the
+tracking is the same; compare `samples` before calling it a determinism failure. They stay in the
+prediction even under `--omit-runtime`. They are hardware provenance that should travel with the
+derived data, and removing them would add a second, run-dependent output shape to `track_gpu.py`
+for a variation that has not been observed.
+
+The opt-in tests `OPENBAR_VBT_E2E=1 ... -k EndToEnd` in `research/vbt-workflow/tests` check both
+trackers with the real tools. The SAM 2 test also checks that CSRT and SAM 2 outputs coexist in one
+folder. It finds the GPU venv through `OPENBAR_VBT_GPU_PYTHON`, or `research/gpu-tracking/.venv` by
+default, and skips when the venv, torch/SAM 2 environment, a CUDA device or the SHA-verified
+checkpoint is missing, as it is in CI.
 
 **Do not commit** anything under `validation/private/`. Report aggregates only.
 
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
 
+- **One analysis per lift.** Import exactly one `analysis-v1` per lift into the recommender (3a). An
+  output folder can hold `<id>.opencv-csrt.analysis-v1.json`, `<id>.sam2.1-bplus-circle.analysis-v1.json`
+  and a legacy workflow-v2 `<id>.analysis-v1.json` for the same video. Import the file from the
+  tracker that the import policy names (`analysis.provenance.tracker` and the run record's
+  `configuration.tracker` say which tracker that is). Never import two trackers' analyses of one lift
+  as separate trials, and don't import a legacy unnamed file when a tracker-named one exists.
+  Comparing trackers belongs in the 3b report or step 4, not in the training history.
 - **Mapping to vertical-up.** `analysis-v1` calibrated and kinematic coordinates use
   `calibration.coordinate_convention` = `reference_centre_x_right_y_up`, so `y_m` and `vy_mps` are
   already upward-positive. Use them as-is: displacement = y_m − y_m at the first sample, velocity =

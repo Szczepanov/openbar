@@ -14,6 +14,10 @@ Implements candidates 3–10:
 Decodes the seed-to-end frame window into temporary validation/private/work/gpu-tracking/<fixture>-<candidate>/
 JPEGs and deletes them in a finally block. A mask model can write its centroid and circle candidates from one
 run (--sibling-output).
+
+Opt-in flags for reproducible orchestration (research/vbt-workflow/analyze_lift.py): --omit-runtime leaves the
+wall-clock `runtime` out of the prediction and writes LF line endings; --geometry-output names the circle
+geometry sidecar explicitly. Without them the output is exactly as before.
 """
 from __future__ import annotations
 
@@ -959,22 +963,59 @@ def track(
     return documents
 
 
-def write_documents(output: Path, prediction: dict[str, Any], sidecar_doc: dict[str, Any] | None) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(prediction, indent=2) + "\n", encoding="utf-8")
-    if sidecar_doc is not None:
-        stem = output.name
-        if stem.endswith(".prediction-v1.json"):
-            sidecar_name = stem.removesuffix(".prediction-v1.json") + ".geometry.json"
-        elif stem.endswith(".json"):
-            sidecar_name = stem.removesuffix(".json") + ".geometry.json"
-        else:
-            sidecar_name = stem + ".geometry.json"
-        (output.parent / sidecar_name).write_text(json.dumps(sidecar_doc, indent=2) + "\n", encoding="utf-8")
+def write_text(path: Path, text: str, lf_only: bool) -> None:
+    if lf_only:
+        # Reproducible mode: LF on every platform so identical runs give identical bytes.
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+    else:
+        path.write_text(text, encoding="utf-8")
 
+
+def default_sidecar_path(output: Path) -> Path:
+    stem = output.name
+    if stem.endswith(".prediction-v1.json"):
+        sidecar_name = stem.removesuffix(".prediction-v1.json") + ".geometry.json"
+    elif stem.endswith(".json"):
+        sidecar_name = stem.removesuffix(".json") + ".geometry.json"
+    else:
+        sidecar_name = stem + ".geometry.json"
+    return output.parent / sidecar_name
+
+
+def summary_line(prediction: dict[str, Any], output: Path, runtime_s: float | None) -> str:
     tracked = sum(s["state"] == "tracked" for s in prediction["samples"])
-    print(f"{prediction['implementation']['name']}: {tracked}/{len(prediction['samples'])} tracked, "
-          f"{prediction['runtime']['processing_wall_s']:.2f} s -> {output}")
+    runtime = "unknown" if runtime_s is None else f"{runtime_s:.2f}"
+    return (f"{prediction['implementation']['name']}: {tracked}/{len(prediction['samples'])} tracked, "
+            f"{runtime} s -> {output}")
+
+
+def write_documents(
+    output: Path,
+    prediction: dict[str, Any],
+    sidecar_doc: dict[str, Any] | None,
+    *,
+    omit_runtime: bool = False,
+    geometry_output: Path | None = None,
+) -> None:
+    """Write a prediction and its optional geometry sidecar.
+
+    Defaults reproduce the historical output exactly. `omit_runtime` drops the wall-clock `runtime`
+    (printed only) and writes LF line endings; `geometry_output` replaces the sidecar's derived name.
+    """
+    runtime_s = (prediction.get("runtime") or {}).get("processing_wall_s")
+    if omit_runtime:
+        prediction = {key: value for key, value in prediction.items() if key != "runtime"}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    write_text(output, json.dumps(prediction, indent=2) + "\n", omit_runtime)
+    if sidecar_doc is not None:
+        sidecar_path = default_sidecar_path(output) if geometry_output is None else geometry_output
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        write_text(sidecar_path, json.dumps(sidecar_doc, indent=2) + "\n", omit_runtime)
+
+    print(summary_line(prediction, output, runtime_s))
+    if omit_runtime:
+        print("runtime omitted from prediction (--omit-runtime)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -990,8 +1031,21 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="mask candidates only: also write the other centre method (centroid <-> circle) from the same run",
     )
+    parser.add_argument(
+        "--geometry-output",
+        type=Path,
+        help="circle candidates only: write --output's geometry sidecar here instead of next to --output",
+    )
     parser.add_argument("--allow-held-out", action="store_true")
+    parser.add_argument(
+        "--omit-runtime",
+        action="store_true",
+        help="leave the wall-clock `runtime` out of the predictions (printed only) and write LF line endings, "
+             "so the files do not differ by run time or platform; default output is unchanged",
+    )
     args = parser.parse_args(argv)
+    if args.geometry_output is not None and not args.candidate.endswith("-circle"):
+        parser.error("--geometry-output needs a -circle --candidate (only circle fits write a geometry sidecar)")
 
     try:
         names = [args.candidate]
@@ -1004,8 +1058,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-    for output, (prediction, sidecar_doc) in zip(outputs, documents):
-        write_documents(output, prediction, sidecar_doc)
+    geometry_outputs = [args.geometry_output, *([None] * (len(outputs) - 1))]
+    for output, geometry_output, (prediction, sidecar_doc) in zip(outputs, geometry_outputs, documents):
+        write_documents(output, prediction, sidecar_doc, omit_runtime=args.omit_runtime,
+                        geometry_output=geometry_output)
     return 0
 
 
