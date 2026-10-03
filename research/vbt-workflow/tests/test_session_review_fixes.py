@@ -81,6 +81,12 @@ class RegistrationConflictTests(TwoClipCase):
         code, _, err = self.run_session(self.rows("snatch", "clean"))
         self.untouched(code, err, "registered as 'back_squat'", before)
 
+    def test_new_video_changed_after_ingest_fails_before_any_session_write(self) -> None:
+        media = ROOT / self.clips[0]["media_path"]
+        media.write_bytes(b"video one changed after ingest")
+        code, _, err = self.run_session(self.rows("snatch", "clean"))
+        self.untouched(code, err, "changed since it was ingested", None)
+
 
 class OpenbarCliTests(TwoClipCase):
     """M2: --openbar-cli is resolved before any write and recorded repository-relative."""
@@ -153,6 +159,17 @@ class CompleteSetTests(TwoClipCase):
         self.assertLessEqual({analyze_lift.display_path(path) for path in dropped}, set(removed))
         self.assertTrue(all(self.clips[1]["fixture_id"] in path for path in removed), removed)
         self.assertTrue(any("report-frames" in path for path in removed), "its tracking-check frames too")
+
+    def test_force_rerun_clears_old_crops_for_a_retained_clip_without_changing_the_record(self) -> None:
+        self.assertEqual(self.run_session(self.rows("snatch", "clean"))[0], 0)
+        record = (self.session_dir / "session-record.json").read_bytes()
+        frame = self.session_dir / "report-frames" / self.clips[0]["fixture_id"] / "frame_000003.png"
+        frame.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_bytes(b"obsolete crop frame")
+        code, _, err = self.run_session(self.rows("snatch", "clean"), "--force")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(frame.exists())
+        self.assertEqual((self.session_dir / "session-record.json").read_bytes(), record)
 
     def test_stale_outputs_require_force(self) -> None:
         self.assertEqual(self.run_session(self.rows("snatch", "clean"))[0], 0)
