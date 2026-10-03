@@ -36,6 +36,25 @@ It does **not** contain:
 Trackers should consume the seed as immutable input and create their own internal state.
 Refinement must never rewrite the original selection.
 
+### Confirmed suggestions (#95)
+
+The one-page VBT session (`research/vbt-workflow/vbt_session.py`) may pre-fill the plate circle with
+a suggestion (`plate-hough-edge-v1`). A suggestion is only a starting point on the page: it is used
+only after the user confirms that clip, either unchanged or after dragging the centre or rim. A
+confirmed circle is therefore still the user's selection under this contract, and the seed is built
+by the same `annotations.build_seed` code path as `annotations.py seed`. The schema is unchanged. The
+notes record the provenance after the usual CSV hash, annotator and tool sentence:
+
+```text
+VBT session <session> page <page id> (vbt_session.py, #95): plate centre accepted|adjusted|manual,
+plate radius accepted|adjusted|manual; suggestion <method>:<12 hex> (method <method>, confidence <c>).
+```
+
+`accepted` means the suggestion was confirmed unchanged, `adjusted` that the user moved it, and
+`manual` that there was no suggestion and the user clicked the item. In the last case the notes name
+the failed method and its reason instead of a suggestion id. A seed is never created from a
+suggestion without that per-clip confirmation; automatic seeding stays out of scope.
+
 ## Creating a seed from one clicked frame
 
 Build a single-frame labelling package, open its `index.html`, then convert the downloaded CSV:
@@ -226,4 +245,5 @@ arguments. It should report typed validation failures rather than silently adjus
 ## Scope
 
 This contract deliberately does not add automatic target detection, tracker logic, full
-camera calibration, or a plate-selection UI.
+camera calibration, or a plate-selection UI. The #95 research session page only suggests a circle
+that the user must confirm per clip (see "Confirmed suggestions (#95)").
