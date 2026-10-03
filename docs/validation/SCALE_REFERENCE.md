@@ -133,10 +133,12 @@ For every row the report verifies and records:
 - SHA-256 of the exact click CSV bytes.
 
 The actual video hash must equal the fixture manifest hash. The package metadata/config and click
-CSV must name the same fixture and video hash. The analysis must be `analysis-v1`
-(`schema_version = 1`) using `plate_diameter` calibration method version 1, and must contain
-matching `identity.fixture_id` and `identity.source_sha256`. A mismatch or unsupported version
-is an error, not a warning.
+CSV must name the same fixture and video hash. The analysis is structurally validated against
+`validation/schema/analysis-v1.schema.json`, must use `schema_version = 1` and
+`plate_diameter` calibration method version 1, and must contain matching
+`identity.fixture_id` and `identity.source_sha256`. The Rust `Analysis` model remains
+authoritative for cross-field invariants; this evidence tool does not duplicate them. A mismatch
+or unsupported version is an error, not a warning.
 
 Absolute paths and wall-clock times are intentionally absent from output.
 
