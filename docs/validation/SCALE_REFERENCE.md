@@ -63,8 +63,10 @@ python validation/tools/scale_reference.py package \
 ```
 
 Open `target/scale-reference-package/reference.html`, click endpoint A and endpoint B, then
-download the CSV. Coordinates use the OpenBar pixel-centre convention. Report validation uses the
-ADR-0007 v1 point window `[0,width) x [0,height)` and fails closed outside it.
+download the CSV. Coordinates use the OpenBar pixel-centre convention. The page emits only the
+ADR-0007 producer intersection `[0,width-0.5) x [0,height-0.5)`; report validation retains the
+broader v1 point window `[0,width) x [0,height)` and fails closed outside it. Canvas clicks are
+mapped through the CSS content box, excluding borders from the image-coordinate transform.
 
 The package also contains the unchanged delegated `index.html`, frame PNG and annotation
 `metadata.json`, plus `reference-config.json` and `reference.html`.
@@ -99,23 +101,29 @@ reference_scale_uncertainty_m_per_px =
 The `±2 px` length bound is conservative: by the triangle inequality, moving each endpoint by at
 most 1 px can change the endpoint-to-endpoint distance by at most 2 px.
 
-The scale uncertainty is a first-order propagation of that bounded length uncertainty. It is not a
-confidence interval and makes no claim about a click-error probability distribution.
-
-The comparison is:
+Because `scale = known_length / pixel_length` is nonlinear, the tool does **not** use a
+first-order symmetric approximation. It maps the full bounded distance interval through the
+reciprocal exactly:
 
 ```text
-reference_to_plate_ratio =
-    reference_scale_m_per_px / analysis.calibration.scale.metres_per_pixel
+distance_lower_px = d_px - 2
+distance_upper_px = d_px + 2
 
-ratio_uncertainty =
-    reference_scale_uncertainty_m_per_px /
-    analysis.calibration.scale.metres_per_pixel
+reference_scale_lower_m_per_px = known_length_m / distance_upper_px
+reference_scale_m_per_px       = known_length_m / d_px
+reference_scale_upper_m_per_px = known_length_m / distance_lower_px
 ```
 
+A clicked segment of 2 px or less is rejected because the bounded model then permits zero true
+separation and therefore has no finite upper scale bound.
+
+The comparison divides the nominal, lower and upper reference scales by the unchanged
+`analysis.calibration.scale.metres_per_pixel`. The report presents asymmetric
+`value -minus/+plus` bounds, and `consistent_with_1` is true only when 1 lies inside the exact
+bounded ratio interval.
+
 The plate scale is read unchanged from `analysis-v1`; this tool does not invent a plate-scale
-uncertainty. The report always presents the ratio as `value ± uncertainty`, never as an exact
-ratio. `consistent_with_1` is true only when 1 lies within that symmetric uncertainty interval.
+uncertainty or treat the bounded click model as a statistical confidence interval.
 
 ## Provenance and fail-closed binding
 
@@ -126,8 +134,10 @@ For every row the report verifies and records:
 - SHA-256 of the exact click CSV bytes.
 
 The actual video hash must equal the fixture manifest hash. The package metadata/config and click
-CSV must name the same fixture and video hash. The analysis must contain matching
-`identity.fixture_id` and `identity.source_sha256`. A mismatch is an error, not a warning.
+CSV must name the same fixture and video hash. The analysis must be `analysis-v1`
+(`schema_version = 1`) using `plate_diameter` calibration method version 1, and must contain
+matching `identity.fixture_id` and `identity.source_sha256`. A mismatch or unsupported version
+is an error, not a warning.
 
 Absolute paths and wall-clock times are intentionally absent from output.
 
