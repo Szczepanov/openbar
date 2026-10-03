@@ -361,6 +361,27 @@ class OutputSafetyTests(unittest.TestCase):
     "SKIPPED: ffmpeg/ffprobe not on PATH",
 )
 class PackageBuildTests(unittest.TestCase):
+    def test_single_frame_package_matches_grid_frame_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            grid, single = Path(temp) / "grid", Path(temp) / "single"
+            common = ["--manifest", str(MANIFEST_PATH), "--fixture", FIXTURE_ID, "--annotator-id", "seed"]
+            label_package.build(label_package.parser().parse_args(common + ["--step-s", "0.25", "--include-frame", "1", "--output-dir", str(grid)]))
+            for flags in [["--frame-index", "3"], ["--at-s", "0.24"]]:
+                with self.subTest(flags=flags):
+                    label_package.build(label_package.parser().parse_args(common + flags + ["--output-dir", str(single)]))
+                    self.assertEqual((grid / "frames/frame_000003.png").read_bytes(),
+                                     (single / "frames/frame_000003.png").read_bytes())
+                    page = (single / "index.html").read_text(encoding="utf-8")
+                    config = json.loads(re.search(r"const CONFIG = (\{.*?\});\n", page).group(1))
+                    self.assertEqual(config["frames"], [{"file": "frames/frame_000003.png", "frame_index": 3, "timestamp_s": 0.25}])
+                    sidecar = json.loads((single / "metadata.json").read_text(encoding="utf-8"))
+                    self.assertEqual(sidecar["provenance"]["notes"], "Single frame 3 at 0.250000 s for a manual target seed.")
+                    sidecar["provenance"]["annotated_at"] = "2026-10-01T12:00:00Z"
+                    csv_path = Path(temp) / "labels.csv"
+                    csv_path.write_text("timestamp_s,requested_timestamp_s,frame_index,annotation_state,visibility,quality,x_px,y_px,radius_px,diameter_px,left_px,top_px,right_px,bottom_px,notes\n"
+                                        "0.250000,,3,labelled,visible,high,100,190,24,,,,,,\n", encoding="utf-8")
+                    annotations.import_csv(sidecar, csv_path, json.loads(MANIFEST_PATH.read_text(encoding="utf-8")))
+
     def test_builds_public_fixture_package_with_authoritative_timestamps(self):
         with tempfile.TemporaryDirectory() as temp:
             output_dir = Path(temp) / "package"
@@ -383,6 +404,28 @@ class PackageBuildTests(unittest.TestCase):
             self.assertEqual(sidecar["coordinate_system"]["width_px"], 320)
             self.assertEqual(sidecar["source_video_sha256"],
                              json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]["media"]["sha256"])
+
+
+class SingleFrameSelectionTests(unittest.TestCase):
+    COMMON = ["--manifest", str(MANIFEST_PATH), "--fixture", FIXTURE_ID]
+
+    def test_parser_requires_exactly_one_selection_mode(self):
+        for flags in [[], ["--frame-index", "0", "--step-s", "0.25"], ["--frame-index", "0", "--at-s", "0"]]:
+            with self.subTest(flags=flags), self.assertRaises(SystemExit):
+                label_package.parser().parse_args(self.COMMON + flags)
+
+    def test_single_frame_rejects_grid_options_before_media_io(self):
+        for mode in [["--frame-index", "0"], ["--at-s", "0"]]:
+            for flag, value in [("--start-s", "0"), ("--end-s", "0"), ("--include-frame", "0")]:
+                with self.subTest(mode=mode, flag=flag), self.assertRaisesRegex(label_package.PackageError, "grid-only"):
+                    label_package.build(label_package.parser().parse_args(self.COMMON + mode + [flag, value]))
+
+    def test_single_frame_selects_index_or_nearest_timestamp(self):
+        ts = [0.0, 0.1, 0.2]
+        self.assertEqual(label_package.select_frames(ts, ts[1], ts[1], 1.0, [1]), [1])
+        self.assertEqual(label_package.select_frames(ts, 0.19, 0.19, 1.0, []), [2])
+        with self.assertRaises(label_package.PackageError):
+            label_package.select_frames(ts, 0, 0, 1.0, [3])
 
 
 if __name__ == "__main__":

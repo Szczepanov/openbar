@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import io
 import hashlib
 import importlib.util
 import json
@@ -207,6 +209,195 @@ class AnnotationValidationTests(unittest.TestCase):
             ])
             self.assertEqual(rc, 0)
             self.assertEqual(load(output), self.example)
+
+
+class SeedTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("label_package", ROOT / "validation/tools/label_package.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.manifest = load(MANIFEST_PATH)
+        self.metadata = module.metadata(self.manifest["fixtures"][0], (320, 240), "seed", "single frame")
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.csv = Path(self.temp.name) / "seed.csv"
+        self.header = "timestamp_s,requested_timestamp_s,frame_index,annotation_state,visibility,quality,x_px,y_px,radius_px,diameter_px,left_px,top_px,right_px,bottom_px,notes"
+        self.row = "0.000000,,0,labelled,visible,high,100.00,190.00,24.00,,,,,,"
+        self.write_rows(self.row)
+
+    def write_rows(self, *rows):
+        self.csv.write_text(self.header + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
+
+    def build(self, confidence=None):
+        return annotations.build_seed(self.metadata, self.csv, self.manifest, confidence)
+
+    def cli(self, output, *extra):
+        metadata = Path(self.temp.name) / "metadata.json"
+        metadata.write_text(json.dumps(self.metadata), encoding="utf-8")
+        return annotations.main(["seed", "--manifest", str(MANIFEST_PATH), "--metadata", str(metadata),
+                                 "--csv", str(self.csv), "--output", str(output), *extra])
+
+    def test_seed_reproduces_committed_synthetic_seed_except_notes(self):
+        expected = load(ROOT / "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json")
+        actual = self.build(1.0)
+        del actual["seed"]["notes"]
+        del expected["seed"]["notes"]
+        self.assertEqual(actual, expected)
+        self.assertEqual(self.metadata["provenance"]["annotated_at"], "FILL-AT-IMPORT")
+
+    def test_seed_is_byte_identical_for_same_csv(self):
+        first, second = Path(self.temp.name) / "a.json", Path(self.temp.name) / "b.json"
+        self.assertEqual(self.cli(first), 0)
+        self.assertEqual(self.cli(second), 0)
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        self.assertTrue(first.read_bytes().endswith(b"\n"))
+        self.assertNotIn(b"\r", first.read_bytes())
+        self.assertEqual(list(load(first)), ["schema_version", "fixture_id", "seed"])
+        self.assertNotIn("selection_confidence", load(first)["seed"])
+
+    def test_seed_notes_record_csv_sha256_and_annotator(self):
+        self.assertEqual(self.build()["seed"]["notes"],
+                         f"Manual seed from label CSV sha256={hashlib.sha256(self.csv.read_bytes()).hexdigest()}; "
+                         "annotator_id=seed; tool=annotations.py seed.")
+
+    def test_seed_picks_first_labelled_row_with_centre_and_radius(self):
+        self.write_rows("0,,0,not_annotated,visible,not_assessed,,,,,,,,,",
+                        "0.1,,1,labelled,visible,high,100,190,,,,,,,",
+                        self.row.replace("0.000000,,0", "0.2,,2"),
+                        self.row.replace("0.000000,,0", "0.3,,3"))
+        self.assertEqual(self.build()["seed"]["timestamp_s"], 0.2)
+        self.assertEqual(self.build()["seed"]["frame_index"], 2)
+
+    def test_seed_rejects_no_candidate(self):
+        self.write_rows("0,,0,labelled,visible,high,100,190,,,,,,,")
+        with self.assertRaisesRegex(annotations.AnnotationError, "no labelled sample with centre and radius"):
+            self.build()
+
+    def test_seed_rejects_invalid_radius(self):
+        for value, message in [("0", "must be > 0"), ("-1", "must be > 0"), ("nan", "must be finite"), ("inf", "must be finite")]:
+            with self.subTest(value=value):
+                self.write_rows(self.row.replace("24.00", value))
+                with self.assertRaisesRegex(annotations.AnnotationError, message):
+                    self.build()
+
+    def test_seed_rejects_centres_outside_display(self):
+        for value, message in [("320,190", "inside display dimensions"), ("100,240", "inside display dimensions"),
+                               ("-0.1,190", "must be >= 0")]:
+            with self.subTest(value=value):
+                self.write_rows(self.row.replace("100.00,190.00", value))
+                with self.assertRaisesRegex(annotations.AnnotationError, message):
+                    self.build()
+
+    def test_seed_rejects_circle_crossing_frame_edges(self):
+        for value in ["10,190", "100,230", "100,10", "310,190"]:
+            with self.subTest(value=value):
+                self.write_rows(self.row.replace("100.00,190.00", value))
+                with self.assertRaisesRegex(annotations.AnnotationError, "circle must fit within display dimensions"):
+                    self.build()
+
+    def test_seed_accepts_circle_touching_frame_edge(self):
+        self.write_rows(self.row.replace("100.00,190.00", "24,216"))
+        self.assertEqual(self.build()["seed"]["target"]["center"], {"x_px": 24.0, "y_px": 216.0})
+
+    def test_seed_rejects_unknown_fixture(self):
+        self.metadata["fixture_id"] = "missing"
+        with self.assertRaisesRegex(annotations.AnnotationError, "exactly one manifest fixture"):
+            self.build()
+
+    def test_seed_rejects_mismatched_or_missing_video_hash(self):
+        for value in ["0" * 64, None]:
+            with self.subTest(value=value):
+                self.metadata["source_video_sha256"] = value
+                with self.assertRaisesRegex(annotations.AnnotationError, "source_video_sha256"):
+                    self.build()
+
+    def test_seed_rejects_wrong_coordinate_constants_and_dimensions(self):
+        original = copy.deepcopy(self.metadata)
+        for key, value in [("space", "encoded_pixels"), ("origin", "bottom_left"), ("x_direction", "left"),
+                           ("y_direction", "up"), ("rotation_applied", False), ("width_px", 240), ("height_px", 320)]:
+            with self.subTest(key=key):
+                self.metadata = copy.deepcopy(original)
+                self.metadata["coordinate_system"][key] = value
+                with self.assertRaisesRegex(annotations.AnnotationError, "coordinate"):
+                    self.build()
+
+    def test_seed_uses_manifest_rotation_and_display_dimensions(self):
+        for rotation in [90, 180, 270]:
+            with self.subTest(rotation=rotation):
+                self.manifest["fixtures"][0]["video"]["rotation_deg"] = rotation
+                width, height = (240, 320) if rotation in {90, 270} else (320, 240)
+                self.metadata["coordinate_system"].update(width_px=width, height_px=height)
+                self.assertEqual(self.build()["seed"]["source_rotation_deg"], rotation)
+
+    def test_seed_rejects_invalid_selection_confidence(self):
+        for value in [1.5, -0.1, float("nan"), float("inf")]:
+            with self.subTest(value=value), self.assertRaisesRegex(annotations.AnnotationError, "selection_confidence"):
+                self.build(value)
+
+    def test_seed_requires_frame_index(self):
+        self.write_rows(self.row.replace(",,0,", ",,,"))
+        with self.assertRaisesRegex(annotations.AnnotationError, "frame_index is required"):
+            self.build()
+
+    def test_seed_validates_all_rows(self):
+        for row, message in [(self.row, "strictly increasing"),
+                             (self.row.replace("0.000000,,0", "0.1,,1").replace("high", "not_assessed"), "quality"),
+                             ("0.1,,1,not_annotated,visible,not_assessed,100,190,24,,,,,,", "must not contain centre")]:
+            with self.subTest(row=row):
+                self.write_rows(self.row, row)
+                with self.assertRaisesRegex(annotations.AnnotationError, message):
+                    self.build()
+
+    def test_seed_refuses_overwrite_without_force(self):
+        output = Path(self.temp.name) / "seed.json"
+        output.write_bytes(b"existing seed")
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(self.cli(output), 2)
+        self.assertIn("already exists", stderr.getvalue())
+        self.assertEqual(output.read_bytes(), b"existing seed")
+        self.assertEqual(self.cli(output, "--force"), 0)
+
+    def test_seed_rejects_malformed_csv_header(self):
+        self.csv.write_text("timestamp_s,x_px\n0,100\n", encoding="utf-8")
+        with self.assertRaisesRegex(annotations.AnnotationError, "CSV header"):
+            self.build()
+
+    def test_seed_rejects_unterminated_csv_quote(self):
+        self.write_rows(self.row + '"unterminated',
+                        "0.1,,1,not_annotated,visible,not_assessed,100,190,24,,,,,,")
+        with self.assertRaisesRegex(annotations.AnnotationError, "malformed CSV"):
+            self.build()
+
+    def test_seed_accepts_quoted_multiline_notes(self):
+        self.write_rows(self.row + '"first line\nsecond line"')
+        self.assertEqual(self.build()["seed"]["frame_index"], 0)
+
+    def test_seed_frame_index_fits_rust_u64(self):
+        self.write_rows(self.row.replace(",,0,", f",,{2**64 - 1},"))
+        self.assertEqual(self.build()["seed"]["frame_index"], 2**64 - 1)
+        self.write_rows(self.row.replace(",,0,", f",,{2**64},"))
+        with self.assertRaisesRegex(annotations.AnnotationError, "frame_index must fit u64"):
+            self.build()
+
+    def test_seed_rejects_u64_overflow_in_any_row(self):
+        overflow = "0,,0,not_annotated,visible,not_assessed,,,,,,,,,".replace(
+            "0,,0", f"0.1,,{2**64}"
+        )
+        self.write_rows(self.row, overflow)
+        with self.assertRaisesRegex(annotations.AnnotationError, r"samples\[1\]\.frame_index must fit u64"):
+            self.build()
+
+    def test_seed_rejects_non_utf8_csv(self):
+        self.csv.write_bytes(b"\xff")
+        with self.assertRaisesRegex(annotations.AnnotationError, "UTF-8"):
+            self.build()
+
+    def test_seed_output_passes_schema_check(self):
+        spec = importlib.util.spec_from_file_location("schema_check", ROOT / "validation/tools/schema_check.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        schema = module.load_schema(ROOT / "validation/schema/manual-target-seed-v1.schema.json")
+        self.assertEqual(module.validate_document(self.build(1.0), schema), [])
 
 
 if __name__ == "__main__":

@@ -8,8 +8,9 @@ Frames are decoded the same way as the OpenBar frame source (ADR-0006): FFmpeg r
 process with display rotation applied, passthrough timing and the first video stream. Each frame is
 stamped with ``(pts - start_pts) * time_base`` from ``ffprobe``, and every extracted frame's PTS is
 checked against the probe so a decoder drop or duplicate cannot silently shift labels onto the wrong
-timestamp. Frames are chosen on a uniform time grid, without reference to tracker output, so the
-labeller is not anchored on what is being evaluated.
+timestamp. Grid mode chooses frames on a uniform time grid without reference to tracker output,
+while single-frame seed mode selects one decoded frame by index or nearest media timestamp. Both
+modes use the same probe, decode, extraction, and PTS-alignment path.
 
 Standard library only. FFmpeg/ffprobe must be on PATH.
 """
@@ -322,6 +323,10 @@ def write_text(path: Path, text: str) -> None:
 
 
 def build(args: argparse.Namespace) -> Path:
+    frame_index, at_s = getattr(args, "frame_index", None), getattr(args, "at_s", None)
+    single = frame_index is not None or at_s is not None
+    if single and (args.start_s is not None or args.end_s is not None or args.include_frame):
+        raise PackageError("single-frame selection rejects grid-only --start-s, --end-s and --include-frame")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     fixture = next((item for item in manifest["fixtures"] if item["id"] == args.fixture), None)
     if fixture is None:
@@ -336,12 +341,24 @@ def build(args: argparse.Namespace) -> Path:
     probed = probe(media)
     require_fixture_probe_match(fixture, probed)
     timestamps = probed["timestamps_s"]
-    end_s = timestamps[-1] if args.end_s is None else args.end_s
-    indices = select_frames(timestamps, args.start_s, end_s, args.step_s, args.include_frame)
+    if single:
+        if frame_index is not None:
+            if not 0 <= frame_index < len(timestamps):
+                raise PackageError(f"--frame-index must be within 0..{len(timestamps) - 1}")
+            target_s = timestamps[frame_index]
+            indices = select_frames(timestamps, target_s, target_s, 1.0, [frame_index])
+        else:
+            indices = select_frames(timestamps, at_s, at_s, 1.0, [])
+        index = indices[0]
+        notes = f"Single frame {index} at {timestamps[index]:.6f} s for a manual target seed."
+    else:
+        start_s = 0.0 if args.start_s is None else args.start_s
+        end_s = timestamps[-1] if args.end_s is None else args.end_s
+        indices = select_frames(timestamps, start_s, end_s, args.step_s, args.include_frame)
+        notes = f"Uniform {args.step_s} s grid over {start_s}-{end_s:.3f} s; labeller blind to tracker output."
     size = display_size(probed["width_px"], probed["height_px"], probed["rotation_deg"])
     frames = extract(media, indices, [probed["pts"][index] for index in indices], output_dir / "frames", fixture)
 
-    notes = f"Uniform {args.step_s} s grid over {args.start_s}-{end_s:.3f} s; labeller blind to tracker output."
     write_text(output_dir / "metadata.json",
                json.dumps(metadata(fixture, size, args.annotator_id, notes), indent=2) + "\n")
     config = page_config(fixture["id"], args.annotator_id, size, [
@@ -356,8 +373,11 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     result.add_argument("--manifest", type=Path, required=True)
     result.add_argument("--fixture", required=True)
-    result.add_argument("--step-s", type=float, required=True, help="grid spacing in seconds")
-    result.add_argument("--start-s", type=float, default=0.0)
+    mode = result.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--step-s", type=float, help="grid spacing in seconds")
+    mode.add_argument("--frame-index", type=int, help="one decoded frame by index")
+    mode.add_argument("--at-s", type=float, help="one decoded frame nearest this media timestamp")
+    result.add_argument("--start-s", type=float)
     result.add_argument("--end-s", type=float, help="defaults to the last decoded frame")
     result.add_argument("--include-frame", type=int, action="append", default=[],
                         help="also include this decoded frame index (e.g. the manual seed frame)")
@@ -373,7 +393,13 @@ def main(argv: list[str] | None = None) -> int:
     except (PackageError, OSError, KeyError, ValueError) as error:
         print(f"label-package: {error}", file=sys.stderr)
         return 1
-    print(f"open {output_dir / 'index.html'} in a browser; import the downloaded CSV with metadata.json")
+    if args.frame_index is not None or args.at_s is not None:
+        print(
+            f"open {output_dir / 'index.html'} in a browser; download the CSV, then create the seed "
+            f"with annotations.py seed --metadata {output_dir / 'metadata.json'} --csv <downloaded.csv>"
+        )
+    else:
+        print(f"open {output_dir / 'index.html'} in a browser; import the downloaded CSV with metadata.json")
     return 0
 
 

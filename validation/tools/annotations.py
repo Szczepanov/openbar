@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import io
 import json
 import math
 import re
@@ -103,7 +105,7 @@ def _target_size(value: Any, width: int, height: int, path: str) -> None:
         _require(left < right <= width and top < bottom <= height, f"{path} bounds must be ordered and within display dimensions")
 
 
-def validate_annotation(annotation: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+def _validate_metadata(annotation: dict[str, Any], manifest: dict[str, Any], *, require_date: bool = True) -> tuple[str, int, int, float]:
     annotation = _keys(
         annotation, "annotation",
         {"schema_version", "fixture_id", "coordinate_system", "timebase", "provenance", "samples"},
@@ -145,15 +147,19 @@ def validate_annotation(annotation: dict[str, Any], manifest: dict[str, Any]) ->
     _require(provenance["method"] == "manual_plate_centre", "provenance.method must be 'manual_plate_centre'")
     tool = _keys(provenance["tool"], "provenance.tool", {"name", "version"}, {"name", "version"})
     _require(all(isinstance(tool[k], str) and tool[k] for k in ("name", "version")), "provenance.tool name/version must be non-empty")
-    try:
-        annotated_at = datetime.fromisoformat(str(provenance["annotated_at"]).replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise AnnotationError("provenance.annotated_at must be an ISO-8601 date-time") from exc
-    _require(annotated_at.tzinfo is not None, "provenance.annotated_at must include a timezone")
+    if require_date:
+        try:
+            annotated_at = datetime.fromisoformat(str(provenance["annotated_at"]).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise AnnotationError("provenance.annotated_at must be an ISO-8601 date-time") from exc
+        _require(annotated_at.tzinfo is not None, "provenance.annotated_at must include a timezone")
     if "notes" in provenance:
         _require(isinstance(provenance["notes"], str), "provenance.notes must be a string")
 
-    samples = annotation["samples"]
+    return fixture_id, width, height, tolerance
+
+
+def _validate_samples(samples: list[dict[str, Any]], width: int, height: int, tolerance: float) -> dict[str, int]:
     _require(isinstance(samples, list) and samples, "samples must be a non-empty array")
     previous = -math.inf
     counts = {state: 0 for state in STATES}
@@ -200,7 +206,13 @@ def validate_annotation(annotation: dict[str, Any], manifest: dict[str, Any]) ->
         if has_size:
             _target_size(sample["target_size_px"], width, height, f"{path}.target_size_px")
 
-    return {"schema_version": 1, "fixture_id": fixture_id, "sample_count": len(samples), **counts}
+    return {"sample_count": len(samples), **counts}
+
+
+def validate_annotation(annotation: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    fixture_id, width, height, tolerance = _validate_metadata(annotation, manifest)
+    counts = _validate_samples(annotation["samples"], width, height, tolerance)
+    return {"schema_version": 1, "fixture_id": fixture_id, **counts}
 
 
 def _optional_float(row: dict[str, str], key: str, row_number: int) -> float | None:
@@ -225,12 +237,25 @@ def _optional_int(row: dict[str, str], key: str, row_number: int) -> int | None:
         raise AnnotationError(f"CSV row {row_number} {key} must be an integer") from exc
 
 
-def import_csv(metadata: dict[str, Any], csv_path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
-    annotation = deepcopy(metadata)
-    _require("samples" not in annotation, "import metadata must not contain samples")
+def _read_csv_bytes(csv_path: Path) -> bytes:
     try:
-        with csv_path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
+        return csv_path.read_bytes()
+    except OSError as exc:
+        raise AnnotationError(f"cannot read CSV {csv_path}: {exc}") from exc
+
+
+def _read_csv_samples(
+    csv_path: Path, *, strict: bool = False, content: bytes | None = None
+) -> list[dict[str, Any]]:
+    if content is None:
+        content = _read_csv_bytes(csv_path)
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AnnotationError(f"CSV {csv_path} must be UTF-8: {exc}") from exc
+    try:
+        with io.StringIO(text, newline="") as handle:
+            reader = csv.DictReader(handle, strict=strict)
             _require(reader.fieldnames is not None, "CSV must have a header")
             _require(len(reader.fieldnames) == len(CSV_COLUMNS) and set(reader.fieldnames) == CSV_COLUMNS, "CSV header must match the documented annotation import columns exactly")
             samples: list[dict[str, Any]] = []
@@ -264,11 +289,71 @@ def import_csv(metadata: dict[str, Any], csv_path: Path, manifest: dict[str, Any
                 if notes:
                     sample["notes"] = notes
                 samples.append(sample)
-    except OSError as exc:
-        raise AnnotationError(f"cannot read CSV {csv_path}: {exc}") from exc
-    annotation["samples"] = samples
+    except csv.Error as exc:
+        raise AnnotationError(f"malformed CSV {csv_path}: {exc}") from exc
+    return samples
+
+
+def import_csv(metadata: dict[str, Any], csv_path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    annotation = deepcopy(metadata)
+    _require("samples" not in annotation, "import metadata must not contain samples")
+    annotation["samples"] = _read_csv_samples(csv_path)
     validate_annotation(annotation, manifest)
     return annotation
+
+
+def build_seed(metadata: dict[str, Any], csv_path: Path, manifest: dict[str, Any],
+               selection_confidence: float | None = None) -> dict[str, Any]:
+    """Produce a manual selection from validated label rows without requiring an import date."""
+    annotation = deepcopy(metadata)
+    _require("samples" not in annotation, "seed metadata must not contain samples")
+    csv_bytes = _read_csv_bytes(csv_path)
+    samples = _read_csv_samples(csv_path, strict=True, content=csv_bytes)
+    annotation["samples"] = samples
+    fixture_id, width, height, tolerance = _validate_metadata(annotation, manifest, require_date=False)
+    fixture = _fixture(manifest, fixture_id)
+    coordinate = annotation["coordinate_system"]
+    coordinate_space = {
+        ("decoded_display_pixels", "top_left", "right", "down", True): "display_top_left",
+    }.get((
+        coordinate["space"],
+        coordinate["origin"],
+        coordinate["x_direction"],
+        coordinate["y_direction"],
+        coordinate["rotation_applied"],
+    ))
+    _require(coordinate_space is not None, "coordinate_system cannot be represented by manual-target-seed-v1")
+    _require(annotation.get("source_video_sha256") is not None
+             and fixture.get("media", {}).get("sha256") is not None,
+             "source_video_sha256 and fixture media.sha256 are required for a seed")
+    _validate_samples(samples, width, height, tolerance)
+    for i, sample in enumerate(samples):
+        if "frame_index" in sample:
+            _require(sample["frame_index"] <= 2**64 - 1, f"samples[{i}].frame_index must fit u64")
+    candidate = next((sample for sample in samples
+                      if sample["annotation_state"] == "labelled" and "center_px" in sample
+                      and "radius_px" in sample.get("target_size_px", {})), None)
+    _require(candidate is not None, "no labelled sample with centre and radius")
+    _require("frame_index" in candidate, "seed frame_index is required")
+    x, y = candidate["center_px"]["x_px"], candidate["center_px"]["y_px"]
+    radius = candidate["target_size_px"]["radius_px"]
+    _require(x - radius >= 0 and y - radius >= 0 and x + radius <= width and y + radius <= height,
+             "seed circle must fit within display dimensions")
+    seed = {
+        "timestamp_s": candidate["timestamp_s"],
+        "frame_index": candidate["frame_index"],
+        "target": {"center": candidate["center_px"], "radius_px": radius},
+        "coordinate_space": coordinate_space,
+        "source_rotation_deg": fixture["video"].get("rotation_deg", 0) % 360,
+    }
+    if selection_confidence is not None:
+        confidence = _number(selection_confidence, "selection_confidence", minimum=0)
+        _require(confidence <= 1, "selection_confidence must be <= 1")
+        seed["selection_confidence"] = confidence
+    digest = hashlib.sha256(csv_bytes).hexdigest()
+    annotator = annotation["provenance"]["annotator_id"]
+    seed["notes"] = f"Manual seed from label CSV sha256={digest}; annotator_id={annotator}; tool=annotations.py seed."
+    return {"schema_version": 1, "fixture_id": fixture_id, "seed": seed}
 
 
 def repeatability(left: dict[str, Any], right: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
@@ -335,6 +420,14 @@ def build_parser() -> argparse.ArgumentParser:
     importer.add_argument("--manifest", type=Path, required=True)
     importer.add_argument("--output", type=Path, required=True)
 
+    seed = subs.add_parser("seed", help="create a manual target seed from the first centre-and-radius label")
+    seed.add_argument("--manifest", type=Path, required=True)
+    seed.add_argument("--metadata", type=Path, required=True)
+    seed.add_argument("--csv", type=Path, required=True)
+    seed.add_argument("--output", type=Path, required=True)
+    seed.add_argument("--selection-confidence", type=float)
+    seed.add_argument("--force", action="store_true", help="replace an existing seed file")
+
     repeat = subs.add_parser("repeatability")
     repeat.add_argument("left", type=Path)
     repeat.add_argument("right", type=Path)
@@ -351,6 +444,15 @@ def main(argv: list[str] | None = None) -> int:
             _write(validate_annotation(load_json(args.annotation), manifest), None)
         elif args.command == "import-csv":
             _write(import_csv(load_json(args.metadata), args.csv, manifest), args.output)
+        elif args.command == "seed":
+            _require(args.force or not args.output.exists(), f"seed output {args.output} already exists; use --force to replace it")
+            document = build_seed(load_json(args.metadata), args.csv, manifest, args.selection_confidence)
+            try:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                with args.output.open("w" if args.force else "x", encoding="utf-8", newline="\n") as handle:
+                    handle.write(json.dumps(document, indent=2, allow_nan=False) + "\n")
+            except OSError as exc:
+                raise AnnotationError(f"cannot write seed {args.output}: {exc}") from exc
         elif args.command == "repeatability":
             _write(repeatability(load_json(args.left), load_json(args.right), manifest), args.output)
     except AnnotationError as exc:

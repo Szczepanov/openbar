@@ -194,8 +194,7 @@ is being evaluated. The output folder holds the frames, a `metadata.json` sideca
 - "Download CSV" writes exactly the `import-csv` columns;
 - the status line counts done frames and frames still needing a quality (purple in the strip), and names
   the seed frame: the first frame in time order with a centre and a radius. Trackers run forward from
-  the seed, so start each clip on its first frame with a rim Shift+click; the seed is built from that
-  frame at import.
+  the seed. Create it separately with `annotations.py seed`; for VBT place it before the first rep.
 
 Every extracted frame's PTS is checked against the probe, and the media is checked against the
 manifest SHA-256, so labels cannot be stamped onto the wrong frame or a different file. Packages
@@ -205,6 +204,14 @@ fixtures and `target/label-packages/` otherwise.
 Fill in `provenance.annotated_at` in `metadata.json` before importing. Frames of a fixture
 whose `redistribution_status` is not `allowed` can only be written below the git-ignored
 `validation/private/`; the tool refuses any other output directory.
+
+For manual seeding, replace `--step-s` with `--frame-index <n>` or `--at-s <seconds>` to build
+one frame using the same decoder and PTS validation. `--at-s` selects the nearest decoded
+frame within the media range. These modes reject `--start-s`, `--end-s`, and `--include-frame`.
+Click the centre, Shift+click the rim, choose quality with `1`/`2`/`3`, then download CSV.
+Convert it with `annotations.py seed --manifest <manifest> --metadata <package>/metadata.json
+--csv <downloaded.csv> --output <seed.json>`. Seed creation accepts the fresh metadata date
+placeholder. See `MANUAL_TARGET_SEED.md` for validation, overwrite and confidence rules.
 
 Example inputs:
 
