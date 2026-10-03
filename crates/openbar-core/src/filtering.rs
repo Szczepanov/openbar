@@ -12,15 +12,23 @@ const KALMAN_IMPLEMENTATION: &str = "constant-velocity-kalman";
 const FILTER_VERSION: &str = "1";
 const MAX_POLYNOMIAL_ORDER: usize = 5;
 
+/// Maximum difference between requested and resolved sample counts.
+pub const DURATION_WINDOW_TOLERANCE_SAMPLES: f64 = 1.0;
+const DURATION_ROUNDING_EPSILON: f64 = 1e-9;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FilterConfig {
     Raw,
     MovingAverage {
         window: usize,
+        /// Requested duration for provenance only; filtering uses `window`.
+        window_s: Option<f64>,
         max_gap_s: f64,
     },
     SavitzkyGolay {
         window: usize,
+        /// Requested duration for provenance only; filtering uses `window`.
+        window_s: Option<f64>,
         polynomial_order: usize,
         max_gap_s: f64,
     },
@@ -52,21 +60,70 @@ pub struct FilterRun {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterError {
-    InvalidSample { index: usize, reason: String },
-    NonIncreasingTimestamp { previous_index: usize, index: usize },
-    InvalidWindow { window: usize },
-    EvenWindow { window: usize },
-    InvalidPolynomialOrder { order: usize, window: usize },
-    PolynomialOrderTooHigh { order: usize, max_supported: usize },
-    InvalidGapThreshold { value: f64 },
-    InvalidAccelerationVariance { value: f64 },
-    InvalidMeasurementVariance { value: f64 },
-    InvalidInitialVelocityVariance { value: f64 },
-    InvalidConfidenceWindow { value: usize },
+    InvalidSample {
+        index: usize,
+        reason: String,
+    },
+    NonIncreasingTimestamp {
+        previous_index: usize,
+        index: usize,
+    },
+    InvalidWindow {
+        window: usize,
+    },
+    InvalidWindowDuration {
+        window_s: f64,
+    },
+    InvalidMeasuredFps {
+        measured_fps: f64,
+    },
+    WindowDurationOutOfRange {
+        window_s: f64,
+        measured_fps: f64,
+    },
+    WindowDurationUnresolvable {
+        window_s: f64,
+        measured_fps: f64,
+        resolved_window: usize,
+    },
+    EvenWindow {
+        window: usize,
+    },
+    InvalidPolynomialOrder {
+        order: usize,
+        window: usize,
+    },
+    PolynomialOrderTooHigh {
+        order: usize,
+        max_supported: usize,
+    },
+    InvalidGapThreshold {
+        value: f64,
+    },
+    InvalidAccelerationVariance {
+        value: f64,
+    },
+    InvalidMeasurementVariance {
+        value: f64,
+    },
+    InvalidInitialVelocityVariance {
+        value: f64,
+    },
+    InvalidConfidenceWindow {
+        value: usize,
+    },
     SingularPolynomialFit,
-    InvalidCutoffFrequency { value: f64, reason: &'static str },
-    UnsupportedTimestampJitter { max_rel_dev: f64, max_allowed: f64 },
-    UnsupportedButterworthOrder { order: usize },
+    InvalidCutoffFrequency {
+        value: f64,
+        reason: &'static str,
+    },
+    UnsupportedTimestampJitter {
+        max_rel_dev: f64,
+        max_allowed: f64,
+    },
+    UnsupportedButterworthOrder {
+        order: usize,
+    },
 }
 
 impl fmt::Display for FilterError {
@@ -85,6 +142,14 @@ impl fmt::Display for FilterError {
             Self::InvalidWindow { window } => {
                 write!(formatter, "filter window must be at least 1, got {window}")
             }
+            Self::InvalidWindowDuration { window_s } => write!(formatter,
+                "window_s must be finite and positive, got {window_s}"),
+            Self::InvalidMeasuredFps { measured_fps } => write!(formatter,
+                "measured_fps must be finite and positive, got {measured_fps}"),
+            Self::WindowDurationOutOfRange { window_s, measured_fps } => write!(formatter,
+                "window_s {window_s} at measured_fps {measured_fps} exceeds the representable sample window"),
+            Self::WindowDurationUnresolvable { window_s, measured_fps, resolved_window } => write!(formatter,
+                "window_s {window_s} at measured_fps {measured_fps} resolves to {resolved_window} samples, exceeding the {DURATION_WINDOW_TOLERANCE_SAMPLES}-sample tolerance"),
             Self::EvenWindow { window } => {
                 write!(formatter, "centered filter window must be odd, got {window}")
             }
@@ -143,12 +208,104 @@ impl fmt::Display for FilterError {
 
 impl std::error::Error for FilterError {}
 
+/// Resolve a duration using the mean rate of authoritative selected-frame timestamps.
+/// Nearest-odd ties round up; the minimum must itself be a valid odd window.
+pub fn resolve_window_samples(
+    window_s: f64,
+    measured_fps: f64,
+    min_window: usize,
+) -> Result<usize, FilterError> {
+    validate_window_duration(window_s)?;
+    if !measured_fps.is_finite() || measured_fps <= 0.0 {
+        return Err(FilterError::InvalidMeasuredFps { measured_fps });
+    }
+    validate_centered_window(min_window)?;
+    let requested = window_s * measured_fps;
+    let nearest = 2.0 * ((requested - 1.0) / 2.0 + 0.5 + DURATION_ROUNDING_EPSILON).floor() + 1.0;
+    // Check before casting: Rust's float-to-integer cast saturates. Also ensure
+    // the resolved odd count is exactly representable in f64 and provenance.
+    if !nearest.is_finite()
+        || nearest >= usize::MAX as f64
+        || nearest >= (1_u64 << 53) as f64
+        || min_window as f64 >= (1_u64 << 53) as f64
+    {
+        return Err(FilterError::WindowDurationOutOfRange {
+            window_s,
+            measured_fps,
+        });
+    }
+    let resolved_window = (nearest as usize).max(min_window);
+    // The rounding epsilon can put a value just below a tie on the upper side.
+    // Allow only that same numerical cushion at the one-sample boundary.
+    if (resolved_window as f64 - requested).abs()
+        > DURATION_WINDOW_TOLERANCE_SAMPLES + 2.0 * DURATION_ROUNDING_EPSILON
+    {
+        return Err(FilterError::WindowDurationUnresolvable {
+            window_s,
+            measured_fps,
+            resolved_window,
+        });
+    }
+    Ok(resolved_window)
+}
+
+fn validate_window_duration(window_s: f64) -> Result<(), FilterError> {
+    if !window_s.is_finite() || window_s <= 0.0 {
+        return Err(FilterError::InvalidWindowDuration { window_s });
+    }
+    Ok(())
+}
+
 impl FilterConfig {
+    pub fn moving_average_for_duration(
+        window_s: f64,
+        measured_fps: f64,
+        max_gap_s: f64,
+    ) -> Result<Self, FilterError> {
+        let config = Self::MovingAverage {
+            window: resolve_window_samples(window_s, measured_fps, 1)?,
+            window_s: Some(window_s),
+            max_gap_s,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn savitzky_golay_for_duration(
+        window_s: f64,
+        measured_fps: f64,
+        polynomial_order: usize,
+        max_gap_s: f64,
+    ) -> Result<Self, FilterError> {
+        if polynomial_order > MAX_POLYNOMIAL_ORDER {
+            return Err(FilterError::PolynomialOrderTooHigh {
+                order: polynomial_order,
+                max_supported: MAX_POLYNOMIAL_ORDER,
+            });
+        }
+        let min_window = polynomial_order + 1 + polynomial_order % 2;
+        let config = Self::SavitzkyGolay {
+            window: resolve_window_samples(window_s, measured_fps, min_window)?,
+            window_s: Some(window_s),
+            polynomial_order,
+            max_gap_s,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn provenance(self) -> ImplementationProvenance {
         let mut parameters = Configuration::new();
         let (implementation, version) = match self {
             Self::Raw => (RAW_IMPLEMENTATION, FILTER_VERSION),
-            Self::MovingAverage { window, max_gap_s } => {
+            Self::MovingAverage {
+                window,
+                window_s,
+                max_gap_s,
+            } => {
+                if let Some(duration) = window_s {
+                    parameters.insert("window_s".to_owned(), ParameterValue::Float(duration));
+                }
                 parameters.insert(
                     "window".to_owned(),
                     ParameterValue::Integer(i64::try_from(window).unwrap_or(i64::MAX)),
@@ -158,9 +315,13 @@ impl FilterConfig {
             }
             Self::SavitzkyGolay {
                 window,
+                window_s,
                 polynomial_order,
                 max_gap_s,
             } => {
+                if let Some(duration) = window_s {
+                    parameters.insert("window_s".to_owned(), ParameterValue::Float(duration));
+                }
                 parameters.insert(
                     "window".to_owned(),
                     ParameterValue::Integer(i64::try_from(window).unwrap_or(i64::MAX)),
@@ -275,15 +436,26 @@ impl FilterConfig {
     fn validate(self) -> Result<(), FilterError> {
         match self {
             Self::Raw => Ok(()),
-            Self::MovingAverage { window, max_gap_s } => {
+            Self::MovingAverage {
+                window,
+                window_s,
+                max_gap_s,
+            } => {
+                if let Some(duration) = window_s {
+                    validate_window_duration(duration)?;
+                }
                 validate_centered_window(window)?;
                 validate_gap(max_gap_s)
             }
             Self::SavitzkyGolay {
                 window,
+                window_s,
                 polynomial_order,
                 max_gap_s,
             } => {
+                if let Some(duration) = window_s {
+                    validate_window_duration(duration)?;
+                }
                 validate_centered_window(window)?;
                 if polynomial_order >= window {
                     return Err(FilterError::InvalidPolynomialOrder {
@@ -350,13 +522,14 @@ pub fn apply_filter(
 
     let filtered = match config {
         FilterConfig::Raw => samples.to_vec(),
-        FilterConfig::MovingAverage { window, max_gap_s } => {
-            moving_average_segmented(samples, window, max_gap_s)
-        }
+        FilterConfig::MovingAverage {
+            window, max_gap_s, ..
+        } => moving_average_segmented(samples, window, max_gap_s),
         FilterConfig::SavitzkyGolay {
             window,
             polynomial_order,
             max_gap_s,
+            ..
         } => savitzky_golay_segmented(samples, window, polynomial_order, max_gap_s)?,
         FilterConfig::Kalman {
             acceleration_variance_m2_s4,
@@ -784,6 +957,133 @@ pub use butterworth_experimental::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duration_window_examples() {
+        for (duration, fps, expected) in [
+            (0.15, 60.0, 9),
+            (0.15, 30.0, 5),
+            (0.3, 30.0, 9),
+            (0.1, 60.0, 7),
+            (0.25, 12.0, 3),
+        ] {
+            assert_eq!(resolve_window_samples(duration, fps, 1), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn duration_window_covers_same_time_at_30_and_60_fps() {
+        for (lo, hi) in [(30.0, 60.0), (29.97, 59.94)] {
+            for duration in [0.1, 0.15, 0.2, 0.3] {
+                let a = resolve_window_samples(duration, lo, 1).unwrap();
+                let b = resolve_window_samples(duration, hi, 1).unwrap();
+                assert!((a as f64 / lo - b as f64 / hi).abs() <= 1.0 / lo);
+            }
+        }
+    }
+
+    #[test]
+    fn duration_window_clamps_within_tolerance() {
+        assert_eq!(resolve_window_samples(0.02, 30.0, 1), Ok(1));
+        assert_eq!(resolve_window_samples(0.1, 30.0, 3), Ok(3));
+        assert_eq!(resolve_window_samples(0.1, 60.0 - 1e-10, 1), Ok(7));
+    }
+
+    #[test]
+    fn duration_window_rejects_clamp_beyond_tolerance() {
+        assert!(matches!(
+            FilterConfig::savitzky_golay_for_duration(0.05, 30.0, 3, 0.2),
+            Err(FilterError::WindowDurationUnresolvable {
+                resolved_window: 5,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn duration_window_rejects_invalid_inputs() {
+        for duration in [0.0, -0.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(
+                resolve_window_samples(duration, 30.0, 1),
+                Err(FilterError::InvalidWindowDuration { .. })
+            ));
+        }
+        for fps in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(matches!(
+                resolve_window_samples(0.1, fps, 1),
+                Err(FilterError::InvalidMeasuredFps { .. })
+            ));
+        }
+        for (duration, fps) in [(f64::MAX, 30.0), (1e18, 30.0), (1.0, (1_u64 << 53) as f64)] {
+            assert!(resolve_window_samples(duration, fps, 1).is_err());
+        }
+        assert!(resolve_window_samples(0.1, 30.0, 0).is_err());
+        assert!(resolve_window_samples(0.1, 30.0, 2).is_err());
+    }
+
+    #[test]
+    fn duration_window_rejects_minimum_outside_exact_integer_range() {
+        if let Ok(min_window) = usize::try_from((1_u64 << 53) + 1) {
+            assert!(matches!(
+                resolve_window_samples(1.0, ((1_u64 << 53) - 1) as f64, min_window),
+                Err(FilterError::WindowDurationOutOfRange { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn provenance_records_window_s_only_when_requested() {
+        for (fixed, duration) in [
+            (
+                FilterConfig::MovingAverage {
+                    window: 9,
+                    window_s: None,
+                    max_gap_s: 0.2,
+                },
+                FilterConfig::moving_average_for_duration(0.15, 60.0, 0.2).unwrap(),
+            ),
+            (
+                FilterConfig::SavitzkyGolay {
+                    window: 9,
+                    window_s: None,
+                    polynomial_order: 2,
+                    max_gap_s: 0.2,
+                },
+                FilterConfig::savitzky_golay_for_duration(0.15, 60.0, 2, 0.2).unwrap(),
+            ),
+        ] {
+            let mut expected = fixed.provenance();
+            assert!(!expected.parameters.contains_key("window_s"));
+            expected
+                .parameters
+                .insert("window_s".to_owned(), ParameterValue::Float(0.15));
+            assert_eq!(duration.provenance(), expected);
+        }
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_window_s() {
+        for duration in [0.0, -0.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for config in [
+                FilterConfig::MovingAverage {
+                    window: 3,
+                    window_s: Some(duration),
+                    max_gap_s: 0.2,
+                },
+                FilterConfig::SavitzkyGolay {
+                    window: 3,
+                    window_s: Some(duration),
+                    polynomial_order: 2,
+                    max_gap_s: 0.2,
+                },
+            ] {
+                assert!(matches!(
+                    apply_filter(&[], config),
+                    Err(FilterError::InvalidWindowDuration { .. })
+                ));
+            }
+        }
+    }
     use crate::test_utils::sample_metric_position;
 
     fn sample(timestamp_s: f64, x_m: f64, y_m: f64) -> MetricPositionSample {
@@ -813,6 +1113,7 @@ mod tests {
         let run = apply_filter(
             &input,
             FilterConfig::MovingAverage {
+                window_s: None,
                 window: 3,
                 max_gap_s: 1.0,
             },
@@ -832,6 +1133,7 @@ mod tests {
         let run = apply_filter(
             &[],
             FilterConfig::MovingAverage {
+                window_s: None,
                 window: 3,
                 max_gap_s: 0.1,
             },
@@ -849,6 +1151,7 @@ mod tests {
             apply_filter(
                 &[],
                 FilterConfig::MovingAverage {
+                    window_s: None,
                     window: 0,
                     max_gap_s: 0.1,
                 },
@@ -859,6 +1162,7 @@ mod tests {
             apply_filter(
                 &input,
                 FilterConfig::MovingAverage {
+                    window_s: None,
                     window: 0,
                     max_gap_s: 0.1,
                 },
@@ -878,6 +1182,7 @@ mod tests {
         let run = apply_filter(
             &input,
             FilterConfig::MovingAverage {
+                window_s: None,
                 window: 3,
                 max_gap_s: 0.1,
             },
@@ -900,6 +1205,7 @@ mod tests {
         let run = apply_filter(
             &input,
             FilterConfig::SavitzkyGolay {
+                window_s: None,
                 window: 5,
                 polynomial_order: 2,
                 max_gap_s: 0.2,
@@ -920,6 +1226,7 @@ mod tests {
         let run = apply_filter(
             &input,
             FilterConfig::SavitzkyGolay {
+                window_s: None,
                 window: 5,
                 polynomial_order: 2,
                 max_gap_s: 0.1,
@@ -968,6 +1275,7 @@ mod tests {
                 &input,
                 FilterConfig::SavitzkyGolay {
                     window,
+                    window_s: None,
                     polynomial_order,
                     max_gap_s: 0.02,
                 },
@@ -994,6 +1302,7 @@ mod tests {
         let run = apply_filter(
             &input,
             FilterConfig::SavitzkyGolay {
+                window_s: None,
                 window: 5,
                 polynomial_order: 2,
                 max_gap_s: 0.1,
@@ -1065,6 +1374,7 @@ mod tests {
     #[test]
     fn effective_parameters_are_persisted_in_filter_provenance() {
         let config = FilterConfig::SavitzkyGolay {
+            window_s: None,
             window: 7,
             polynomial_order: 3,
             max_gap_s: 0.05,
@@ -1116,6 +1426,7 @@ mod tests {
             apply_filter(
                 &valid,
                 FilterConfig::SavitzkyGolay {
+                    window_s: None,
                     window: 4,
                     polynomial_order: 2,
                     max_gap_s: 0.1,

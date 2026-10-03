@@ -130,6 +130,45 @@ configuration.
 
 The kinematics continuity threshold and minimum-confidence threshold are also required explicitly.
 
+#### Smoothing windows in samples or seconds
+
+For `moving-average` and `savitzky-golay`, provide exactly one of
+`--filter-window <odd sample count>` and `--filter-window-s <positive seconds>`.
+`--filter-max-gap-s` remains required; Savitzky–Golay also requires
+`--filter-polynomial-order`. `raw` and `kalman` reject both smoothing-window flags.
+
+For example, `--filter savitzky-golay --filter-window-s 0.15
+--filter-polynomial-order 2 --filter-max-gap-s 0.2` resolves to 9 samples at 60 fps
+and 5 samples at 30 fps. There is still no default filter or default window.
+
+Seconds are resolved by core `resolve_window_samples`, after seed validation and before
+tracking. The rate is `video.frame_rate.measured_fps`: `(selected_frame_count - 1) /
+(last_selected_timestamp_s - first_selected_timestamp_s)`, from decoded presentation
+timestamps over the selection, never nominal FPS or the count of tracked observations.
+At least two selected frames with increasing timestamps are required. Non-finite or
+non-positive durations/rates and unrepresentable sample counts fail with invalid input
+(exit 2); ordinary parameter validation still happens before media I/O.
+
+With `requested = window_s * measured_fps`, nearest-odd rounding is
+`2 * floor((requested - 1) / 2 + 0.5 + 1e-9) + 1`. Ties round up: 0.1 s at
+60 fps resolves from 6 to 7 samples. Clamp to at least 1 for moving average, or the
+smallest odd count greater than the polynomial order for Savitzky–Golay. Reject if
+the resolved count differs from the request by more than **1 sample**
+(`DURATION_WINDOW_TOLERANCE_SAMPLES`), with only a `2e-9`-sample numerical cushion
+matching the tie-rounding epsilon. Thus 0.05 s at 30 fps with order 3 fails:
+1.5 requested samples would require a 5-sample window.
+
+Filter provenance records both `window_s` (requested seconds) and `window` (resolved
+sample count). Fixed sample-count requests omit `window_s` and retain their existing
+output bytes. `measured_fps` stays in video metadata; it is not duplicated in filter
+parameters. No schema or filter implementation version changes are needed: filter
+maths and the existing free-form parameter map are unchanged.
+
+On variable-frame-rate clips this mean-rate conversion gives a fixed sample window
+whose actual duration varies with local timestamps. It does not create an exact
+time-based variable window. Existing timestamp-aware fitting, segment boundaries,
+gap handling, raw observations and confidence semantics remain unchanged.
+
 ### `benchmark`
 
 `benchmark` continues to invoke the common #5 benchmark harness. The versioned JSON artifact is

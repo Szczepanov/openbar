@@ -21,6 +21,15 @@ A run records:
 Every filter preserves the input sample timestamps one-for-one. No candidate synthesizes samples for
 missing timestamps, and raw input samples are never overwritten.
 
+Moving-average and Savitzky–Golay `window` values are odd **sample counts**. The
+`analyze` command can resolve `--filter-window-s` seconds to that count using the
+mean measured rate of decoded selected-frame timestamps. Core duration constructors
+record the requested `window_s` alongside the resolved `window`; `apply_filter`
+uses the sample count. Fixed-count candidates and `filter-experiment` provenance
+omit `window_s` and retain their existing behaviour and output. See
+[CLI_PIPELINE.md](CLI_PIPELINE.md#smoothing-windows-in-samples-or-seconds) for
+rounding, minimum windows, tolerance, and variable-frame-rate limits.
+
 The four M0 candidates are:
 
 1. `raw-identity@1`
