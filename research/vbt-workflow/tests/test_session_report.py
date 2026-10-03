@@ -92,6 +92,11 @@ class PeakAndCropTests(unittest.TestCase):
         self.assertEqual(session_report.crop_frames(analysis(two_reps()), 4), [1, 3])
         self.assertEqual(session_report.crop_frames(analysis([sample(0.0, 0.0, None)]), 10), [])
 
+    def test_crop_frames_require_an_upward_velocity_peak(self) -> None:
+        samples = [sample(0.0, 0.0, None), sample(0.1, -0.1, -1.0), sample(0.2, -0.15, -0.5),
+                   sample(0.3, -0.15, 0.0)]
+        self.assertEqual(session_report.crop_frames(analysis(samples), 10), [])
+
     def test_crop_box_is_centred_on_the_tracked_plate_and_clamped(self) -> None:
         boxes = []
 
