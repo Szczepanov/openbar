@@ -38,7 +38,16 @@ class SegmentMeasurementTests(unittest.TestCase):
         self.assertEqual(measured["length_px"], 200.0)
         self.assertEqual(measured["length_uncertainty_px"], 2.0)
         self.assertEqual(measured["reference_scale_m_per_px"], 0.005)
-        self.assertEqual(measured["reference_scale_uncertainty_m_per_px"], 0.00005)
+        self.assertAlmostEqual(measured["reference_scale_lower_m_per_px"], 1.0 / 202.0)
+        self.assertAlmostEqual(measured["reference_scale_upper_m_per_px"], 1.0 / 198.0)
+        self.assertAlmostEqual(
+            measured["reference_scale_minus_uncertainty_m_per_px"],
+            0.005 - (1.0 / 202.0),
+        )
+        self.assertAlmostEqual(
+            measured["reference_scale_plus_uncertainty_m_per_px"],
+            (1.0 / 198.0) - 0.005,
+        )
 
     def test_zero_length_is_rejected(self):
         with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "zero"):
@@ -46,6 +55,16 @@ class SegmentMeasurementTests(unittest.TestCase):
                 known_length_m=1.0,
                 point_a={"x_px": 10.0, "y_px": 20.0},
                 point_b={"x_px": 10.0, "y_px": 20.0},
+                width_px=320,
+                height_px=240,
+            )
+
+    def test_segment_no_longer_than_uncertainty_bound_is_rejected(self):
+        with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "too short"):
+            scale_reference.measure_segment(
+                known_length_m=1.0,
+                point_a={"x_px": 10.0, "y_px": 20.0},
+                point_b={"x_px": 12.0, "y_px": 20.0},
                 width_px=320,
                 height_px=240,
             )
@@ -97,33 +116,83 @@ class SegmentMeasurementTests(unittest.TestCase):
 class RatioTests(unittest.TestCase):
     def test_ratio_uses_analysis_plate_scale_exactly(self):
         analysis = {
+            "schema_version": 1,
             "identity": {
                 "fixture_id": "clip",
                 "source_sha256": "a" * 64,
             },
-            "calibration": {"scale": {"metres_per_pixel": 0.0025}},
+            "calibration": {
+                "method": "plate_diameter",
+                "method_version": 1,
+                "scale": {"metres_per_pixel": 0.0025},
+            },
         }
         plate_scale = scale_reference.plate_scale_from_analysis(analysis, "clip", "a" * 64)
         self.assertEqual(plate_scale, 0.0025)
 
         comparison = scale_reference.compare_to_plate(
             reference_scale_m_per_px=0.00255,
-            reference_scale_uncertainty_m_per_px=0.00005,
+            reference_scale_lower_m_per_px=0.00250,
+            reference_scale_upper_m_per_px=0.00260,
             plate_scale_m_per_px=plate_scale,
         )
         self.assertEqual(comparison["value"], 1.02)
-        self.assertEqual(comparison["uncertainty"], 0.02)
+        self.assertEqual(comparison["lower"], 1.0)
+        self.assertEqual(comparison["upper"], 1.04)
+        self.assertAlmostEqual(comparison["minus_uncertainty"], 0.02)
+        self.assertAlmostEqual(comparison["plus_uncertainty"], 0.02)
         self.assertTrue(comparison["consistent_with_1"])
 
     def test_analysis_fixture_or_source_mismatch_is_rejected(self):
         base = {
+            "schema_version": 1,
             "identity": {"fixture_id": "clip", "source_sha256": "a" * 64},
-            "calibration": {"scale": {"metres_per_pixel": 0.0025}},
+            "calibration": {
+                "method": "plate_diameter",
+                "method_version": 1,
+                "scale": {"metres_per_pixel": 0.0025},
+            },
         }
         with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "fixture"):
             scale_reference.plate_scale_from_analysis(base, "other", "a" * 64)
         with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "source_sha256"):
             scale_reference.plate_scale_from_analysis(base, "clip", "b" * 64)
+
+    def test_analysis_version_and_calibration_method_fail_closed(self):
+        base = {
+            "schema_version": 1,
+            "identity": {"fixture_id": "clip", "source_sha256": "a" * 64},
+            "calibration": {
+                "method": "plate_diameter",
+                "method_version": 1,
+                "scale": {"metres_per_pixel": 0.0025},
+            },
+        }
+        for path, value, message in [
+            (("schema_version",), 2, "analysis-v1"),
+            (("calibration", "method"), "other", "plate_diameter"),
+            (("calibration", "method_version"), 2, "method_version"),
+        ]:
+            changed = json.loads(json.dumps(base))
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaisesRegex(scale_reference.ScaleReferenceError, message):
+                scale_reference.plate_scale_from_analysis(changed, "clip", "a" * 64)
+
+    def test_analysis_numeric_overflow_is_rejected_as_invalid(self):
+        analysis = {
+            "schema_version": 1,
+            "identity": {"fixture_id": "clip", "source_sha256": "a" * 64},
+            "calibration": {
+                "method": "plate_diameter",
+                "method_version": 1,
+                "scale": {"metres_per_pixel": 10 ** 10000},
+            },
+        }
+        with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "finite"):
+            scale_reference.plate_scale_from_analysis(analysis, "clip", "a" * 64)
 
 
 class CsvTests(unittest.TestCase):
@@ -211,13 +280,19 @@ class DeterminismTests(unittest.TestCase):
                 "endpoint_precision_px": 1.0,
                 "length_uncertainty_px": 2.0,
                 "reference_scale_m_per_px": 0.005,
-                "reference_scale_uncertainty_m_per_px": 0.00005,
+                "reference_scale_lower_m_per_px": 1.0 / 202.0,
+                "reference_scale_upper_m_per_px": 1.0 / 198.0,
+                "reference_scale_minus_uncertainty_m_per_px": 0.005 - (1.0 / 202.0),
+                "reference_scale_plus_uncertainty_m_per_px": (1.0 / 198.0) - 0.005,
             },
             "plate_scale_m_per_px": 0.0051,
             "reference_to_plate_ratio": {
                 "value": 0.9803921568627451,
-                "uncertainty": 0.00980392156862745,
-                "consistent_with_1": False,
+                "lower": (1.0 / 202.0) / 0.0051,
+                "upper": (1.0 / 198.0) / 0.0051,
+                "minus_uncertainty": 0.9803921568627451 - ((1.0 / 202.0) / 0.0051),
+                "plus_uncertainty": ((1.0 / 198.0) / 0.0051) - 0.9803921568627451,
+                "consistent_with_1": True,
             },
         }
         first_json = scale_reference.render_json_report([row])
@@ -228,7 +303,8 @@ class DeterminismTests(unittest.TestCase):
         self.assertEqual(first_md, second_md)
         doc = json.loads(first_json)
         self.assertIsInstance(doc["rows"][0]["reference_to_plate_ratio"], dict)
-        self.assertIn("±".encode("utf-8"), first_md)
+        self.assertIn(b"-", first_md)
+        self.assertIn(b"/+", first_md)
 
     def test_report_rejects_two_rows_for_the_same_video(self):
         row = {
@@ -271,6 +347,21 @@ class ReferencePageTests(unittest.TestCase):
             "known_length_m,point_a_x_px,point_a_y_px,point_b_x_px,point_b_y_px",
         )
         self.assertEqual(len(lines), 2)
+
+    def test_reference_page_maps_clicks_from_canvas_content_box(self):
+        page = (TOOLS / "scale_reference_page.html").read_text(encoding="utf-8")
+        pure = re.search(r"// BEGIN scaleReferencePure.*?\n(.*?)// END scaleReferencePure", page, re.S).group(1)
+        script = pure + (
+            "const p=imagePointFromContentOffset(201,101,640,480,320,240);"
+            "process.stdout.write(JSON.stringify({p,inside:pointInWindow(p,320,240),"
+            "right:pointInWindow({x_px:319.5,y_px:10},320,240)}));"
+        )
+        result = json.loads(
+            subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
+        )
+        self.assertEqual(result["p"], {"x_px": 100.0, "y_px": 50.0})
+        self.assertTrue(result["inside"])
+        self.assertFalse(result["right"])
 
 
 if __name__ == "__main__":
