@@ -72,8 +72,8 @@ def preview_reps(samples: list[dict[str, Any]], min_rise_m: float = PREVIEW_MIN_
 
 
 def peak_sample(samples: list[dict[str, Any]]) -> dict[str, Any] | None:
-    moving = [sample for sample in samples if sample.get("vy_mps") is not None]
-    return max(moving, key=lambda sample: (sample["vy_mps"], -sample["timestamp_s"])) if moving else None
+    upward = [sample for sample in samples if sample.get("vy_mps") is not None and sample["vy_mps"] > 0]
+    return max(upward, key=lambda sample: (sample["vy_mps"], -sample["timestamp_s"])) if upward else None
 
 
 def observation_at(analysis: dict[str, Any], frame_index: int) -> dict[str, Any] | None:
@@ -163,7 +163,7 @@ def velocity_svg(samples: list[dict[str, Any]], reps: list[dict[str, float]]) ->
 
 def crops_html(crops: list[dict[str, Any]]) -> str:
     if not crops:
-        return "<p class='muted'>No crops (no velocity peak).</p>"
+        return "<p class='muted'>No crops (no upward velocity peak).</p>"
     cells = []
     for crop in crops:
         left, top, right, bottom = crop["box"]
