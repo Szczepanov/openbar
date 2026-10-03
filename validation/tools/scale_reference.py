@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import label_package
+import schema_check
 
 ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_PAGE_TEMPLATE = Path(__file__).with_name("scale_reference_page.html")
@@ -30,6 +31,7 @@ SCHEMA_VERSION = 1
 ENDPOINT_PRECISION_PX = 1.0
 LENGTH_UNCERTAINTY_PX = 2.0 * ENDPOINT_PRECISION_PX
 EXPECTED_ANALYSIS_SCHEMA_VERSION = 1
+ANALYSIS_SCHEMA_PATH = ROOT / "validation" / "schema" / "analysis-v1.schema.json"
 EXPECTED_CALIBRATION_METHOD = "plate_diameter"
 EXPECTED_CALIBRATION_METHOD_VERSION = 1
 DEFAULT_REPORT_DIR = ROOT / "validation" / "private" / "scale-reference" / "reports"
@@ -210,6 +212,15 @@ def plate_scale_from_analysis(analysis: Any, fixture_id: str, source_sha256: str
     _require(
         analysis.get("schema_version") == EXPECTED_ANALYSIS_SCHEMA_VERSION,
         "analysis must be analysis-v1 (schema_version 1)",
+    )
+    try:
+        schema = schema_check.load_schema(ANALYSIS_SCHEMA_PATH)
+        schema_errors = schema_check.validate_document(analysis, schema)
+    except (OSError, schema_check.SchemaError) as error:
+        raise ScaleReferenceError("cannot validate analysis-v1 schema") from error
+    _require(
+        not schema_errors,
+        f"analysis does not satisfy analysis-v1 schema: {schema_errors[0] if schema_errors else ''}",
     )
     identity = analysis.get("identity")
     _require(isinstance(identity, dict), "analysis.identity must be an object")
