@@ -7,16 +7,18 @@ A thin orchestrator with no measurement logic. It chains existing tools:
             (default validation/private/vbt/manifest.json) with id `vbt-<first 16 hex of SHA-256>`,
             through validation/tools/fixture_probe.py. Idempotent: the same video gives the same id
             and an identical entry is never rewritten.
-  run       register (idempotent), then run research/opencv-tracking/track.py with CSRT over the
-            whole clip, then `openbar-cli analyze --observations` with an explicit filter and
-            kinematics configuration. Writes the prediction, analysis-v1 and a run record side by side.
+  run       register (idempotent), then run research/opencv-tracking/track.py --omit-runtime with
+            CSRT over the whole clip, then `openbar-cli analyze --observations` with an explicit
+            filter and kinematics configuration. Writes the prediction, analysis-v1 and a run record
+            side by side; they replace earlier outputs only when the whole run succeeds.
 
 Measurement stays where it lives: CSRT in track.py; calibration, filtering and kinematics in
 openbar-core through `analyze`. This script never edits a prediction or an analysis.
 
-It never writes the #57 development/held-out manifest (validation/private/manifest.json) or the
-public manifest. Standard library only; run it with the research venv interpreter because
-track.py needs OpenCV. See docs/plans/VBT_WORKFLOW_PLAN.md (step 2) for the owner flow.
+Manifests are accepted only under validation/private/vbt/ or target/, and never one named
+validation/private/manifest.json (the #57 development/held-out manifest). Standard library only;
+run it with the research venv interpreter because track.py needs OpenCV.
+See docs/plans/VBT_WORKFLOW_PLAN.md (step 2) for the owner flow.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import platform
 import re
 import shutil
@@ -37,16 +40,21 @@ sys.path.insert(0, str(ROOT / "validation" / "tools"))
 import fixture_probe  # noqa: E402
 import schema_check  # noqa: E402
 
-WORKFLOW_VERSION = "vbt-workflow-1"
+WORKFLOW_VERSION = "vbt-workflow-2"
 RUN_RECORD_FORMAT = "openbar-research-vbt-run-record"
 RUN_RECORD_FORMAT_VERSION = 1
 
-DEFAULT_MANIFEST = ROOT / "validation" / "private" / "vbt" / "manifest.json"
-PROTECTED_MANIFEST = ROOT / "validation" / "private" / "manifest.json"
-DEFAULT_SEED_DIR = ROOT / "validation" / "private" / "vbt" / "seeds"
+PERSONAL_ROOT = ROOT / "validation" / "private" / "vbt"
+TARGET_ROOT = ROOT / "target"
+ALLOWED_ROOTS = (PERSONAL_ROOT, TARGET_ROOT)
+DEFAULT_MANIFEST = PERSONAL_ROOT / "manifest.json"
+PERSONAL_MEDIA_DIR = PERSONAL_ROOT / "media"
+DEFAULT_SEED_DIR = PERSONAL_ROOT / "seeds"
+PROTECTED_MANIFEST_TAIL = ("validation", "private", "manifest.json")
 LABEL_WORK_DIR = ROOT / "validation" / "private" / "annotations" / "work"
 SEED_SCHEMA = ROOT / "validation" / "schema" / "manual-target-seed-v1.schema.json"
 TRACK_SCRIPT = ROOT / "research" / "opencv-tracking" / "track.py"
+UNTRACKED_SOURCE_DIRS = ("crates", "apps", "research")
 
 FIXTURE_ID_PREFIX = "vbt-"
 FIXTURE_ID_HEX_DIGITS = 16
@@ -64,6 +72,7 @@ TRACKER_IMPLEMENTATION = "opencv-csrt"
 CARGO_ANALYZE = ["cargo", "run", "--locked", "--release", "-p", "openbar-cli", "--"]
 EXERCISES = ("snatch", "clean", "back_squat", "other")
 FILTERS = ("raw", "moving-average", "savitzky-golay", "kalman")
+OUTPUT_NAMES = ("prediction", "analysis", "run_record")
 
 # Named presets expand to explicit analyze flags, which the run record stores verbatim.
 PRESETS: dict[str, list[str]] = {
@@ -124,17 +133,24 @@ class Runner:
     def which(self, name: str) -> str | None:
         return shutil.which(name)
 
-    def capture(self, argv: list[str]) -> str:
+    def capture_bytes(self, argv: list[str]) -> bytes:
         try:
-            completed = subprocess.run(
-                self._resolve(argv), cwd=ROOT, check=False, capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-            )
+            completed = subprocess.run(self._resolve(argv), cwd=ROOT, check=False, capture_output=True)
         except OSError as error:
             raise WorkflowError(f"{argv[0]} could not be run: {error}") from error
         if completed.returncode != 0:
-            raise WorkflowError(f"{argv[0]} failed: {completed.stderr.strip()[-500:]}")
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise WorkflowError(f"{argv[0]} failed: {stderr[-500:]}")
         return completed.stdout
+
+    def capture(self, argv: list[str]) -> str:
+        return self.capture_bytes(argv).decode("utf-8", errors="replace")
+
+    def succeeds(self, argv: list[str]) -> bool:
+        try:
+            return subprocess.run(self._resolve(argv), cwd=ROOT, check=False, capture_output=True).returncode == 0
+        except OSError:
+            return False
 
     def execute(self, argv: list[str]) -> None:
         try:
@@ -146,26 +162,109 @@ class Runner:
 
     @staticmethod
     def _resolve(argv: list[str]) -> list[str]:
-        # A relative program path is resolved against the repository root, not the caller's cwd.
+        # A repository-relative program path is resolved against the root, not the caller's cwd.
         program = Path(argv[0])
-        if not program.is_absolute() and len(program.parts) > 1:
+        if not program.is_absolute() and (ROOT / program).is_file():
             return [str(ROOT / program), *argv[1:]]
         return argv
 
+
+# --- Paths and locations -------------------------------------------------------------------------
+
+def safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as error:
+        raise WorkflowError(f"cannot resolve {path}: {error}") from error
+
+
+def is_within(path: Path, root: Path) -> bool:
+    try:
+        safe_resolve(path).relative_to(safe_resolve(root))
+    except ValueError:
+        return False
+    return True
+
+
+def display_path(path: Path) -> str:
+    """Forward-slash path relative to the repository root (callers ensure it is inside)."""
+    resolved = safe_resolve(path)
+    try:
+        return resolved.relative_to(safe_resolve(ROOT)).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
+def require_in_repo(path: Path, flag: str, hint: str) -> Path:
+    if not is_within(path, ROOT):
+        raise WorkflowError(f"{flag} {path} is outside the repository; {hint}")
+    return path
+
+
+def normalized_tail(text: str, count: int = 3) -> tuple[str, ...]:
+    """Last path parts, case-folded, without trailing dots/spaces or an NTFS `:stream` suffix."""
+    parts = [part for part in re.split(r"[\\/]+", text) if part]
+    return tuple(part.split(":", 1)[0].rstrip(". ").lower() for part in parts[-count:])
+
+
+def names_protected_manifest(path: Path) -> bool:
+    spellings = [str(path), str(path.absolute())]
+    try:
+        spellings.append(str(path.resolve()))
+    except (OSError, RuntimeError):
+        pass  # an unresolvable spelling is refused by the allow-list instead
+    return any(normalized_tail(spelling) == PROTECTED_MANIFEST_TAIL for spelling in spellings)
+
+
+def require_personal_manifest(path: Path) -> Path:
+    if names_protected_manifest(path):
+        raise WorkflowError(
+            f"refusing to use {path}: validation/private/manifest.json is the #57 development/held-out "
+            "manifest and personal videos would contaminate tracker-selection evidence; "
+            f"use {display_path(DEFAULT_MANIFEST)}"
+        )
+    if not any(is_within(path, root) for root in ALLOWED_ROOTS):
+        raise WorkflowError(
+            f"refusing to use manifest {path}: personal manifests must be under validation/private/vbt/ or target/"
+        )
+    return path
+
+
+def require_output_dir(path: Path, runner: Runner, paths: dict[str, Path]) -> None:
+    require_in_repo(path, "--output-dir", "write under validation/private/vbt/analyses/")
+    if any(is_within(path, root) for root in ALLOWED_ROOTS):
+        return
+    ignored = not is_within(path, fixture_probe.PUBLIC_FIXTURES_DIR) and all(
+        runner.succeeds(["git", "-C", str(ROOT), "check-ignore", "-q", display_path(output)])
+        for output in paths.values()
+    )
+    if not ignored:
+        raise WorkflowError(
+            f"refusing --output-dir {path}: outputs must be git-ignored, or under validation/private/vbt/ or target/"
+        )
+
+
+def resolve_openbar_cli(value: str) -> Path:
+    """Resolve like the other path flags (caller's cwd); `shutil.which` adds PATHEXT such as .exe."""
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    # A bare name plus an explicit search path makes `which` apply PATHEXT on Windows (Python 3.11
+    # skips it for names with a directory). Windows also searches the cwd first, so check the hit.
+    found = shutil.which(candidate.name, path=str(candidate.parent))
+    if found is None or safe_resolve(Path(found).parent) != safe_resolve(candidate.parent):
+        raise WorkflowError(f"--openbar-cli {value} was not found or is not executable")
+    binary = Path(found)
+    require_in_repo(binary, "--openbar-cli", "use target/release/openbar-cli from `cargo build --locked --release`")
+    return binary
+
+
+# --- Inputs --------------------------------------------------------------------------------------
 
 def fixture_id_for(sha256: str) -> str:
     if not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
         raise WorkflowError(f"not a SHA-256 digest: {sha256!r}")
     return FIXTURE_ID_PREFIX + sha256.lower()[:FIXTURE_ID_HEX_DIGITS]
-
-
-def display_path(path: Path) -> str:
-    """Repository-relative forward-slash path, or an absolute one outside the repository."""
-    resolved = path.resolve()
-    try:
-        return resolved.relative_to(ROOT.resolve()).as_posix()
-    except ValueError:
-        return resolved.as_posix()
 
 
 def canonical_sha256(value: Any) -> str:
@@ -175,19 +274,6 @@ def canonical_sha256(value: Any) -> str:
 
 def file_sha256(path: Path) -> str:
     return fixture_probe.compute_sha256(path)
-
-
-def require_personal_manifest(path: Path) -> Path:
-    resolved = path.resolve()
-    if resolved == PROTECTED_MANIFEST.resolve():
-        raise WorkflowError(
-            f"refusing to use {display_path(PROTECTED_MANIFEST)}: it is the #57 development/held-out "
-            "manifest and personal videos would contaminate tracker-selection evidence; "
-            f"use a separate manifest such as {display_path(DEFAULT_MANIFEST)}"
-        )
-    if fixture_probe.is_public_manifest(resolved):
-        raise WorkflowError(f"refusing to register personal videos in the public fixture tree: {path}")
-    return path
 
 
 def require_tools(runner: Runner, names: tuple[str, ...]) -> None:
@@ -206,17 +292,41 @@ def parse_plate_diameter(text: str) -> float:
     return value
 
 
+def require_video(video: Path) -> Path:
+    return require_in_repo(video, "--video", f"copy it under {display_path(PERSONAL_MEDIA_DIR)}/ first")
+
+
 def load_manifest_fixtures(manifest: Path) -> list[dict[str, Any]]:
     if not manifest.is_file():
         return []
     try:
         document = schema_check.load_strict(manifest)
-    except schema_check.DocumentError as error:
-        raise WorkflowError(str(error)) from error
-    fixtures = document.get("fixtures") if isinstance(document, dict) else None
-    if not isinstance(fixtures, list):
-        raise WorkflowError(f"{manifest} has no fixtures list")
-    return fixtures
+        fixture_probe.validate_manifest(document)
+    except (schema_check.DocumentError, fixture_probe.ProbeError) as error:
+        raise WorkflowError(f"personal manifest {display_path(manifest)} is invalid: {error}") from error
+    return document["fixtures"]
+
+
+def describe_conflicts(existing: dict[str, Any], drafted: dict[str, Any], fields: list[str]) -> str:
+    return "; ".join(
+        f"{field}: registered {json.dumps(existing.get(field), sort_keys=True)}, "
+        f"this run {json.dumps(drafted[field], sort_keys=True)}"
+        for field in fields
+    )
+
+
+def draft_entry(video: Path, fixture_id: str, plate_diameter_m: float, exercise: str) -> dict[str, Any]:
+    try:
+        return fixture_probe.draft_fixture_manifest(
+            video, fixture_id=fixture_id, exercise=exercise, purpose=PURPOSE,
+            plate_diameter_m=plate_diameter_m, challenge_tags=[REGISTRATION_TAG], notes=REGISTRATION_NOTES,
+        )
+    except fixture_probe.ProbeError as error:
+        if "outside the repository" in str(error):
+            raise WorkflowError(
+                f"{video} is outside the repository; copy it under {display_path(PERSONAL_MEDIA_DIR)}/ first"
+            ) from error
+        raise WorkflowError(f"cannot register {video}: {error}") from error
 
 
 def register_video(video: Path, manifest: Path, sha256: str, plate_diameter_m: float,
@@ -227,10 +337,7 @@ def register_video(video: Path, manifest: Path, sha256: str, plate_diameter_m: f
     a conflicting one fails closed rather than being overwritten.
     """
     fixture_id = fixture_id_for(sha256)
-    drafted = fixture_probe.draft_fixture_manifest(
-        video, fixture_id=fixture_id, exercise=exercise, purpose=PURPOSE,
-        plate_diameter_m=plate_diameter_m, challenge_tags=[REGISTRATION_TAG], notes=REGISTRATION_NOTES,
-    )
+    drafted = draft_entry(video, fixture_id, plate_diameter_m, exercise)
     if drafted["media"]["sha256"].lower() != sha256.lower():
         raise WorkflowError(f"{video} changed while it was being registered")
     fixtures = load_manifest_fixtures(manifest)
@@ -238,7 +345,7 @@ def register_video(video: Path, manifest: Path, sha256: str, plate_diameter_m: f
         same_media = str(fixture.get("media", {}).get("sha256", "")).lower() == sha256.lower()
         if same_media and fixture.get("id") != fixture_id:
             raise WorkflowError(
-                f"{video} is already registered in {manifest} as '{fixture.get('id')}'; "
+                f"{video} is already registered in {display_path(manifest)} as '{fixture.get('id')}'; "
                 f"remove that entry or keep using it outside this workflow (expected id '{fixture_id}')"
             )
     existing = next((fixture for fixture in fixtures if fixture.get("id") == fixture_id), None)
@@ -248,8 +355,8 @@ def register_video(video: Path, manifest: Path, sha256: str, plate_diameter_m: f
     conflicts = [field for field in BINDING_FIELDS if existing.get(field) != drafted[field]]
     if conflicts:
         raise WorkflowError(
-            f"'{fixture_id}' in {manifest} was registered with a different {', '.join(conflicts)}; "
-            "fix or remove that entry deliberately (for example a wrong --plate-diameter-m or --exercise)"
+            f"'{fixture_id}' in {display_path(manifest)} conflicts with this run "
+            f"({describe_conflicts(existing, drafted, conflicts)}); fix or remove that entry deliberately"
         )
     return existing, "reused"
 
@@ -297,22 +404,36 @@ def output_paths(output_dir: Path, fixture_id: str) -> dict[str, Path]:
     }
 
 
+def staged_paths(paths: dict[str, Path]) -> dict[str, Path]:
+    return {name: path.with_name(f".{path.name}.tmp") for name, path in paths.items()}
+
+
+# --- Provenance ----------------------------------------------------------------------------------
+
 def first_line(text: str) -> str:
     return text.strip().splitlines()[0] if text.strip() else ""
 
 
 def git_provenance(runner: Runner) -> dict[str, Any]:
+    git = ["git", "-C", str(ROOT)]
     try:
-        commit = runner.capture(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).strip()
-        status = runner.capture(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no"])
+        commit = runner.capture([*git, "rev-parse", "HEAD"]).strip()
+        diff = runner.capture_bytes([*git, "diff", "HEAD", "--binary"])
+        untracked = runner.capture([*git, "ls-files", "--others", "--exclude-standard", "--",
+                                    *UNTRACKED_SOURCE_DIRS])
     except WorkflowError as error:
-        raise WorkflowError(f"cannot record the OpenBar git commit: {error}") from error
+        raise WorkflowError(f"cannot record the OpenBar git state: {error}") from error
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise WorkflowError(f"git rev-parse returned an unexpected commit {commit!r}")
-    return {"git_commit": commit, "tracked_changes": bool(status.strip())}
+    return {
+        "git_commit": commit,
+        "tracked_changes": bool(diff),
+        "tracked_diff_sha256": hashlib.sha256(diff).hexdigest(),
+        "untracked_source_files": len([line for line in untracked.splitlines() if line.strip()]),
+    }
 
 
-def tool_versions(runner: Runner, openbar_cli: str | None) -> dict[str, Any]:
+def tool_versions(runner: Runner, openbar_cli: Path | None) -> dict[str, Any]:
     versions: dict[str, Any] = {
         "python": platform.python_version(),
         "ffmpeg": first_line(runner.capture(["ffmpeg", "-version"])),
@@ -322,22 +443,23 @@ def tool_versions(runner: Runner, openbar_cli: str | None) -> dict[str, Any]:
         versions["cargo"] = first_line(runner.capture(["cargo", "--version"]))
         versions["rustc"] = first_line(runner.capture(["rustc", "--version"]))
     else:
-        binary = Path(openbar_cli) if Path(openbar_cli).is_absolute() else ROOT / openbar_cli
-        versions["openbar_cli_sha256"] = file_sha256(binary) if binary.is_file() else None
+        versions["openbar_cli"] = {"path": display_path(openbar_cli), "sha256": file_sha256(openbar_cli)}
     return versions
 
+
+# --- Commands ------------------------------------------------------------------------------------
 
 def track_command(manifest: Path, fixture_id: str, seed: Path, prediction: Path) -> list[str]:
     return [
         sys.executable, display_path(TRACK_SCRIPT),
         "--manifest", display_path(manifest), "--fixture", fixture_id, "--seed", display_path(seed),
-        "--tracker", TRACKER, "--output", display_path(prediction),
+        "--tracker", TRACKER, "--omit-runtime", "--output", display_path(prediction),
     ]
 
 
-def analyze_command(openbar_cli: str | None, manifest: Path, fixture_id: str, seed: Path, plate: str,
+def analyze_command(openbar_cli: Path | None, manifest: Path, fixture_id: str, seed: Path, plate: str,
                     prediction: Path, options: list[str], analysis: Path) -> list[str]:
-    prefix = CARGO_ANALYZE if openbar_cli is None else [openbar_cli]
+    prefix = CARGO_ANALYZE if openbar_cli is None else [display_path(openbar_cli)]
     return [
         *prefix, "analyze",
         "--manifest", display_path(manifest), "--fixture", fixture_id, "--seed", display_path(seed),
@@ -351,7 +473,7 @@ def write_json(path: Path, document: dict[str, Any]) -> None:
         handle.write(json.dumps(document, indent=2) + "\n")
 
 
-def remove_outputs(paths: dict[str, Path]) -> None:
+def remove_files(paths: dict[str, Path]) -> None:
     for path in paths.values():
         path.unlink(missing_ok=True)
 
@@ -368,7 +490,7 @@ def run_steps(runner: Runner, commands: list[tuple[str, list[str]]]) -> None:
 def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: Path,
                      seed_document: dict[str, Any], manifest: Path, entry: dict[str, Any],
                      args: argparse.Namespace, plate: float, options: list[str],
-                     commands: list[tuple[str, list[str]]], paths: dict[str, Path],
+                     commands: list[tuple[str, list[str]]], paths: dict[str, Path], staged: dict[str, Path],
                      prediction: dict[str, Any], git: dict[str, Any],
                      versions: dict[str, Any]) -> dict[str, Any]:
     config = prediction.get("implementation", {}).get("config", {})
@@ -402,9 +524,12 @@ def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: P
             "analyze_options": options,
         },
         "commands": recorded_commands,
-        "commands_note": "Run from the repository root; 'python' is the research venv interpreter.",
+        "commands_note": (
+            "Run from the repository root; 'python' is the research venv interpreter. Outputs are written "
+            "to .<name>.tmp in the output directory and renamed only when every step succeeds."
+        ),
         "outputs": {
-            name: {"file": paths[name].name, "sha256": file_sha256(paths[name])}
+            name: {"file": paths[name].name, "sha256": file_sha256(staged[name])}
             for name in ("prediction", "analysis")
         },
         "openbar": git,
@@ -427,18 +552,20 @@ def print_summary(fixture_id: str, exercise: str, action: str, seed_document: di
     print(f"  SEED: {float(seed['timestamp_s']):.6f} s, frame {seed.get('frame_index')}. Tracking starts at the "
           "seed, so it must be before the first rep; check this before using the analysis.")
     print(f"  samples: {tracked} tracked, {lost} lost, {len(samples)} total")
-    print(f"  prediction: {display_path(paths['prediction'])}")
-    print(f"  analysis:   {display_path(paths['analysis'])}")
-    print(f"  run record: {display_path(paths['run_record'])}")
+    for label, name in (("prediction", "prediction"), ("analysis  ", "analysis"), ("run record", "run_record")):
+        print(f"  {label}: {display_path(paths[name])}")
     print(f"  OpenBar commit: {git['git_commit']}")
-    if git["tracked_changes"]:
-        print("  WARNING: the OpenBar working tree has uncommitted changes to tracked files; "
-              "the commit alone does not reproduce this run.")
+    if git["tracked_changes"] or git["untracked_source_files"]:
+        print("  WARNING: the OpenBar working tree has uncommitted or untracked source changes; "
+              "the commit alone does not reproduce this run (see the run record).")
 
+
+# --- Subcommands ---------------------------------------------------------------------------------
 
 def command_register(args: argparse.Namespace, runner: Runner) -> int:
     manifest = require_personal_manifest(args.manifest)
     plate = parse_plate_diameter(args.plate_diameter_m)
+    require_video(args.video)
     require_tools(runner, ("ffprobe",))
     sha256 = file_sha256(args.video)
     entry, action = register_video(args.video, manifest, sha256, plate, args.exercise)
@@ -458,15 +585,23 @@ def command_register(args: argparse.Namespace, runner: Runner) -> int:
     return 0
 
 
-def command_run(args: argparse.Namespace, runner: Runner) -> int:
+def check_run_inputs(args: argparse.Namespace, runner: Runner) -> tuple[Path, float, list[str], Path | None]:
     manifest = require_personal_manifest(args.manifest)
     plate = parse_plate_diameter(args.plate_diameter_m)
     options = analysis_options(args)
+    require_video(args.video)
+    require_in_repo(args.seed, "--seed", f"keep seeds under {display_path(DEFAULT_SEED_DIR)}/")
+    openbar_cli = None if args.openbar_cli is None else resolve_openbar_cli(args.openbar_cli)
     require_tools(runner, ("ffmpeg", "ffprobe"))
+    return manifest, plate, options, openbar_cli
 
+
+def command_run(args: argparse.Namespace, runner: Runner) -> int:
+    manifest, plate, options, openbar_cli = check_run_inputs(args, runner)
     video_sha256 = file_sha256(args.video)
     fixture_id = fixture_id_for(video_sha256)
     paths = output_paths(args.output_dir, fixture_id)
+    require_output_dir(args.output_dir, runner, paths)
     existing = [path for path in paths.values() if path.exists()]
     if existing and not args.force:
         raise WorkflowError(
@@ -474,41 +609,47 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
         )
     seed_document = load_bound_seed(args.seed, fixture_id, args.video)
     git = git_provenance(runner)
-    versions = tool_versions(runner, args.openbar_cli)
+    versions = tool_versions(runner, openbar_cli)
     entry, action = register_video(args.video, manifest, video_sha256, plate, args.exercise)
 
+    staged = staged_paths(paths)
     commands = [
-        ("track", track_command(manifest, fixture_id, args.seed, paths["prediction"])),
-        ("analyze", analyze_command(args.openbar_cli, manifest, fixture_id, args.seed, args.plate_diameter_m,
-                                    paths["prediction"], options, paths["analysis"])),
+        ("track", track_command(manifest, fixture_id, args.seed, staged["prediction"])),
+        ("analyze", analyze_command(openbar_cli, manifest, fixture_id, args.seed, args.plate_diameter_m,
+                                    staged["prediction"], options, staged["analysis"])),
     ]
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    remove_outputs(paths)
+    remove_files(staged)  # leftovers of an interrupted run; never the real outputs
     try:
         run_steps(runner, commands)
         try:
-            prediction = schema_check.load_strict(paths["prediction"])
+            prediction = schema_check.load_strict(staged["prediction"])
         except (schema_check.DocumentError, OSError) as error:
             raise WorkflowError(f"cannot read the tracker prediction: {error}") from error
         record = build_run_record(
             fixture_id=fixture_id, video=args.video, video_sha256=video_sha256, seed=args.seed,
             seed_document=seed_document, manifest=manifest, entry=entry, args=args, plate=plate,
-            options=options, commands=commands, paths=paths, prediction=prediction, git=git, versions=versions,
+            options=options, commands=commands, paths=paths, staged=staged, prediction=prediction,
+            git=git, versions=versions,
         )
-        write_json(paths["run_record"], record)
-    except BaseException:
-        remove_outputs(paths)
-        raise
+        write_json(staged["run_record"], record)
+        for name in OUTPUT_NAMES:
+            os.replace(staged[name], paths[name])
+    finally:
+        remove_files(staged)
     print_summary(fixture_id, args.exercise, action, seed_document, prediction, paths, git)
     return 0
 
+
+# --- CLI -----------------------------------------------------------------------------------------
 
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--video", type=Path, required=True, help="lift video inside the repository")
     parser.add_argument("--plate-diameter-m", required=True, help="plate diameter in metres (no default)")
     parser.add_argument("--exercise", required=True, choices=EXERCISES)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST,
-                        help=f"personal manifest (default: {display_path(DEFAULT_MANIFEST)})")
+                        help="personal manifest under validation/private/vbt/ or target/ "
+                             "(default: validation/private/vbt/manifest.json)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -519,8 +660,9 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="register, track with CSRT, analyze")
     add_common(run)
     run.add_argument("--seed", type=Path, required=True, help="manual-target-seed-v1 made for this video")
-    run.add_argument("--output-dir", type=Path, required=True)
-    run.add_argument("--force", action="store_true", help="replace existing outputs for this video")
+    run.add_argument("--output-dir", type=Path, required=True,
+                     help="git-ignored directory, e.g. validation/private/vbt/analyses")
+    run.add_argument("--force", action="store_true", help="replace existing outputs once the new run succeeds")
     run.add_argument("--openbar-cli", help="prebuilt openbar-cli binary instead of `cargo run --locked --release`")
     run.add_argument("--preset", choices=sorted(PRESETS), help="named analyze configuration; excludes explicit flags")
     run.add_argument("--filter", choices=FILTERS)
