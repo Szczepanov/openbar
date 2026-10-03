@@ -95,6 +95,20 @@ def check_registrations(plans: list[dict[str, Any]], manifest: Path, plate: floa
     fixtures = analyze_lift.load_manifest_fixtures(manifest)
     for plan in plans:
         clip, exercise = plan["clip"], plan["decision"]["exercise"]
+        # Draft every entry, not only existing registrations. This re-probes and re-hashes the
+        # media before session outputs or the manifest are touched.
+        drafted = analyze_lift.draft_entry(plan["media"], clip["fixture_id"], plate, exercise)
+        if str(drafted["media"].get("sha256", "")).lower() != clip["sha256"].lower():
+            raise WorkflowError(
+                f"{clip['fixture_id']} ({clip['original_name']}) changed since it was ingested; "
+                "re-run ingest and confirm the rebuilt page"
+            )
+        if (drafted["media"].get("repository_path") != clip["media_path"]
+                or drafted["video"].get("rotation_deg", 0) != clip["rotation_deg"]):
+            raise WorkflowError(
+                f"{clip['fixture_id']} ({clip['original_name']}) no longer matches its ingested media path/rotation; "
+                "re-run ingest and confirm the rebuilt page"
+            )
         for fixture in fixtures:
             same_media = str(fixture.get("media", {}).get("sha256", "")).lower() == clip["sha256"]
             if same_media and fixture.get("id") != clip["fixture_id"]:
@@ -102,7 +116,6 @@ def check_registrations(plans: list[dict[str, Any]], manifest: Path, plate: floa
         existing = next((fixture for fixture in fixtures if fixture.get("id") == clip["fixture_id"]), None)
         if existing is None:
             continue
-        drafted = analyze_lift.draft_entry(plan["media"], clip["fixture_id"], plate, exercise)
         conflicts = [field for field in analyze_lift.BINDING_FIELDS if existing.get(field) != drafted[field]]
         if conflicts:
             raise WorkflowError(
@@ -140,6 +153,20 @@ def stale_outputs(session: dict[str, Any], plans: list[dict[str, Any]], paths: d
     kept_frames = {paths["frames"] / plan["clip"]["fixture_id"] for plan in plans}
     return [path for path in known_clip_outputs(session, paths)
             if path.exists() and path not in planned and path.parent not in kept_frames]
+
+
+def retained_crop_outputs(plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
+    """Old diagnostic crops for clips being rerun; clear them before regenerating the report.
+
+    They are transient report inputs, not stale session outputs, so keeping them out of the recorded
+    stale-output list preserves a byte-identical session record for a same-input --force rerun.
+    """
+    return [
+        path
+        for plan in plans
+        for path in sorted((paths["frames"] / plan["clip"]["fixture_id"]).glob("frame_*.png"))
+        if path.is_file()
+    ]
 
 
 def resolve_trackers(args: argparse.Namespace, decisions: list[dict[str, Any]],
@@ -338,14 +365,16 @@ def prepare(args: argparse.Namespace, runner: Runner, csv_bytes: bytes) -> dict[
              for d in decisions if d["decision"] == "confirmed"]
     check_registrations(plans, manifest, plate)
     stale = stale_outputs(session, plans, paths)
-    existing = [path for path in planned_outputs(plans, paths) if path.exists()] + stale
+    retained_crops = retained_crop_outputs(plans, paths)
+    existing = [path for path in planned_outputs(plans, paths) if path.exists()] + stale + retained_crops
     if existing and not args.force:
         raise WorkflowError("session outputs already exist (pass --force to replace them; outputs of clips or "
                             "trackers this run does not use are then removed): "
                             + ", ".join(rel(path) for path in existing[:6]) + (" ..." if len(existing) > 6 else ""))
     return {
         "manifest": manifest, "plate": plate, "stick_length": stick_length, "directory": directory,
-        "session": session, "paths": paths, "plans": plans, "stale": stale, "openbar_cli": openbar_cli,
+        "session": session, "paths": paths, "plans": plans, "stale": stale,
+        "retained_crops": retained_crops, "openbar_cli": openbar_cli,
         "gpu_python": gpu_python, "git": analyze_lift.git_provenance(runner),
         "skipped": [clips[d["fixture_id"]]["original_name"] for d in decisions if d["decision"] == "skipped"],
     }
@@ -360,6 +389,10 @@ def write_inputs(plan_set: dict[str, Any], csv_bytes: bytes) -> None:
     for path in plan_set["stale"]:
         path.unlink()
         print(f"removed stale output {rel(path)}")
+    # A changed tracker/filter can move the diagnostic peak. Clear prior crops for clips that remain
+    # in the run so old, now-unreferenced frame PNGs cannot survive beside the regenerated report.
+    for path in plan_set["retained_crops"]:
+        path.unlink()
     paths["input_csv"].parent.mkdir(parents=True, exist_ok=True)
     paths["input_csv"].write_bytes(csv_bytes)
     for plan in plan_set["plans"]:
