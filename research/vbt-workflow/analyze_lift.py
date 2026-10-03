@@ -54,6 +54,8 @@ DEFAULT_SEED_DIR = PERSONAL_ROOT / "seeds"
 PROTECTED_MANIFEST_TAIL = ("validation", "private", "manifest.json")
 LABEL_WORK_DIR = ROOT / "validation" / "private" / "annotations" / "work"
 SEED_SCHEMA = ROOT / "validation" / "schema" / "manual-target-seed-v1.schema.json"
+PREDICTION_SCHEMA = ROOT / "validation" / "schema" / "tracker-prediction-v1.schema.json"
+ANALYSIS_SCHEMA = ROOT / "validation" / "schema" / "analysis-v1.schema.json"
 TRACK_SCRIPT = ROOT / "research" / "opencv-tracking" / "track.py"
 UNTRACKED_SOURCE_DIRS = ("crates", "apps", "research")
 
@@ -237,13 +239,15 @@ def require_output_dir(path: Path, runner: Runner, paths: dict[str, Path]) -> No
     require_in_repo(path, "--output-dir", "write under validation/private/vbt/analyses/")
     if any(is_within(path, root) for root in ALLOWED_ROOTS):
         return
+    check_paths = [*paths.values(), *staged_paths(paths).values()]
     ignored = not is_within(path, fixture_probe.PUBLIC_FIXTURES_DIR) and all(
         runner.succeeds(["git", "-C", str(ROOT), "check-ignore", "-q", display_path(output)])
-        for output in paths.values()
+        for output in check_paths
     )
     if not ignored:
         raise WorkflowError(
-            f"refusing --output-dir {path}: outputs must be git-ignored, or under validation/private/vbt/ or target/"
+            f"refusing --output-dir {path}: final and staging outputs must be git-ignored, "
+            "or under validation/private/vbt/ or target/"
         )
 
 
@@ -384,6 +388,36 @@ def load_bound_seed(seed_path: Path, fixture_id: str, video: Path) -> dict[str, 
     if errors:
         raise WorkflowError(f"seed {seed_path} is not a valid manual-target-seed-v1:\n  " + "\n  ".join(errors))
     return document
+
+
+def load_validated_output(path: Path, schema_path: Path, label: str) -> dict[str, Any]:
+    """Load a generated JSON artifact and require it to satisfy its committed wire schema."""
+    try:
+        document = schema_check.load_strict(path)
+        schema = schema_check.load_schema(schema_path)
+        errors = schema_check.validate_document(document, schema)
+    except (schema_check.DocumentError, schema_check.SchemaError, OSError) as error:
+        raise WorkflowError(f"cannot validate {label}: {error}") from error
+    if errors:
+        raise WorkflowError(f"{label} does not match {schema_path.name}:\n  " + "\n  ".join(errors))
+    if not isinstance(document, dict):
+        raise WorkflowError(f"{label} must be a JSON object")
+    return document
+
+
+def require_inputs_unchanged(*, video: Path, video_sha256: str, seed: Path, seed_sha256: str,
+                             manifest: Path, fixture_id: str, entry_sha256: str) -> None:
+    """Fail before promotion if an input used by the external steps changed during the run."""
+    if file_sha256(video) != video_sha256:
+        raise WorkflowError("video changed while the workflow was running; staged outputs were not promoted")
+    if file_sha256(seed) != seed_sha256:
+        raise WorkflowError("seed changed while the workflow was running; staged outputs were not promoted")
+    current = next(
+        (fixture for fixture in load_manifest_fixtures(manifest) if fixture.get("id") == fixture_id),
+        None,
+    )
+    if current is None or canonical_sha256(current) != entry_sha256:
+        raise WorkflowError("manifest entry changed while the workflow was running; staged outputs were not promoted")
 
 
 def analysis_options(args: argparse.Namespace) -> list[str]:
@@ -529,9 +563,10 @@ def run_steps(runner: Runner, commands: list[tuple[str, list[str]]]) -> None:
 
 
 def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: Path,
-                     seed_document: dict[str, Any], manifest: Path, entry: dict[str, Any],
-                     args: argparse.Namespace, plate: float, options: list[str],
-                     commands: list[tuple[str, list[str]]], paths: dict[str, Path], staged: dict[str, Path],
+                     seed_sha256: str, seed_document: dict[str, Any], manifest: Path,
+                     entry_sha256: str, args: argparse.Namespace,
+                     plate: float, options: list[str], commands: list[tuple[str, list[str]]],
+                     paths: dict[str, Path], staged: dict[str, Path],
                      prediction: dict[str, Any], git: dict[str, Any],
                      versions: dict[str, Any]) -> dict[str, Any]:
     config = prediction.get("implementation", {}).get("config", {})
@@ -548,13 +583,13 @@ def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: P
             "video": {"path": display_path(video), "sha256": video_sha256},
             "seed": {
                 "path": display_path(seed),
-                "sha256": file_sha256(seed),
+                "sha256": seed_sha256,
                 "fixture_id": seed_document["fixture_id"],
                 "timestamp_s": seed_document["seed"]["timestamp_s"],
                 "frame_index": seed_document["seed"].get("frame_index"),
             },
             "manifest": {"path": display_path(manifest)},
-            "manifest_entry": {"sha256": canonical_sha256(entry)},
+            "manifest_entry": {"sha256": entry_sha256},
         },
         "configuration": {
             "exercise": args.exercise,
@@ -645,10 +680,14 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
         raise WorkflowError(
             "output already exists (pass --force to replace): " + ", ".join(display_path(p) for p in existing)
         )
+    seed_sha256 = file_sha256(args.seed)
     seed_document = load_bound_seed(args.seed, fixture_id, args.video)
+    if file_sha256(args.seed) != seed_sha256:
+        raise WorkflowError("seed changed while it was being read; re-run with a stable seed file")
     git = git_provenance(runner)
     versions = tool_versions(runner, openbar_cli)
     entry, action = register_video(args.video, manifest, video_sha256, plate, args.exercise)
+    entry_sha256 = canonical_sha256(entry)
 
     staged = staged_paths(paths)
 
@@ -665,15 +704,17 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
     remove_files(staged)  # leftovers of an interrupted run; never the real outputs
     try:
         run_steps(runner, commands)
-        try:
-            prediction = schema_check.load_strict(staged["prediction"])
-        except (schema_check.DocumentError, OSError) as error:
-            raise WorkflowError(f"cannot read the tracker prediction: {error}") from error
+        require_inputs_unchanged(
+            video=args.video, video_sha256=video_sha256, seed=args.seed, seed_sha256=seed_sha256,
+            manifest=manifest, fixture_id=fixture_id, entry_sha256=entry_sha256,
+        )
+        prediction = load_validated_output(staged["prediction"], PREDICTION_SCHEMA, "tracker prediction")
+        load_validated_output(staged["analysis"], ANALYSIS_SCHEMA, "analysis-v1")
         record = build_run_record(
             fixture_id=fixture_id, video=args.video, video_sha256=video_sha256, seed=args.seed,
-            seed_document=seed_document, manifest=manifest, entry=entry, args=args, plate=plate,
-            options=options, commands=recorded, paths=paths, staged=staged, prediction=prediction,
-            git=git, versions=versions,
+            seed_sha256=seed_sha256, seed_document=seed_document, manifest=manifest,
+            entry_sha256=entry_sha256, args=args, plate=plate, options=options, commands=recorded,
+            paths=paths, staged=staged, prediction=prediction, git=git, versions=versions,
         )
         write_json(staged["run_record"], record)
         promote_outputs(staged, paths)

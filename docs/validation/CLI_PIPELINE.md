@@ -125,8 +125,10 @@ cargo run --locked --release -p openbar-cli -- analyze \
 ```
 
 The `.tmp` files are renamed after every step succeeds, with the run record last. An output
-set without a run record is incomplete. The run record lists these commands with the final file
-names.
+set without a run record is incomplete. Before promotion, the workflow re-checks the video, seed
+and registered manifest-entry hashes and validates the staged files against
+`tracker-prediction-v1.schema.json` and `analysis-v1.schema.json`. The run record lists the
+commands with the final file names.
 
 The plate diameter and the filter and kinematics settings are required. The named preset
 `--preset vbt-sg-0.15s-v1` expands to exactly the flags above and is recorded expanded. The seed's

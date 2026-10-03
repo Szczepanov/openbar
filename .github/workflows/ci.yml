@@ -245,6 +245,8 @@ jobs:
         run: |
           choco install ffmpeg --yes --no-progress
           ffmpeg -hide_banner -version
+      - name: VBT workflow orchestration tests
+        run: python -m unittest discover -v -s research/vbt-workflow/tests -p 'test_*.py'
       - name: Verify dependency lock
         shell: pwsh
         run: cargo metadata --locked --format-version 1 | Out-Null

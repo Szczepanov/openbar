@@ -149,7 +149,8 @@ by `fixture_probe.py` as `purpose: development`, `private_only`, side view, fixe
 **Outputs**, side by side in `--output-dir`. The directory must be inside the repository, under
 `validation/private/vbt/` or `target/`, or somewhere every output is git-ignored; anything else, such
 as `validation/fixtures/public/`, is refused. The video, seed and manifest must also be inside the
-repository, so the run record only holds repository-relative paths.
+repository, so the run record only holds repository-relative paths. Outside the two dedicated
+roots, both the final output names and their `.tmp` staging names must be git-ignored.
 
 - `<id>.opencv-csrt.prediction-v1.json`: `track.py --omit-runtime` output, unedited, whole clip from
   the seed;
@@ -185,12 +186,17 @@ the repository.
 - a registered entry with a different exercise, media, video metadata or plate diameter. The
   error shows the registered and new values. Conditions and notes may be hand-edited;
 - the same video already registered under another id;
-- no readable git state.
+- no readable git state;
+- a generated tracker prediction or analysis that does not match its committed JSON schema;
+- the video, seed, or registered manifest entry changing while tracking/analysis is running.
 
 Every step writes to `.<name>.tmp` files in the output directory; leftovers of a crashed run are
 removed first. If tracking, analysis or writing the run record fails, nothing is renamed, so the
 previous outputs and any unrelated files stay untouched (this includes a failed `--force` run).
-Once everything has succeeded, the old run record is removed first. The files are then renamed in
+Before promotion, the workflow re-checks the video SHA-256, seed SHA-256 and registered manifest
+entry hash, and validates the generated prediction and analysis against
+`tracker-prediction-v1.schema.json` and `analysis-v1.schema.json`. A mismatch fails without
+promoting the staged set. Once everything has succeeded, the old run record is removed first. The files are then renamed in
 order: prediction, analysis, and the run record last. Each rename retries 5 times, 0.2 s apart, on
 a Windows `PermissionError`. Three renames cannot be atomic as a set, so the guarantee is: **an
 output set without a run record is incomplete**; re-run with `--force`. A set with a run record is

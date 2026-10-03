@@ -66,10 +66,12 @@ class FakeRunner(analyze_lift.Runner):
     """Records commands; writes deterministic stand-ins for track.py and analyze output."""
 
     def __init__(self, *, missing: tuple[str, ...] = (), fail_step: str | None = None,
-                 bad_prediction: bool = False, ignored: bool = False) -> None:
+                 bad_prediction: bool = False, bad_analysis: bool = False,
+                 ignored: bool = False) -> None:
         self.missing = set(missing)
         self.fail_step = fail_step
         self.bad_prediction = bad_prediction
+        self.bad_analysis = bad_analysis
         self.ignored = ignored
         self.executed: list[list[str]] = []
         self.captured: list[list[str]] = []
@@ -98,6 +100,7 @@ class FakeRunner(analyze_lift.Runner):
             text = "{broken" if self.bad_prediction else json.dumps({
                 "schema_version": 1,
                 "fixture_id": argv[argv.index("--fixture") + 1],
+                "coordinate_space": "decoded_display_pixels",
                 "implementation": {"name": "opencv-csrt", "version": "spike-1",
                                    "config": {"opencv_version": "4.12.0", "numpy_version": "2.2.6"}},
                 "samples": [
@@ -107,7 +110,11 @@ class FakeRunner(analyze_lift.Runner):
             }, indent=2) + "\n"
             output.write_text(text, encoding="utf-8")
         else:
-            output.write_text('{"schema_version": 1}\n', encoding="utf-8")
+            if self.bad_analysis:
+                output.write_text('{"schema_version": 1}\n', encoding="utf-8")
+            else:
+                golden = ROOT / "crates" / "openbar-core" / "tests" / "fixtures" / "analysis-v1.golden.json"
+                output.write_bytes(golden.read_bytes())
         if step == self.fail_step:
             raise analyze_lift.WorkflowError(f"{step} failed (fake)")
 
@@ -378,6 +385,13 @@ class FailClosedTests(WorkflowTestCase):
         analyze_lift.require_output_dir(ROOT / "docs" / "x", FakeRunner(ignored=True), paths)
         with self.assertRaises(analyze_lift.WorkflowError):
             analyze_lift.require_output_dir(ROOT / "docs" / "x", FakeRunner(ignored=False), paths)
+
+        class FinalOnlyIgnored(FakeRunner):
+            def succeeds(self, argv: list[str]) -> bool:
+                return ".tmp" not in argv[-1]
+
+        with self.assertRaises(analyze_lift.WorkflowError):
+            analyze_lift.require_output_dir(ROOT / "docs" / "x", FinalOnlyIgnored(), paths)
         public = ROOT / "validation" / "fixtures" / "public" / "x"
         with self.assertRaises(analyze_lift.WorkflowError):
             analyze_lift.require_output_dir(public, FakeRunner(ignored=True),
@@ -411,7 +425,7 @@ class FailClosedTests(WorkflowTestCase):
         existing.write_text("previous\n", encoding="utf-8")
         code, _, stderr, _ = self.main(self.run_args("--force"))
         self.assertEqual(code, 0, stderr)
-        self.assertEqual(existing.read_text(encoding="utf-8"), '{"schema_version": 1}\n')
+        self.assertEqual(json.loads(existing.read_text(encoding="utf-8"))["schema_version"], 1)
         self.assertFalse([name for name in self.outputs() if name.endswith(".tmp")])
 
     def test_failed_forced_run_keeps_previous_outputs_and_unrelated_files(self) -> None:
@@ -420,7 +434,12 @@ class FailClosedTests(WorkflowTestCase):
         unrelated = self.output_dir / "notes.txt"
         unrelated.write_text("keep me\n", encoding="utf-8")
         previous = {name: (self.output_dir / name).read_bytes() for name in self.outputs()}
-        for runner in (FakeRunner(fail_step="track"), FakeRunner(fail_step="analyze"), FakeRunner(bad_prediction=True)):
+        for runner in (
+            FakeRunner(fail_step="track"),
+            FakeRunner(fail_step="analyze"),
+            FakeRunner(bad_prediction=True),
+            FakeRunner(bad_analysis=True),
+        ):
             code, _, _, _ = self.main(self.run_args("--force"), runner)
             self.assertNotEqual(code, 0)
             self.assertEqual({name: (self.output_dir / name).read_bytes() for name in self.outputs()}, previous)
@@ -497,6 +516,30 @@ class FailClosedTests(WorkflowTestCase):
         code, _, stderr, runner = self.main(self.run_args(), FakeRunner(bad_prediction=True))
         self.assertNotEqual(code, 0)
         self.assertIn("tracker prediction", stderr)
+        self.assertEqual(len(runner.executed), 2)
+        self.assertEqual(self.outputs(), [])
+
+    def test_schema_invalid_analysis_after_tool_steps_leaves_no_outputs(self) -> None:
+        code, _, stderr, runner = self.main(self.run_args(), FakeRunner(bad_analysis=True))
+        self.assertNotEqual(code, 0)
+        self.assertIn("analysis-v1", stderr)
+        self.assertIn("does not match", stderr)
+        self.assertEqual(len(runner.executed), 2)
+        self.assertEqual(self.outputs(), [])
+
+    def test_seed_change_during_run_is_detected_before_promotion(self) -> None:
+        class MutatesSeed(FakeRunner):
+            def execute(self, argv: list[str]) -> None:
+                super().execute(argv)
+                if any(part.endswith("track.py") for part in argv):
+                    seed = ROOT / argv[argv.index("--seed") + 1]
+                    document = json.loads(seed.read_text(encoding="utf-8"))
+                    document["seed"]["timestamp_s"] = 1.6
+                    seed.write_text(json.dumps(document), encoding="utf-8")
+
+        code, _, stderr, runner = self.main(self.run_args(), MutatesSeed())
+        self.assertNotEqual(code, 0)
+        self.assertIn("seed changed while the workflow was running", stderr)
         self.assertEqual(len(runner.executed), 2)
         self.assertEqual(self.outputs(), [])
 
