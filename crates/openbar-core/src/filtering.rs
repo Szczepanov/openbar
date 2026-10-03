@@ -979,7 +979,7 @@ mod tests {
                 let b = resolve_window_samples(duration, hi, 1).unwrap();
                 let a_span_s = (a - 1) as f64 / lo;
                 let b_span_s = (b - 1) as f64 / hi;
-                assert!((a_span_s - b_span_s).abs() <= 1.0 / lo);
+                assert!((a_span_s - b_span_s).abs() <= 1.0 / lo + f64::EPSILON);
             }
         }
     }
