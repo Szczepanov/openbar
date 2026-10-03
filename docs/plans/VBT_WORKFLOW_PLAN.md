@@ -346,8 +346,10 @@ session's clips in their order and appends new inbox videos in file-name order; 
 a byte-identical `session.json` and `session.html`. The seed frame is frame 0, or the decoded frame
 nearest `--at-s <file name or fixture id>=<seconds>`, which is remembered for later ingests (naming one
 clip both ways is refused). Frames are decoded only through `label_package.py` (ADR-0006, PTS-checked).
-Once a session has been run, ingest refuses to rebuild its page unless `--force` is given; it then
-removes `session-record.json` first, so the earlier run counts as incomplete until `run --force`.
+Once a session has been run, ingest refuses to rebuild its page unless `--force` is given. After
+its read-only planning/probing checks succeed, a forced rebuild removes `session-record.json`
+before rewriting any session-local artifact, so the earlier run counts as incomplete until
+`run --force`.
 Session ids are limited to `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, and the names of the personal-workflow
 folders (`media`, `seeds`, `analyses`, `sam2`, `sessions`, `scale-report`) are reserved.
 Ingest needs OpenCV (the research venv) and stops with a clear message before copying anything
@@ -360,10 +362,11 @@ fixture manifest and is never passed to tracking or `analyze`. `run` registers e
 with the lift chosen on the page, through the same `analyze_lift.register_video` as `register`.
 Registering as `other` first and changing it later would rewrite a binding field of a manifest entry;
 deferring registration means an entry is only ever written once, with the confirmed lift. Before
-writing anything, `run` drafts each clip's entry read-only (`analyze_lift.draft_entry`, which probes the
-video) and compares every binding field (`exercise`, `media`, `video`, `load`) with an existing entry of
-that id, as `register_video` would. On any difference it stops and names both values; registered
-entries are never changed silently.
+writing anything, `run` drafts **every** confirmed clip's entry read-only
+(`analyze_lift.draft_entry`, which probes and hashes the video), requires the current bytes/path/rotation
+to still match the ingested session, and compares every binding field (`exercise`, `media`, `video`,
+`load`) with an existing entry of that id, as `register_video` would. On any difference it stops before
+session outputs or the manifest are changed; registered entries are never changed silently.
 
 **Suggestions, confirmed by a human.** The owner approved this on 2026-10-03 (#95): the tool may
 *propose* the plate circle and the two stick markers, but nothing is used until the clip is confirmed
@@ -476,10 +479,12 @@ Existing outputs are refused without `--force`. The session record is removed fi
 so **a session without `session-record.json` is incomplete**; re-run with `--force`. With `--force`,
 outputs of clips or trackers that this run does not produce (a clip now skipped, or a lift whose policy
 tracker changed) are removed right after the record, so they cannot look current next to the new set.
-Only file names the tool itself writes are removed, and the record lists them under
-`removed_stale_outputs`. Without `--force` their presence is refused like any other existing output.
-Re-running with `--force` on the same inputs gives byte-identical seeds, analyses (CSRT), reports and
-session record (the recorded commands leave out `--force`).
+Only file names the tool itself writes are removed, and the record lists dropped-clip/old-tracker
+artifacts under `removed_stale_outputs`. Existing tracking-check PNGs for clips that remain in the run
+are transient report inputs: without `--force` they also block a rerun; with `--force` they are cleared
+before the report regenerates them, but are not recorded as stale so a same-input forced rerun keeps a
+byte-identical session record. Re-running with `--force` on the same inputs gives byte-identical seeds,
+analyses (CSRT), reports and session record (the recorded commands leave out `--force`).
 
 `--watch <folder>` first snapshots every `vbt-session-<session>*.csv` already there (modification time
 and size) and ignores those files unless they change, so an old download from an earlier attempt is
