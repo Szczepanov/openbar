@@ -36,6 +36,48 @@ It does **not** contain:
 Trackers should consume the seed as immutable input and create their own internal state.
 Refinement must never rewrite the original selection.
 
+## Creating a seed from one clicked frame
+
+Build a single-frame labelling package, open its `index.html`, then convert the downloaded CSV:
+
+```bash
+python validation/tools/label_package.py --manifest validation/fixtures/public/manifest.json --fixture synthetic-clean-side-12 --frame-index 0 --annotator-id seed --output-dir target/seed-pkg
+# In index.html: click centre, Shift+click rim, press 1/2/3 for quality, download CSV.
+python validation/tools/annotations.py seed --manifest validation/fixtures/public/manifest.json --metadata target/seed-pkg/metadata.json --csv target/seed.csv --output target/seed.json
+python validation/tools/schema_check.py --schema validation/schema/manual-target-seed-v1.schema.json target/seed.json
+```
+
+Use `--at-s <seconds>` instead of `--frame-index` to select the nearest decoded frame within
+the media range. Exactly one of `--step-s`, `--frame-index`, or `--at-s` is required.
+Single-frame modes reject the grid-only `--start-s`, `--end-s`, and `--include-frame` flags.
+All modes reuse the same extraction and PTS alignment checks. For private videos use the
+private manifest and write packages beneath `validation/private/`.
+
+The seed uses the first labelled CSV row in strictly increasing timestamp order with both a
+centre and a radius; its frame index is required. Diameter/bounds-only rows do not qualify.
+Timestamp and frame index come directly from the label. For VBT, select a frame **before the
+first rep**, because trackers run forward from the seed.
+
+The metadata must identify the manifest fixture and its video SHA-256, have display-oriented
+dimensions matching that fixture, and declare `decoded_display_pixels`, `top_left`, +X right,
++Y down, with `rotation_applied: true`. Only then is `coordinate_space: display_top_left`
+emitted. `source_rotation_deg` comes from the manifest video rotation, normalized modulo 360;
+package creation already checks it against the probe. The fresh package's
+`annotated_at: FILL-AT-IMPORT` is accepted for seed creation; annotation import still requires
+a timezone-bearing date.
+
+The command fails closed on a missing centre-and-radius label, malformed CSV, invalid row
+state/visibility/quality, non-increasing or non-finite timestamps, missing/invalid frame index,
+non-positive or non-finite radius, a centre outside `[0,width) × [0,height)`, a circle extending
+outside `[0,width] × [0,height]`, mismatched fixture/hash, or unsupported coordinates/dimensions.
+No coordinate or radius is clipped. An existing output is refused unless `--force` is supplied.
+
+`--selection-confidence <0..1>` optionally records explicit human confidence; it must be finite
+and in range. Without that flag the field is omitted. Label quality is never converted to a
+probability. Notes record the source CSV's SHA-256 and annotator ID, without paths or wall-clock
+values, so identical CSV bytes and metadata/options produce byte-identical JSON. The seed is
+accepted directly by `openbar-cli analyze --seed target/seed.json` with the same fixture.
+
 ## Time semantics
 
 `timestamp_s` is authoritative and uses the decoded media timeline. It is not derived from

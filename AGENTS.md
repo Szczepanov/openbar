@@ -69,7 +69,7 @@ CI also runs the workspace tests and both smoke commands on Windows, and runs
 licence isn't on the `deny.toml` allow-list fails CI. Extend the list only alongside the
 dependency-policy justification.
 
-`annotations.py` subcommands: `validate`, `import-csv`, `repeatability`.
+`annotations.py` subcommands: `validate`, `import-csv`, `seed`, `repeatability`.
 
 ## Non-negotiable measurement rules
 

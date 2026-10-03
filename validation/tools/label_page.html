@@ -60,8 +60,9 @@
     <b>Wheel</b> zoom &middot; <b>Right/middle-drag</b> pan &middot; <kbd>N</kbd><kbd>P</kbd> next/previous frame &middot;
     <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> quality high/med/low, then next frame &middot; <kbd>O</kbd> partially occluded &middot;
     <kbd>U</kbd> unlabelable &middot; <kbd>F</kbd> fully occluded &middot; <kbd>S</kbd> skip (not annotated); these three also move on.<br>
-    The tracker seed is made at import from the first frame that has a centre and a radius, so start each clip
-    on its first frame with a rim Shift+click.<br>
+    Create the tracker seed with <code>annotations.py seed</code> from the first frame that has a centre and a radius.
+    Click the centre, Shift+click the rim, choose quality with <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>, then download CSV.
+    For VBT clips, place the seed before the first rep.<br>
     The dashed ring follows the cursor: line it up with the plate's outer rim and click. The click is the centre, and a
     frame without a radius takes the ring's radius; if the ring does not fit, correct it with Shift+wheel before
     choosing quality. Each new frame starts with the previous frame's radius.
