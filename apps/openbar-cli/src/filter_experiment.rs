@@ -689,14 +689,17 @@ fn candidate_families() -> Vec<(&'static str, Vec<FilterConfig>)> {
             "moving_average",
             vec![
                 FilterConfig::MovingAverage {
+                    window_s: None,
                     window: 3,
                     max_gap_s: 0.05,
                 },
                 FilterConfig::MovingAverage {
+                    window_s: None,
                     window: 5,
                     max_gap_s: 0.05,
                 },
                 FilterConfig::MovingAverage {
+                    window_s: None,
                     window: 7,
                     max_gap_s: 0.05,
                 },
@@ -706,16 +709,19 @@ fn candidate_families() -> Vec<(&'static str, Vec<FilterConfig>)> {
             "savitzky_golay",
             vec![
                 FilterConfig::SavitzkyGolay {
+                    window_s: None,
                     window: 5,
                     polynomial_order: 2,
                     max_gap_s: 0.05,
                 },
                 FilterConfig::SavitzkyGolay {
+                    window_s: None,
                     window: 7,
                     polynomial_order: 2,
                     max_gap_s: 0.05,
                 },
                 FilterConfig::SavitzkyGolay {
+                    window_s: None,
                     window: 7,
                     polynomial_order: 3,
                     max_gap_s: 0.05,

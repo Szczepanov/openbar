@@ -243,3 +243,11 @@ rights are explicitly reviewed. Before committing aggregate #57 evidence:
 - #53 has an unambiguous frozen candidate or a documented blocker because candidates were rejected.
 
 Until then, ADR-0008's M1 no-go remains in force.
+
+## Frozen window units
+
+Frozen filter candidates use `window` as an odd sample count. `analyze` also accepts
+seconds via `--filter-window-s`, recording `window_s` alongside the resolved count,
+but `window_s` provenance is not an input to `tracker_filter_selection.py`.
+`FILTER_PARAMETER_FLAGS` continues to reject unknown parameters; `filter-experiment`
+only produces sample-count windows. See [CLI_PIPELINE.md](CLI_PIPELINE.md#smoothing-windows-in-samples-or-seconds).
