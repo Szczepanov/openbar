@@ -245,6 +245,24 @@ python validation/tools/scale_reference.py report \
 Do not commit anything below `validation/private/`. The manual acceptance item remains open until
 a real owner session is filmed and measured.
 
+## One-page VBT session (#95)
+
+`research/vbt-workflow/vbt_session.py` produces the same evidence for a whole session without the
+separate click page. Its session page proposes the lowest and highest black markers on the yellow
+stick (`stick-yellow-markers-v1`; 0.20 m and 1.50 m in the owner's protocol) on the clip's seed
+frame. The owner confirms or drags them, and the session CSV records per marker whether the
+suggestion was accepted unchanged, adjusted, or clicked by hand. `run` then writes, per confirmed clip:
+
+- `reference-config.json` into the seed-frame package (the same `label_package.py` frame), with
+  `known_length_m` from `--stick-length-m` (1.30 for that protocol);
+- a click CSV in the contract above, with point A the lowest marker and point B the highest;
+
+and calls `scale_reference.py report` over all confirmed clips. The validation, uncertainty model and
+fail-closed binding are this tool's own. The stick-corrected values in the session's `report.html`
+multiply analysis-v1 velocities by the reported ratio. They are labelled as a comparison and do not
+change analysis-v1 or calibration semantics; using the stick as a calibration method needs its own
+ADR.
+
 ## Integration point
 
 This PR intentionally does not edit the parallel #86/#92 workflow files. A future

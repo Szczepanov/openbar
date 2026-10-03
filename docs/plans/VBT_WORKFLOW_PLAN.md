@@ -312,6 +312,162 @@ checkpoint is missing, as it is in CI.
 
 **Do not commit** anything under `validation/private/`. Report aggregates only.
 
+### Step 2, one-page session — `research/vbt-workflow/vbt_session.py` (#95)
+
+The per-clip flow above takes about ten manual steps per clip. `vbt_session.py` turns a whole filmed
+session into two commands and one page. It orchestrates the same tools (`label_package.py`,
+`annotations.py seed`, `scale_reference.py`, `analyze_lift.py run`) and adds no measurement logic.
+Run it with the research venv (`py` below), because the suggestions use OpenCV.
+
+```bash
+# 1. Copy new videos from an inbox folder, extract each seed frame, suggest, build the page.
+py research/vbt-workflow/vbt_session.py ingest --inbox <folder> --session 2026-10-03
+# 2. Open validation/private/vbt/sessions/2026-10-03/session.html. For each clip, confirm or drag the
+#    plate centre and rim and the two stick markers, pick the lift, tick Confirm (or Skip), then
+#    click "Download session CSV" (vbt-session-2026-10-03.csv).
+# 3. Run everything; --watch <Downloads> instead of --csv starts when the CSV appears.
+py research/vbt-workflow/vbt_session.py run --session 2026-10-03 --csv <downloaded.csv> \
+  --plate-diameter-m 0.45 --stick-length-m 1.30 --preset vbt-sg-0.15s-v1 --tracker-policy <policy> \
+  [--gpu-python research/gpu-tracking/.venv/Scripts/python.exe]
+```
+
+**Inbox and Google Drive.** `--inbox` is any local folder; it is only read. With Google Drive for
+desktop, make a Drive folder such as `OpenBar inbox`, upload the session's clips to it from the
+phone, and set that folder to *Available offline* (or use *Mirror files*), so the files are real
+local bytes rather than placeholders. Pass its local path (for example `G:\My Drive\OpenBar inbox`).
+Ingest copies each `.mp4`/`.mov`/`.m4v` byte for byte into `validation/private/vbt/media/` through a
+staging name and checks the copy's SHA-256 against the source; a copy that differs (for example a
+file still syncing) is refused. A different file with the same name already in the media folder is
+never overwritten. There is no Drive API access and no upload step.
+
+**Idempotent ingest.** A video whose SHA-256 is already registered in the personal manifest is
+skipped (`--include-registered` adds it, reusing the registered copy). Re-running ingest keeps the
+session's clips in their order and appends new inbox videos in file-name order; identical inputs give
+a byte-identical `session.json` and `session.html`. The seed frame is frame 0, or the decoded frame
+nearest `--at-s <file name or fixture id>=<seconds>`, which is remembered for later ingests. Frames
+are decoded only through `label_package.py` (ADR-0006, PTS-checked).
+
+**Registration waits for the lift.** Ingest never writes the personal manifest. `label_package.py`
+needs a manifest to find the media, so ingest writes a session-local `frame-manifest.json` with only
+the fields it reads (media path and SHA-256, raster size, rotation, `private_only`). It is not a
+fixture manifest and is never passed to tracking or `analyze`. `run` registers each confirmed clip
+with the lift chosen on the page, through the same `analyze_lift.register_video` as `register`.
+Registering as `other` first and changing it later would rewrite a binding field of a manifest entry;
+deferring registration means an entry is only ever written once, with the confirmed lift. If a video
+is already registered with a different lift or plate diameter, `run` stops before writing anything and
+names both values; registered exercises are never changed silently.
+
+**Suggestions, confirmed by a human.** The owner approved this on 2026-10-03 (#95): the tool may
+*propose* the plate circle and the two stick markers, but nothing is used until the clip is confirmed
+on the page. Fully automatic seeding stays out of scope. `vbt_suggest.py` records each method id and
+its parameters in `session.json`; each suggestion has an id and a heuristic confidence in [0, 1]
+(not a probability):
+
+- `plate-hough-edge-v1`: OpenCV Hough circles on a blurred, downscaled grey frame, limited to radii
+  of 4–30 % of the shorter frame side and to circles that fit inside the frame. Each candidate is
+  scored by edge support: the fraction of 360 rim samples within 2 px of a Canny edge whose smoothed
+  gradient is radial. The best is refined by a coarse-to-fine local search (1.5 px tolerance) and
+  proposed only if at least 40 % of the rim is supported.
+- `stick-yellow-markers-v1`: the most elongated yellow (HSV) component, extended along its principal
+  axis to the collinear yellow pieces between the markers. Markers are runs along the axis where both
+  side bands next to the stick are dark, with yellow beyond both ends of the run (which rejects the
+  dark stand at the foot). The lowest and highest markers are proposed: 0.20 m and 1.50 m in the
+  owner's protocol, so `--stick-length-m 1.30`. The length is a `run` flag, not built in.
+
+A failed suggestion leaves that item empty on the page; a tap or click places the next missing item
+(plate centre, rim, lowest marker, highest marker). On the session's 8 real clips (2026-10-03), the
+suggestions were checked against the owner's own confirmed clicks; see #95 for the aggregates.
+
+**Page.** One self-contained, private HTML file (the frames are embedded PNG data URIs) under
+`validation/private/vbt/sessions/<session>/`. Coordinates use the pixel-centre convention and the
+ADR-0007 v1 point window, like `label_page.html`. Per clip: the frame with draggable plate centre and
+rim and stick markers (zoom 1×/3×/6×, arrow keys nudge 1 px, Shift 0.25 px), the lift dropdown, and
+Confirm and Skip toggles. Confirm is disabled until every item is present, the circle fits inside the
+frame and a lift is chosen; any later edit withdraws the confirmation. The download is blocked until
+every clip is confirmed or skipped and at least one is confirmed. Progress autosaves in the browser.
+
+**Session CSV contract** (`openbar-vbt-session-v1`, one row per clip in page order, header exactly):
+
+| Column | Meaning |
+|---|---|
+| `format` | `openbar-vbt-session-v1` |
+| `session_id`, `page_id` | the session, and the hash of the page's clips, frames, suggestions and template |
+| `clip_index`, `fixture_id`, `source_video_sha256`, `package_id`, `frame_index`, `timestamp_s`, `width_px`, `height_px` | the clip and its seed frame, exactly as in `session.json` |
+| `decision` | `confirmed` or `skipped` |
+| `exercise` | `snatch`, `clean`, `back_squat` or `other` (blank when skipped) |
+| `plate_suggestion_id`, `stick_suggestion_id` | the suggestion's id, blank when there was none |
+| `plate_center_x_px`, `plate_center_y_px`, `plate_radius_px` | confirmed plate circle, display pixels, 2 decimals |
+| `stick_low_x_px`, `stick_low_y_px`, `stick_high_x_px`, `stick_high_y_px` | confirmed lowest and highest marker centres |
+| `plate_center_status`, `plate_radius_status`, `stick_low_status`, `stick_high_status` | `accepted` (suggestion unchanged), `adjusted` (suggestion moved), or `manual` (no suggestion) |
+
+A skipped row has blank exercise, geometry and status cells. `run` fails closed, before writing
+anything, on: another session or a rebuilt page (`page_id`); a row whose video, package, frame or
+size differs from the session; a missing decision; a missing lift or item; a status that is not true
+of its values (`accepted` with changed values, `adjusted` with unchanged ones, `manual` when there
+was a suggestion, or a wrong suggestion id); a point outside `[0,width) × [0,height)`; a circle
+outside the frame; markers 2 px apart or less; non-finite numbers; a wrong header, cell count or
+encoding; a wrong row count or order; and no confirmed clip. No JSON fixture type is introduced, so
+no schema or `schema_check.py` entry is added.
+
+**Seeds and scale.** For each confirmed clip, `run` writes the confirmed circle as a one-row label CSV
+(`seeds/<id>.session-label.csv`) and builds the seed with `annotations.build_seed`, the code path of
+`annotations.py seed`, against the personal manifest. The seed schema is unchanged; the notes
+append the page provenance, for example `... plate centre accepted, plate radius adjusted;
+suggestion plate-hough-edge-v1:<12 hex> (method plate-hough-edge-v1, confidence 0.78).` The label
+row's `quality` is `high`: the per-clip Confirm stands in for the label page's quality step, and
+quality never reaches the seed. The stick markers become a `scale_reference.py` click CSV
+(`scale/<id>.scale-reference.csv`, point A = lowest marker, point B = highest), bound to the same
+seed-frame package, whose `reference-config.json` records `--stick-length-m`.
+
+**Tracker policies.** `--tracker-policy` is required, with no default, and is recorded in the
+session record:
+
+| Policy | snatch | clean | back_squat | other |
+|---|---|---|---|---|
+| `csrt-all-v1` (machines without a CUDA GPU) | csrt | csrt | csrt | csrt |
+| `sam2-all-v1` | sam2.1-bplus-circle | sam2.1-bplus-circle | sam2.1-bplus-circle | sam2.1-bplus-circle |
+| `sam2-olympic-csrt-squat-v1` | sam2.1-bplus-circle | sam2.1-bplus-circle | csrt | csrt |
+
+When the confirmed lifts need SAM 2, `--gpu-python` is required and the CUDA check from
+`analyze_lift.py` runs before anything is written; without CUDA, `run` stops and suggests
+`csrt-all-v1`. `--gpu-python` with a policy that never uses SAM 2 is refused.
+
+**Outputs**, all under `validation/private/vbt/sessions/<session>/` (sessions hold frames of private
+videos, so `--sessions-root` must be under `validation/private/vbt/`):
+
+- `session.json`, `session.html`, `frame-manifest.json`, `packages/<id>/` (from ingest);
+- `session-input.csv`: the exact CSV bytes that were run;
+- `seeds/<id>.manual-target-seed-v1.json` and the label CSV it was built from;
+- `scale/<id>.scale-reference.csv`, and `scale-report/` (`scale-reference-v1.json`,
+  `SCALE_REFERENCE_REPORT.md`) from `scale_reference.py report`;
+- `analyses/`: per clip, `analyze_lift.py run`'s prediction, analysis-v1, run record (and SAM 2
+  geometry sidecar), unchanged;
+- `report.html`: one self-contained page (inline SVG, PNG data URIs). Per clip: lift, seed time,
+  tracker, tracked and lost counts, plate and stick scales and their ratio, the vertical-velocity plot,
+  and tracking-check crops of the frames 2 before, at and 2 after the peak upward velocity (decoded
+  through `label_package.py`), with the tracked centre and seed radius drawn on top. A per-rep table
+  shows mean and peak concentric velocity at plate scale and stick-corrected (× stick/plate ratio).
+  It is a labelled, non-authoritative **preview**: a rep is a run of positive `vy_mps` rising at least
+  0.10 m; authoritative segmentation stays with the recommender. Then the scale-ratio table;
+- `session-record.json` (`openbar-research-vbt-session-record`, version 1): the CSV, session-state and
+  manifest paths and hashes, the configuration and tracker policy, per clip the decision, lift,
+  tracker, item statuses, suggestion ids, video, seed, label CSV, click CSV and analyze_lift run-record
+  hashes and the `analyze_lift.py` command, the `scale_reference.py report` command and output hashes,
+  the report hash, and the OpenBar git state. It has no wall-clock time.
+
+Existing outputs are refused without `--force`. The session record is removed first and written last,
+so **a session without `session-record.json` is incomplete**; re-run with `--force`. Re-running with
+`--force` on the same inputs gives byte-identical seeds, analyses (CSRT), reports and session record
+(the recorded commands leave out `--force`). `--watch <folder>` polls every 2 s for
+`vbt-session-<session>.csv` (or a browser's `vbt-session-<session> (1).csv`), reads it once its size is
+stable, and stops after `--watch-timeout-s` (default 900 s, at most 6 h) with a message to download
+the CSV or pass `--csv`. Two candidates are refused as ambiguous.
+
+Tests: `research/vbt-workflow/tests/test_vbt_session.py`, `test_session_contract.py`,
+`test_session_report.py`, `test_session_page.py` (node-gated) and `test_vbt_suggest.py` (OpenCV-gated)
+run with fakes; `OPENBAR_VBT_E2E=1` adds `test_vbt_session_e2e.py`, which runs ingest, a CSV written by
+the test, `run` and a byte-identical `--force` re-run on the public synthetic fixture.
+
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
 
 - **One analysis per lift.** Import exactly one `analysis-v1` per lift into the recommender (3a). An

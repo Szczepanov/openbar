@@ -137,7 +137,12 @@ These come from VISION.md and ADR-0003/0005. Violating them is a bug even if tes
 ## Scope discipline
 
 M0 explicitly excludes: automatic plate detection, UI/Flutter, cloud/accounts, AI coaching, pose
-estimation, live camera, BLE sensors, subscriptions. Don't introduce these. `analyze` is the real M0 measurement integration command. `render` is a diagnostic consumer of canonical analysis and must not reimplement or alter measurement logic. See `docs/validation/CLI_PIPELINE.md` and `docs/validation/DIAGNOSTIC_RENDERING.md`.
+estimation, live camera, BLE sensors, subscriptions. Don't introduce these. One owner-approved
+exception (#95, 2026-10-03): the research VBT session workflow (`research/vbt-workflow/vbt_session.py`)
+may *suggest* the plate circle and the stick markers on a seed frame, but nothing is used until a
+human confirms or adjusts each clip on the session page, and the seed's provenance records whether
+each suggestion was accepted unchanged or adjusted. Fully automatic seeding without that
+confirmation stays out of scope. `analyze` is the real M0 measurement integration command. `render` is a diagnostic consumer of canonical analysis and must not reimplement or alter measurement logic. See `docs/validation/CLI_PIPELINE.md` and `docs/validation/DIAGNOSTIC_RENDERING.md`.
 
 ## Git
 
