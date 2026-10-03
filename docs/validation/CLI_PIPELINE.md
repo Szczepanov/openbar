@@ -164,10 +164,13 @@ output bytes. `measured_fps` stays in video metadata; it is not duplicated in fi
 parameters. No schema or filter implementation version changes are needed: filter
 maths and the existing free-form parameter map are unchanged.
 
-On variable-frame-rate clips this mean-rate conversion gives a fixed sample window
-whose actual duration varies with local timestamps. It does not create an exact
-time-based variable window. Existing timestamp-aware fitting, segment boundaries,
-gap handling, raw observations and confidence semantics remain unchanged.
+This conversion is intentionally approximate because it resolves one fixed sample count
+from decoded-frame mean rate. The filter itself runs over calibrated observations, so the
+actual timestamp span can vary with local frame timing and can stretch when measurements are
+missing or lost while the remaining timestamps still stay within `--filter-max-gap-s`. Variable-
+frame-rate clips have the same limitation. This does not create an exact time-based variable
+window. Existing timestamp-aware fitting, segment boundaries, gap handling, raw observations
+and confidence semantics remain unchanged.
 
 ### `benchmark`
 
