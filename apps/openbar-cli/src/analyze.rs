@@ -3,6 +3,10 @@
 //! Media/process orchestration lives here; authoritative calibration, filtering, kinematics,
 //! canonical validation and serialization remain in openbar-core.
 
+#[path = "filter_request.rs"]
+mod filter_request;
+use filter_request::{parse_filter_config, FilterRequest};
+
 use crate::cli_error::{CliError, CliErrorKind, CliResult};
 use crate::external_observations::{
     load_external_observations, DecodedTimelineFrame, ImportedObservations,
@@ -20,7 +24,7 @@ use openbar_core::analysis::{
 use openbar_core::calibration::{
     CalibrationQuality, CalibrationQualityStatus, CalibrationWarning, PlateDiameterCalibration,
 };
-use openbar_core::filtering::{apply_filter, FilterConfig};
+use openbar_core::filtering::apply_filter;
 use openbar_core::kinematics::{derive_kinematic_trajectory, KinematicsConfig};
 use openbar_core::manual_seed::{ManualTargetSeedDocument, SeedValidationContext};
 use openbar_core::recording_support::{
@@ -65,8 +69,8 @@ Tracker options:\n\
 \n\
 Filter options (there is deliberately no production default):\n\
   raw: no additional parameters\n\
-  moving-average: --filter-window <odd> --filter-max-gap-s <s>\n\
-  savitzky-golay: --filter-window <odd> --filter-polynomial-order <n> --filter-max-gap-s <s>\n\
+  moving-average: (--filter-window <odd> | --filter-window-s <s>) --filter-max-gap-s <s>\n\
+  savitzky-golay: (--filter-window <odd> | --filter-window-s <s>) --filter-polynomial-order <n> --filter-max-gap-s <s>\n\
   kalman: --filter-acceleration-variance-m2-s4 <v> --filter-measurement-variance-m2 <v>\n\
           --filter-initial-velocity-variance-m2-s2 <v> --filter-confidence-window-samples <n>\n\
           --filter-max-gap-s <s>\n\
@@ -107,7 +111,7 @@ struct Args {
     contrast_min_seed_contrast: Option<f64>,
     contrast_min_mass_ratio: Option<f64>,
     contrast_low_confidence_mass_ratio: Option<f64>,
-    filter: FilterConfig,
+    filter: FilterRequest,
     kinematics: KinematicsConfig,
     selection: Option<MediaTimeRange>,
     max_frame_bytes: u64,
@@ -217,6 +221,7 @@ fn run(args: &Args) -> CliResult<()> {
     // Otherwise an invalid target radius/timestamp could be reclassified as recording metadata
     // and, when requested, persisted into a misleading support sidecar.
     validate_seed(&seed, &stream, args.selection, &clip)?;
+    let filter_config = args.filter.resolve(measured_fps(&clip))?;
 
     let imported_observations = args
         .observations
@@ -273,7 +278,7 @@ fn run(args: &Args) -> CliResult<()> {
     .map_err(|error| CliError::seed_calibration(format!("invalid plate calibration: {error}")))?;
 
     let calibrated_samples = calibrate_measurements(&raw_observations, &calibration)?;
-    let filter_run = apply_filter(&calibrated_samples, args.filter).map_err(|error| {
+    let filter_run = apply_filter(&calibrated_samples, filter_config).map_err(|error| {
         CliError::invalid_input(format!("invalid filter configuration/input: {error}"))
     })?;
     let kinematic = derive_kinematic_trajectory(
@@ -573,6 +578,7 @@ fn is_known_value_flag(flag: &str) -> bool {
             | "--contrast-low-confidence-mass-ratio"
             | "--filter"
             | "--filter-window"
+            | "--filter-window-s"
             | "--filter-polynomial-order"
             | "--filter-max-gap-s"
             | "--filter-acceleration-variance-m2-s4"
@@ -742,123 +748,6 @@ fn validate_tracker_specific_options(
         }
         _ => Ok(()),
     }
-}
-
-fn parse_filter_config(
-    filter_name: &str,
-    values: &mut BTreeMap<String, String>,
-) -> CliResult<FilterConfig> {
-    let window = take_raw(values, "--filter-window");
-    let order = take_raw(values, "--filter-polynomial-order");
-    let max_gap = take_raw(values, "--filter-max-gap-s");
-    let acceleration = take_raw(values, "--filter-acceleration-variance-m2-s4");
-    let measurement = take_raw(values, "--filter-measurement-variance-m2");
-    let initial_velocity = take_raw(values, "--filter-initial-velocity-variance-m2-s2");
-    let confidence_window = take_raw(values, "--filter-confidence-window-samples");
-
-    let config = match filter_name {
-        "raw" => {
-            reject_present_filter_options(&[
-                ("--filter-window", &window),
-                ("--filter-polynomial-order", &order),
-                ("--filter-max-gap-s", &max_gap),
-                ("--filter-acceleration-variance-m2-s4", &acceleration),
-                ("--filter-measurement-variance-m2", &measurement),
-                (
-                    "--filter-initial-velocity-variance-m2-s2",
-                    &initial_velocity,
-                ),
-                ("--filter-confidence-window-samples", &confidence_window),
-            ])?;
-            FilterConfig::Raw
-        }
-        "moving-average" => {
-            reject_present_filter_options(&[
-                ("--filter-polynomial-order", &order),
-                ("--filter-acceleration-variance-m2-s4", &acceleration),
-                ("--filter-measurement-variance-m2", &measurement),
-                (
-                    "--filter-initial-velocity-variance-m2-s2",
-                    &initial_velocity,
-                ),
-                ("--filter-confidence-window-samples", &confidence_window),
-            ])?;
-            FilterConfig::MovingAverage {
-                window: parse_usize(&required_raw(window, "--filter-window")?, "--filter-window")?,
-                max_gap_s: parse_f64(
-                    &required_raw(max_gap, "--filter-max-gap-s")?,
-                    "--filter-max-gap-s",
-                )?,
-            }
-        }
-        "savitzky-golay" => {
-            reject_present_filter_options(&[
-                ("--filter-acceleration-variance-m2-s4", &acceleration),
-                ("--filter-measurement-variance-m2", &measurement),
-                (
-                    "--filter-initial-velocity-variance-m2-s2",
-                    &initial_velocity,
-                ),
-                ("--filter-confidence-window-samples", &confidence_window),
-            ])?;
-            FilterConfig::SavitzkyGolay {
-                window: parse_usize(&required_raw(window, "--filter-window")?, "--filter-window")?,
-                polynomial_order: parse_usize(
-                    &required_raw(order, "--filter-polynomial-order")?,
-                    "--filter-polynomial-order",
-                )?,
-                max_gap_s: parse_f64(
-                    &required_raw(max_gap, "--filter-max-gap-s")?,
-                    "--filter-max-gap-s",
-                )?,
-            }
-        }
-        "kalman" => {
-            reject_present_filter_options(&[
-                ("--filter-window", &window),
-                ("--filter-polynomial-order", &order),
-            ])?;
-            FilterConfig::Kalman {
-                acceleration_variance_m2_s4: parse_f64(
-                    &required_raw(acceleration, "--filter-acceleration-variance-m2-s4")?,
-                    "--filter-acceleration-variance-m2-s4",
-                )?,
-                measurement_variance_m2: parse_f64(
-                    &required_raw(measurement, "--filter-measurement-variance-m2")?,
-                    "--filter-measurement-variance-m2",
-                )?,
-                initial_velocity_variance_m2_s2: parse_f64(
-                    &required_raw(initial_velocity, "--filter-initial-velocity-variance-m2-s2")?,
-                    "--filter-initial-velocity-variance-m2-s2",
-                )?,
-                confidence_window_samples: parse_usize(
-                    &required_raw(confidence_window, "--filter-confidence-window-samples")?,
-                    "--filter-confidence-window-samples",
-                )?,
-                max_gap_s: parse_f64(
-                    &required_raw(max_gap, "--filter-max-gap-s")?,
-                    "--filter-max-gap-s",
-                )?,
-            }
-        }
-        value => {
-            return Err(CliError::invalid_input(format!(
-                "--filter must be raw, moving-average, savitzky-golay, or kalman, got '{value}'"
-            )));
-        }
-    };
-    apply_filter(&[], config)
-        .map_err(|error| CliError::invalid_input(format!("invalid filter config: {error}")))?;
-    Ok(config)
-}
-
-fn reject_present_filter_options(options: &[(&str, &Option<String>)]) -> CliResult<()> {
-    if let Some((flag, _)) = options.iter().find(|(_, value)| value.is_some()) {
-        return Err(CliError::invalid_input(format!(
-            "{flag} is not valid for the selected filter"
-        )));
-    }
-    Ok(())
 }
 
 fn build_tracker(
@@ -1585,14 +1474,6 @@ fn take_path(values: &mut BTreeMap<String, String>, flag: &str) -> Option<PathBu
     values.remove(flag).map(PathBuf::from)
 }
 
-fn take_raw(values: &mut BTreeMap<String, String>, flag: &str) -> Option<String> {
-    values.remove(flag)
-}
-
-fn required_raw(value: Option<String>, flag: &str) -> CliResult<String> {
-    value.ok_or_else(|| CliError::invalid_input(format!("selected filter requires {flag}")))
-}
-
 fn take_parsed<T: std::str::FromStr>(
     values: &mut BTreeMap<String, String>,
     flag: &str,
@@ -1646,6 +1527,7 @@ fn is_valid_fixture_id(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openbar_core::filtering::FilterConfig;
     use std::process::Command;
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -1677,6 +1559,210 @@ mod tests {
         ])
     }
 
+    fn smoothing_args(filter: &str, options: &[&str]) -> Vec<String> {
+        let mut args = base_args("analysis.json");
+        let index = args.iter().position(|arg| arg == "--filter").unwrap();
+        args[index + 1] = filter.to_owned();
+        args.extend(strings(options));
+        args
+    }
+
+    #[test]
+    fn duration_filter_parses_before_media_io() {
+        for filter in ["moving-average", "savitzky-golay"] {
+            let mut args = smoothing_args(
+                filter,
+                &["--filter-window-s", "0.25", "--filter-max-gap-s", "0.2"],
+            );
+            if filter == "savitzky-golay" {
+                args.extend(strings(&["--filter-polynomial-order", "2"]));
+            }
+            let parsed = parse_args(args).unwrap().unwrap();
+            let expected = if filter == "moving-average" {
+                FilterRequest::MovingAverageDuration {
+                    window_s: 0.25,
+                    max_gap_s: 0.2,
+                }
+            } else {
+                FilterRequest::SavitzkyGolayDuration {
+                    window_s: 0.25,
+                    polynomial_order: 2,
+                    max_gap_s: 0.2,
+                }
+            };
+            assert_eq!(parsed.filter, expected);
+        }
+    }
+
+    #[test]
+    fn smoothing_filters_require_exactly_one_window() {
+        for filter in ["moving-average", "savitzky-golay"] {
+            for options in [
+                vec![],
+                strings(&["--filter-window", "3", "--filter-window-s", "0.25"]),
+            ] {
+                let mut args = smoothing_args(filter, &["--filter-max-gap-s", "0.2"]);
+                if filter == "savitzky-golay" {
+                    args.extend(strings(&["--filter-polynomial-order", "2"]));
+                }
+                args.extend(options);
+                let error = parse_args(args).unwrap_err();
+                assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+                assert!(error
+                    .to_string()
+                    .contains("exactly one of --filter-window and --filter-window-s"));
+            }
+        }
+    }
+
+    #[test]
+    fn duration_filter_rejects_invalid_seconds_before_media_io() {
+        for filter in ["moving-average", "savitzky-golay"] {
+            for value in ["0", "-0.1", "NaN", "inf", "-inf", "bad"] {
+                let mut args = smoothing_args(
+                    filter,
+                    &["--filter-window-s", value, "--filter-max-gap-s", "0.2"],
+                );
+                if filter == "savitzky-golay" {
+                    args.extend(strings(&["--filter-polynomial-order", "2"]));
+                }
+                let error = parse_args(args).unwrap_err();
+                assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+                assert!(error.to_string().contains("--filter-window-s"));
+            }
+        }
+    }
+
+    #[test]
+    fn duration_window_is_rejected_for_raw_and_kalman() {
+        for filter in ["raw", "kalman"] {
+            let error =
+                parse_args(smoothing_args(filter, &["--filter-window-s", "0.25"])).unwrap_err();
+            assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+            assert!(error.to_string().contains("--filter-window-s is not valid"));
+        }
+    }
+
+    #[test]
+    fn duration_filter_rejects_invalid_order_and_gap_before_media_io() {
+        for (order, gap, message) in [
+            ("6", "0.2", "supported maximum"),
+            ("18446744073709551615", "0.2", "polynomial"),
+            ("2", "0", "max_gap_s"),
+            ("2", "NaN", "max_gap_s"),
+        ] {
+            let error = parse_args(smoothing_args(
+                "savitzky-golay",
+                &[
+                    "--filter-window-s",
+                    "0.25",
+                    "--filter-polynomial-order",
+                    order,
+                    "--filter-max-gap-s",
+                    gap,
+                ],
+            ))
+            .unwrap_err();
+            assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+            assert!(error.to_string().contains(message));
+        }
+    }
+
+    #[test]
+    fn duration_filter_requires_measured_rate() {
+        let request = FilterRequest::MovingAverageDuration {
+            window_s: 0.25,
+            max_gap_s: 0.2,
+        };
+        let error = request.resolve(None).unwrap_err();
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("at least two selected frames"));
+        assert_eq!(
+            FilterRequest::Fixed(FilterConfig::Raw)
+                .resolve(None)
+                .unwrap(),
+            FilterConfig::Raw
+        );
+    }
+
+    #[test]
+    fn duration_filter_single_selected_frame_fails_before_tracking() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output = scratch_file("duration-single-frame.json");
+        let _ = fs::remove_file(&output);
+        let mut args = fixture_args(&output);
+        args.selection = Some(MediaTimeRange::try_new(0.0, 0.0).unwrap());
+        args.filter = FilterRequest::MovingAverageDuration {
+            window_s: 0.25,
+            max_gap_s: 0.2,
+        };
+        // An impossible tracker configuration would fail if tracking ran first.
+        args.tracker = Some(TrackerChoice::Contrast);
+        args.contrast_min_seed_contrast = Some(1.0e9);
+        let error = run(&args).unwrap_err();
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error.to_string().contains("at least two selected frames"));
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn duration_filter_end_to_end_matches_fixed_window_and_is_deterministic() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let paths = [
+            scratch_file("duration-a.json"),
+            scratch_file("duration-b.json"),
+            scratch_file("fixed-window.json"),
+        ];
+        for path in &paths {
+            let _ = fs::remove_file(path);
+        }
+        for (index, path) in paths.iter().enumerate() {
+            let mut args = fixture_args(path);
+            args.filter = if index == 2 {
+                FilterRequest::Fixed(FilterConfig::SavitzkyGolay {
+                    window: 3,
+                    window_s: None,
+                    polynomial_order: 2,
+                    max_gap_s: 0.2,
+                })
+            } else {
+                FilterRequest::SavitzkyGolayDuration {
+                    window_s: 0.25,
+                    polynomial_order: 2,
+                    max_gap_s: 0.2,
+                }
+            };
+            run(&args).unwrap();
+        }
+        let bytes = paths
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(bytes[0], bytes[1]);
+        let duration = Analysis::from_json(std::str::from_utf8(&bytes[0]).unwrap()).unwrap();
+        let fixed = Analysis::from_json(std::str::from_utf8(&bytes[2]).unwrap()).unwrap();
+        assert_eq!(duration.raw_observations(), fixed.raw_observations());
+        let derived = duration.derived().filtered.as_ref().unwrap();
+        let fixed_derived = fixed.derived().filtered.as_ref().unwrap();
+        assert_eq!(derived.samples, fixed_derived.samples);
+        let mut expected = fixed_derived.filter.clone();
+        expected
+            .parameters
+            .insert("window_s".to_owned(), ParameterValue::Float(0.25));
+        assert_eq!(derived.filter, expected);
+        assert_eq!(
+            derived.filter.parameters["window"],
+            ParameterValue::Integer(3)
+        );
+        for path in paths {
+            fs::remove_file(path).unwrap();
+        }
+    }
+
     #[test]
     fn parses_explicit_raw_pipeline_without_choosing_a_hidden_filter() {
         let parsed = parse_args(base_args("analysis.json"))
@@ -1684,7 +1770,7 @@ mod tests {
             .expect("not help");
         assert_eq!(parsed.tracker, Some(TrackerChoice::Template));
         assert!(parsed.observations.is_none());
-        assert_eq!(parsed.filter, FilterConfig::Raw);
+        assert_eq!(parsed.filter, FilterRequest::Fixed(FilterConfig::Raw));
         assert_eq!(parsed.kinematics.max_gap_s, 0.2);
         assert_eq!(parsed.kinematics.min_confidence, 0.0);
     }
