@@ -110,16 +110,15 @@ class TrackGpuOutputTests(unittest.TestCase):
         self.assertEqual(self.default_sidecar.read_bytes(), platform_text(sidecar_for(CIRCLE)))
         self.assertEqual(sorted(path.name for path in self.dir.iterdir()),
                          sorted([self.output.name, self.default_sidecar.name]))
-        self.assertIn("1/2 tracked, 0.25 s", stdout)
-        self.assertNotIn("runtime omitted", stdout)
+        self.assertEqual(stdout, f"{CIRCLE}: 1/2 tracked, 0.25 s -> {self.output}\n")
 
     def test_omit_runtime_drops_runtime_and_writes_lf(self) -> None:
         code, stdout = self.run_main("--omit-runtime")
         self.assertEqual(code, 0)
         self.assertEqual(self.output.read_bytes(), lf_text(without_runtime(prediction_for(CIRCLE))))
         self.assertEqual(self.default_sidecar.read_bytes(), lf_text(sidecar_for(CIRCLE)))
-        self.assertIn("1/2 tracked, 0.25 s", stdout)
-        self.assertIn("runtime omitted from prediction", stdout)
+        self.assertEqual(stdout, f"{CIRCLE}: 1/2 tracked, 0.25 s -> {self.output}\n"
+                                 "runtime omitted from prediction (--omit-runtime)\n")
 
     def test_geometry_output_redirects_the_sidecar(self) -> None:
         geometry = self.dir / "staged" / ".geometry.json.tmp"

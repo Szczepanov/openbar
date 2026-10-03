@@ -177,7 +177,11 @@ py research/vbt-workflow/analyze_lift.py run \
 
 `--gpu-python` is required with `sam2.1-bplus-circle` and refused with `csrt`. It is resolved like
 `--openbar-cli` (from the current directory, `.exe` optional) and must be inside the repository.
-Links are not followed, because a POSIX venv `python` is a symlink to the base interpreter. Before
+Directory links are followed, so a venv folder that links outside the repository is refused. The
+interpreter file itself is not followed, because a POSIX venv `python` is a symlink to the base
+interpreter. The run record stores the resolved folder plus the file name as it is spelled on disk.
+The same interpreter is therefore recorded identically whether you type `python`, `python.exe` or a
+different case, and a `--force` re-run gives a byte-identical record. Before
 registering or tracking, the workflow runs a short check in that interpreter. It stops with a clear
 error if torch or SAM 2 cannot import, or if no CUDA device is visible. `track_gpu.py` then verifies the
 checkpoint's SHA-256 before decoding. A missing or wrong checkpoint, or any other `track_gpu.py`
@@ -195,7 +199,10 @@ roots, both the final output names and their `.tmp` staging names must be git-ig
 Every name carries the tracker implementation (`<impl>` is `opencv-csrt` or `sam2.1-bplus-circle`).
 CSRT and SAM 2 outputs for the same video can therefore sit in one folder, and `--force` for one
 tracker never touches the other's files. Outputs written by workflow version 2 (`<id>.analysis-v1.json`,
-`<id>.run-record.json`) are not renamed or replaced; delete them by hand if they are no longer wanted.
+`<id>.run-record.json`) are not renamed or replaced. A run prints a `warning: legacy workflow-v2
+outputs ...` line when it finds them in `--output-dir`; delete them by hand if they are no longer
+wanted. Coexisting outputs mean one lift can have more than one `analysis-v1`; see step 3 for which
+one to import.
 
 - `<id>.<impl>.prediction-v1.json`: the tracker's `--omit-runtime` output, unedited, whole clip from
   the seed;
@@ -282,7 +289,20 @@ confidence differences. That held for the 12-frame public synthetic fixture (byt
 prediction and sidecar with `--omit-runtime`) and for an 832-frame private clip (identical apart from
 `runtime`, compared in default mode). Another GPU model, driver, or torch or CUDA build may give
 different numbers. The prediction records those under `implementation.config`, and the run record
-states this limit in `configuration.tracker_determinism`.
+states this limit in `configuration.tracker_determinism`. The same applies to CSRT: its byte identity
+was observed with the OpenCV and NumPy versions in the run record, on CPU.
+
+`implementation.config` is part of the hashed prediction (`prediction_sha256`). For SAM 2 it also
+holds two fields that are not tracking results and can change between otherwise identical runs:
+
+- `peak_gpu_memory_mb`, the CUDA allocator's peak, which can move with allocator or kernel choices;
+- `driver_version`, which falls back to `"unknown"` if `nvidia-smi` fails during that run.
+
+Both were identical in the runs above. If two SAM 2 predictions differ only in those fields, the
+tracking is the same; compare `samples` before calling it a determinism failure. They stay in the
+prediction even under `--omit-runtime`. They are hardware provenance that should travel with the
+derived data, and removing them would add a second, run-dependent output shape to `track_gpu.py`
+for a variation that has not been observed.
 
 The opt-in tests `OPENBAR_VBT_E2E=1 ... -k EndToEnd` in `research/vbt-workflow/tests` check both
 trackers with the real tools. The SAM 2 test also checks that CSRT and SAM 2 outputs coexist in one
@@ -294,6 +314,13 @@ checkpoint is missing, as it is in CI.
 
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
 
+- **One analysis per lift.** Import exactly one `analysis-v1` per lift into the recommender (3a). An
+  output folder can hold `<id>.opencv-csrt.analysis-v1.json`, `<id>.sam2.1-bplus-circle.analysis-v1.json`
+  and a legacy workflow-v2 `<id>.analysis-v1.json` for the same video. Import the file from the
+  tracker that the import policy names (`analysis.provenance.tracker` and the run record's
+  `configuration.tracker` say which tracker that is). Never import two trackers' analyses of one lift
+  as separate trials, and don't import a legacy unnamed file when a tracker-named one exists.
+  Comparing trackers belongs in the 3b report or step 4, not in the training history.
 - **Mapping to vertical-up.** `analysis-v1` calibrated and kinematic coordinates use
   `calibration.coordinate_convention` = `reference_centre_x_right_y_up`, so `y_m` and `vy_mps` are
   already upward-positive. Use them as-is: displacement = y_m − y_m at the first sample, velocity =

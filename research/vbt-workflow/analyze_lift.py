@@ -229,22 +229,36 @@ def resolve_openbar_cli(value: str) -> Path:
     return binary
 
 
+def on_disk_name(folder: Path, name: str, flag: str) -> str:
+    """`name` as the directory listing spells it (Windows matches case-insensitively, PATHEXT adds `.EXE`)."""
+    try:
+        entries = os.listdir(folder)
+    except OSError as error:
+        raise WorkflowError(f"{flag}: cannot list {folder}: {error}") from error
+    if name in entries:
+        return name
+    matches = [entry for entry in entries if entry.casefold() == name.casefold()]
+    if len(matches) != 1:
+        raise WorkflowError(f"{flag}: cannot find the on-disk spelling of {name} in {folder}")
+    return matches[0]
+
+
 def resolve_gpu_python(value: str) -> str:
     """Return the GPU venv interpreter as a repository-relative path (run from the root and recorded).
 
-    Links are not followed: a POSIX venv `python` is a symlink to the base interpreter outside the
-    repository, and a venv folder may itself be a link. The venv is identified by the path that was
-    invoked, so containment is checked on the normalised absolute path.
+    Directory links are followed, so a venv folder that links outside the repository is refused. The
+    final file name is not followed: a POSIX venv `python` is a symlink to the base interpreter, and
+    the venv is identified by its own folder. The recorded path is the resolved folder plus the file
+    name as listed on disk, so the same interpreter is recorded identically however it was typed.
     """
-    interpreter = Path(os.path.abspath(find_executable(value, "--gpu-python")))
-    try:
-        relative = interpreter.relative_to(Path(os.path.abspath(ROOT)))
-    except ValueError as error:
+    interpreter = find_executable(value, "--gpu-python")
+    folder = safe_resolve(interpreter.parent)
+    if not is_within(folder, ROOT):
         raise WorkflowError(
-            f"--gpu-python {interpreter} is outside the repository; use the GPU venv, "
-            "e.g. research/gpu-tracking/.venv/Scripts/python.exe"
-        ) from error
-    return relative.as_posix()
+            f"--gpu-python {value} is outside the repository (its folder resolves to {folder}); use the GPU "
+            "venv, e.g. research/gpu-tracking/.venv/Scripts/python.exe"
+        )
+    return f"{display_path(folder)}/{on_disk_name(folder, interpreter.name, '--gpu-python')}"
 
 
 # --- Inputs --------------------------------------------------------------------------------------
@@ -429,6 +443,23 @@ def output_paths(output_dir: Path, fixture_id: str, tracker: str) -> dict[str, P
         "analysis": stem.with_name(f"{stem.name}.analysis-v1.json"),
         "run_record": stem.with_name(f"{stem.name}.run-record.json"),
     }
+
+
+def legacy_output_paths(output_dir: Path, fixture_id: str) -> list[Path]:
+    """Workflow-v2 names without the tracker; v3 never writes, renames or deletes them."""
+    return [output_dir / f"{fixture_id}.analysis-v1.json", output_dir / f"{fixture_id}.run-record.json"]
+
+
+def warn_about_legacy_outputs(output_dir: Path, fixture_id: str) -> None:
+    legacy = [path for path in legacy_output_paths(output_dir, fixture_id) if path.exists()]
+    if legacy:
+        print(
+            "warning: legacy workflow-v2 outputs (no tracker in the name) are next to this run's outputs: "
+            + ", ".join(display_path(path) for path in legacy)
+            + ". They are left untouched; import exactly one analysis-v1 per lift into the recommender "
+            "(the tracker your policy names) and delete stale files by hand.",
+            file=sys.stderr,
+        )
 
 
 def staged_paths(paths: dict[str, Path]) -> dict[str, Path]:
@@ -674,6 +705,7 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
     fixture_id = fixture_id_for(video_sha256)
     paths = output_paths(args.output_dir, fixture_id, args.tracker)
     require_output_dir(args.output_dir, runner, paths)
+    warn_about_legacy_outputs(args.output_dir, fixture_id)
     existing = [path for path in paths.values() if path.exists()]
     if existing and not args.force:
         raise WorkflowError(

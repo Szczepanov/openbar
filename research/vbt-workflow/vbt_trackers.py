@@ -50,8 +50,10 @@ TRACKERS: dict[str, TrackerSpec] = {
         needs_gpu_python=False,
         geometry_sidecar=False,
         determinism={
-            "prediction": "byte_identical_rerun",
-            "basis": "track.py --omit-runtime on CPU; checked by the OPENBAR_VBT_E2E=1 test",
+            "prediction": "byte_identical_rerun_observed_same_opencv_cpu_stack",
+            "basis": "track.py --omit-runtime on CPU; byte-identical reruns observed with the OpenCV and NumPy "
+                     "versions recorded in this run record (checked by the OPENBAR_VBT_E2E=1 test). Observed, not "
+                     "guaranteed: another OpenCV/NumPy build or CPU may differ.",
         },
     ),
     "sam2.1-bplus-circle": TrackerSpec(
@@ -65,7 +67,10 @@ TRACKERS: dict[str, TrackerSpec] = {
             "basis": "track_gpu.py --omit-runtime; two runs on one RTX 3060 Ti gave identical samples (max centre "
                      "difference 0 px) on the 12-frame public synthetic fixture and an 832-frame private clip. "
                      "Observed, not guaranteed: another GPU model, driver, torch or CUDA build may differ; "
-                     "implementation.config in the prediction records them.",
+                     "implementation.config in the prediction records them. That config is part of the hashed "
+                     "prediction and also holds peak_gpu_memory_mb (CUDA allocator peak) and driver_version "
+                     "('unknown' if nvidia-smi fails), which can change between otherwise identical runs; a byte "
+                     "difference confined to those fields is not a tracking difference.",
         },
     ),
 }
@@ -123,6 +128,27 @@ def require_cuda(runner: Runner, gpu_python: str) -> None:
         )
 
 
+def require_sidecar_identity(spec: TrackerSpec, fixture_id: str, sidecar: Any) -> None:
+    """The sidecar must be a format-0 geometry sidecar from this tracker for this fixture."""
+    if not isinstance(sidecar, dict):
+        raise WorkflowError("the geometry sidecar is not a JSON object")
+    if sidecar.get("format") != GEOMETRY_SIDECAR_FORMAT:
+        raise WorkflowError(f"the geometry sidecar format is {sidecar.get('format')!r}, "
+                            f"expected {GEOMETRY_SIDECAR_FORMAT!r}")
+    if sidecar.get("format_version") != 0:
+        raise WorkflowError(f"the geometry sidecar has format_version {sidecar.get('format_version')!r}, expected 0")
+    if sidecar.get("fixture_id") != fixture_id:
+        raise WorkflowError(f"the geometry sidecar is for fixture {sidecar.get('fixture_id')!r}, "
+                            f"expected {fixture_id!r}")
+    implementation = sidecar.get("implementation")
+    if not isinstance(implementation, dict):
+        raise WorkflowError(f"the geometry sidecar implementation must be a JSON object, "
+                            f"got {type(implementation).__name__}")
+    if implementation.get("name") != spec.implementation:
+        raise WorkflowError(f"the geometry sidecar is from {implementation.get('name')!r}, "
+                            f"expected {spec.implementation!r}")
+
+
 def require_tracker_outputs(spec: TrackerSpec, fixture_id: str, prediction: dict[str, Any],
                             staged: dict[str, Path]) -> None:
     """The staged prediction (and sidecar) must come from the requested tracker for this fixture."""
@@ -138,12 +164,7 @@ def require_tracker_outputs(spec: TrackerSpec, fixture_id: str, prediction: dict
         sidecar = schema_check.load_strict(staged["geometry"])
     except (schema_check.DocumentError, OSError) as error:
         raise WorkflowError(f"cannot read the geometry sidecar: {error}") from error
-    if (not isinstance(sidecar, dict) or sidecar.get("format") != GEOMETRY_SIDECAR_FORMAT
-            or sidecar.get("format_version") != 0
-            or sidecar.get("fixture_id") != fixture_id
-            or sidecar.get("implementation", {}).get("name") != spec.implementation):
-        raise WorkflowError(f"the geometry sidecar is not a {GEOMETRY_SIDECAR_FORMAT} format 0 for "
-                            f"{spec.implementation} and {fixture_id}")
+    require_sidecar_identity(spec, fixture_id, sidecar)
     if sidecar.get("implementation") != prediction.get("implementation"):
         raise WorkflowError("the geometry sidecar implementation/provenance does not match the tracker prediction")
 

@@ -157,7 +157,13 @@ the input hashes and the OpenBar git state.
 write LF line endings. With CSRT, repeated workflow runs give byte-identical predictions and
 `analysis-v1`. With SAM 2 (GPU, bfloat16), two runs on the same RTX 3060 Ti were identical (max
 centre difference 0 px), but that is observed, not guaranteed across GPUs, drivers or torch/CUDA
-builds; the run record says so. Both scripts' default output still includes `runtime`. The full
+builds; the run record says so. CSRT's identity is likewise observed with the recorded OpenCV/NumPy
+versions on CPU. A SAM 2 prediction's hashed `implementation.config` also holds
+`peak_gpu_memory_mb` (CUDA allocator peak) and `driver_version` (`"unknown"` if `nvidia-smi` fails).
+Both can change between otherwise identical runs, so compare `samples` before treating a hash
+difference as a tracking difference. Coexisting tracker outputs mean exactly one `analysis-v1` per
+lift should be imported into the recommender: the one from the tracker the import policy names.
+Both scripts' default output still includes `runtime`. The full
 owner flow, outputs and fail-closed rules are in
 [`docs/plans/VBT_WORKFLOW_PLAN.md`](../plans/VBT_WORKFLOW_PLAN.md) (step 2).
 

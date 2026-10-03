@@ -20,7 +20,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from unittest import mock
 
 WORKFLOW_DIR = Path(__file__).resolve().parents[1]
@@ -81,8 +81,12 @@ class FakeRunner(analyze_lift.Runner):
                  fail_message: str | None = None, bad_prediction: bool = False, bad_analysis: bool = False,
                  bad_geometry: bool = False, misaligned_geometry: bool = False,
                  wrong_implementation: bool = False, ignored: bool = False,
-                 torch: bool = True, sam2: bool = True, cuda: bool = True) -> None:
+                 torch: bool = True, sam2: bool = True, cuda: bool = True,
+                 sidecar_edit: Callable[[dict[str, Any]], Any] | None = None,
+                 skip_geometry: bool = False) -> None:
         self.missing = set(missing)
+        self.sidecar_edit = sidecar_edit  # returns the document to write instead of the good sidecar
+        self.skip_geometry = skip_geometry  # track_gpu.py "succeeds" without writing the sidecar
         self.fail_step = fail_step
         self.fail_message = fail_message
         self.bad_prediction = bad_prediction
@@ -135,7 +139,7 @@ class FakeRunner(analyze_lift.Runner):
             ],
         }, indent=2) + "\n"
         output.write_text(text, encoding="utf-8")
-        if gpu:
+        if gpu and not self.skip_geometry:
             geometry = ROOT / argv[argv.index("--geometry-output") + 1]
             sidecar = {"format": "openbar-research-geometry-sidecar", "format_version": 0,
                        "fixture_id": argv[argv.index("--fixture") + 1],
@@ -146,6 +150,8 @@ class FakeRunner(analyze_lift.Runner):
                             "fit_attempted": False, "accepted": False,
                             "reject_reasons": ["frame_missing"], "base_confidence": 0.0},
                        ]}
+            if self.sidecar_edit is not None:
+                sidecar = self.sidecar_edit(sidecar)
             geometry.write_text("[]\n" if self.bad_geometry else json.dumps(sidecar, indent=2) + "\n",
                                 encoding="utf-8")
 
@@ -941,7 +947,28 @@ class Sam2TrackerTests(WorkflowTestCase):
         configuration = self.record()["configuration"]
         self.assertEqual((configuration["tracker"], configuration["tracker_implementation"]), ("csrt", "opencv-csrt"))
         self.assertEqual(configuration["tracker_script"], "research/opencv-tracking/track.py")
-        self.assertEqual(configuration["tracker_determinism"]["prediction"], "byte_identical_rerun")
+        self.assertEqual(configuration["tracker_determinism"]["prediction"],
+                         "byte_identical_rerun_observed_same_opencv_cpu_stack")
+        self.assertIn("not guaranteed", configuration["tracker_determinism"]["basis"])
+
+    def test_legacy_v2_outputs_trigger_a_warning_and_are_left_alone(self) -> None:
+        self.output_dir.mkdir()
+        legacy = {name: self.output_dir / f"{FIXTURE_ID}.{name}" for name in ("analysis-v1.json", "run-record.json")}
+        for path in legacy.values():
+            path.write_text("workflow v2 output\n", encoding="utf-8")
+        for argv in (self.run_args(), self.sam2_args()):
+            code, _, stderr, _ = self.main(argv)
+            self.assertEqual(code, 0, stderr)
+            self.assertIn("warning: legacy workflow-v2 outputs", stderr)
+            for path in legacy.values():
+                self.assertIn(path.name, stderr)
+                self.assertEqual(path.read_text(encoding="utf-8"), "workflow v2 output\n")
+            self.assertIn("import exactly one analysis-v1 per lift", stderr)
+
+    def test_no_legacy_warning_without_legacy_outputs(self) -> None:
+        code, _, stderr, _ = self.main(self.run_args())
+        self.assertEqual(code, 0, stderr)
+        self.assertNotIn("legacy", stderr)
 
     def test_missing_gpu_python_fails_closed(self) -> None:
         argv = self.run_args(tracker=["--tracker", SAM2, "--gpu-python", str(self.dir / "nowhere" / "python")])
@@ -961,6 +988,84 @@ class Sam2TrackerTests(WorkflowTestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("outside the repository", stderr)
         self.assert_nothing_happened(runner)
+
+    def make_dir_link(self, link: Path, target: Path) -> Callable[[], None]:
+        """A directory link (Windows junction, else symlink). The returned remover deletes only the link."""
+        try:
+            if sys.platform == "win32":
+                import _winapi
+                _winapi.CreateJunction(str(target), str(link))
+            else:
+                os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError) as error:
+            self.skipTest(f"directory links not permitted here: {error}")
+
+        def remove() -> None:
+            if os.path.lexists(link):
+                (os.rmdir if sys.platform == "win32" else os.unlink)(link)
+
+        self.addCleanup(remove)  # before the temporary tree is deleted, so its target is never walked
+        return remove
+
+    def test_gpu_python_behind_a_directory_link_to_outside_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="openbar-outside-") as outside:
+            name = "python.exe" if sys.platform == "win32" else "python"
+            interpreter = Path(outside) / name
+            interpreter.write_bytes(b"fake interpreter")
+            interpreter.chmod(interpreter.stat().st_mode | stat.S_IXUSR)
+            link = self.dir / "linked-venv"
+            remove_link = self.make_dir_link(link, Path(outside))
+            try:
+                code, _, stderr, runner = self.main(
+                    self.run_args(tracker=["--tracker", SAM2, "--gpu-python", str(link / name)]))
+            finally:
+                remove_link()  # before `outside` is deleted
+        self.assertNotEqual(code, 0)
+        self.assertIn("outside the repository", stderr)
+        self.assert_nothing_happened(runner)
+
+    def test_gpu_python_behind_a_directory_link_inside_the_repository_records_the_real_path(self) -> None:
+        interpreter = self.make_gpu_python()
+        link = self.dir / "venv-link"
+        self.make_dir_link(link, interpreter.parent)
+        expected = analyze_lift.display_path(interpreter)
+        recorded = analyze_lift.resolve_gpu_python(str(link / interpreter.name))
+        self.assertEqual(recorded, expected)
+        self.assertNotIn("venv-link", recorded)
+
+    def gpu_python_spellings(self, interpreter: Path) -> list[str]:
+        """The same interpreter typed in several ways the platform accepts."""
+        spellings = [str(interpreter)]
+        if sys.platform == "win32":
+            spellings.append(str(interpreter.with_name(interpreter.stem)))  # `.exe` omitted (PATHEXT adds .EXE)
+        shouted = interpreter.parent.parent / interpreter.parent.name.upper() / interpreter.name.upper()
+        if shouted.is_file():  # only on a case-insensitive file system
+            spellings.append(str(shouted))
+        return spellings
+
+    def test_recorded_gpu_python_uses_the_on_disk_spelling(self) -> None:
+        interpreter = self.make_gpu_python()
+        expected = analyze_lift.display_path(interpreter)
+        self.assertTrue(expected.endswith("/python.exe" if sys.platform == "win32" else "/python"), expected)
+        spellings = self.gpu_python_spellings(interpreter)
+        if len(spellings) == 1:
+            self.skipTest("this platform accepts only one spelling of the interpreter path")
+        for spelling in spellings:
+            with self.subTest(spelling):
+                self.assertEqual(analyze_lift.resolve_gpu_python(spelling), expected)
+
+    def test_forced_rerun_with_another_spelling_gives_an_identical_run_record(self) -> None:
+        interpreter = self.make_gpu_python()
+        spellings = self.gpu_python_spellings(interpreter)
+        tracker = ["--tracker", SAM2, "--gpu-python"]
+        code, _, stderr, _ = self.main(self.run_args(tracker=[*tracker, spellings[0]]))
+        self.assertEqual(code, 0, stderr)
+        first = self.paths(SAM2)["run_record"].read_bytes()
+        self.assertEqual(self.record(SAM2)["environment"]["gpu_python"],
+                         {"path": analyze_lift.display_path(interpreter)})
+        code, _, stderr, _ = self.main(self.run_args("--force", tracker=[*tracker, spellings[-1]]))
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.paths(SAM2)["run_record"].read_bytes(), first)
 
     def test_gpu_python_without_torch_fails_closed(self) -> None:
         code, _, stderr, runner = self.main(self.sam2_args(), FakeRunner(torch=False))
@@ -1015,6 +1120,43 @@ class Sam2TrackerTests(WorkflowTestCase):
         code, _, stderr, _ = self.main(self.run_args(), FakeRunner(wrong_implementation=True))
         self.assertIn("expected 'opencv-csrt'", stderr)
         self.assertEqual(self.outputs(), [])
+
+    def test_each_sidecar_guard_fails_closed(self) -> None:
+        # Each case breaks exactly one property; without the matching guard the run would succeed.
+        def edit(**changes: Any) -> Callable[[dict[str, Any]], dict[str, Any]]:
+            return lambda sidecar: {**sidecar, **changes}
+
+        def samples(count: int) -> Callable[[dict[str, Any]], dict[str, Any]]:
+            return lambda sidecar: {**sidecar, "samples": [
+                {"timestamp_s": round(1.5 + 0.1 * index, 1), "fit_attempted": False, "accepted": True}
+                for index in range(count)
+            ]}
+
+        def implementation(value: Any) -> Callable[[dict[str, Any]], dict[str, Any]]:
+            return lambda sidecar: {**sidecar, "implementation": value}
+
+        cases = {
+            "format_version": (FakeRunner(sidecar_edit=edit(format_version=1)), "format_version 1, expected 0"),
+            "fixture_id": (FakeRunner(sidecar_edit=edit(fixture_id="vbt-0000000000000000")),
+                           "geometry sidecar is for fixture 'vbt-0000000000000000'"),
+            "provenance": (FakeRunner(sidecar_edit=lambda sidecar: {
+                **sidecar, "implementation": {**sidecar["implementation"], "version": "gpu-spike-2"}}),
+                "implementation/provenance does not match"),
+            "extra_sample": (FakeRunner(sidecar_edit=samples(3)), "3 geometry samples for 2 prediction samples"),
+            "missing_sample": (FakeRunner(sidecar_edit=samples(1)), "1 geometry samples for 2 prediction samples"),
+            "missing_file": (FakeRunner(skip_geometry=True), "cannot read the geometry sidecar"),
+            "implementation_null": (FakeRunner(sidecar_edit=implementation(None)),
+                                    "geometry sidecar implementation must be a JSON object"),
+            "implementation_list": (FakeRunner(sidecar_edit=implementation([SAM2])),
+                                    "geometry sidecar implementation must be a JSON object"),
+        }
+        for label, (runner, needle) in cases.items():
+            with self.subTest(label):
+                code, _, stderr, _ = self.main(self.sam2_args(), runner)
+                self.assertNotEqual(code, 0)
+                self.assertIn(needle, stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertEqual(self.outputs(), [])
 
     def test_leftover_staged_sidecar_is_removed(self) -> None:
         self.output_dir.mkdir()
@@ -1128,12 +1270,20 @@ class EndToEndSam2Tests(EndToEndBase):
 
     Skips without the GPU venv (OPENBAR_VBT_GPU_PYTHON or research/gpu-tracking/.venv), torch, a CUDA
     device, or the SHA-verified checkpoint in validation/private/models/. CI has none of these.
+
+    Byte identity was observed on one RTX 3060 Ti stack, not guaranteed. On a different GPU, driver, or
+    torch/CUDA build, a failure here is a determinism signal to record (compare the samples and
+    implementation.config), not necessarily a workflow bug.
     """
 
     def setUp(self) -> None:
         self.gpu_python = default_gpu_python()
         if not self.gpu_python.is_file():
             self.skipTest(f"SKIPPED: no GPU venv interpreter at {self.gpu_python}")
+        try:
+            analyze_lift.resolve_gpu_python(str(self.gpu_python))
+        except analyze_lift.WorkflowError as error:
+            self.skipTest(f"SKIPPED: the GPU venv is not usable by the workflow: {error}")
         probe = subprocess.run([str(self.gpu_python), "-c", analyze_lift.CUDA_PROBE],
                                capture_output=True, text=True, encoding="utf-8", errors="replace")
         if probe.returncode != 0:
