@@ -44,8 +44,8 @@ const IMAGES = /*IMAGES*/null;
 
 // BEGIN sessionPure (pure; exercised by research/vbt-workflow/tests/test_session_page.py)
 const ITEMS = ["plate_center", "plate_radius", "stick_low", "stick_high"];
-const TOLERANCE = 0.005;
-function round2(v) { return Math.round(v * 100) / 100; }
+// The CSV writes v.toFixed(2); every comparison uses the same rounding (session_contract.py compares exactly).
+function round2(v) { return Number(v.toFixed(2)); }
 function suggestedValues(clip) {
   const p = clip.suggestions.plate, s = clip.suggestions.stick;
   return {
@@ -63,7 +63,7 @@ function itemStatus(clip, state, item) {
   const value = state.values[item], suggested = suggestedValues(clip)[item];
   if (!value) return "missing";
   if (!suggested) return "manual";
-  return value.every((v, i) => Math.abs(round2(v) - suggested[i]) <= TOLERANCE) ? "accepted" : "adjusted";
+  return value.every((v, i) => round2(v) === suggested[i]) ? "accepted" : "adjusted";
 }
 function pointInWindow(x, y, w, h) {
   return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x < w - 0.5 && y < h - 0.5;
@@ -152,6 +152,7 @@ try {
 } catch (e) { /* start fresh */ }
 const views = [];
 let selected = null;  // {clip, item}
+let dragStart = null;  // screen position where the current handle drag began
 
 function save() { try { localStorage.setItem(KEY, JSON.stringify(states)); } catch (e) {} }
 function update(i, state) { states[i] = state; save(); render(i); renderHeader(); }
@@ -277,7 +278,10 @@ function buildClip(clip, i) {
   views[i] = { card, canvas, image, status, problem, exercise, confirm, skip, zoomButtons, zoom: 1, ox: 0, oy: 0 };
   canvas.addEventListener("pointerdown", e => {
     const pt = eventPoint(i, e), item = hit(i, pt);
-    if (item) { selected = { clip: i, item }; canvas.setPointerCapture(e.pointerId); render(i); return; }
+    if (item) {
+      selected = { clip: i, item }; dragStart = { x: e.clientX, y: e.clientY, moved: false };
+      canvas.setPointerCapture(e.pointerId); render(i); return;
+    }
     const missing = nextMissing(states[i]);
     if (!missing || !pointInWindow(pt.x, pt.y, clip.width_px, clip.height_px)) return;
     selected = { clip: i, item: missing };
@@ -286,6 +290,9 @@ function buildClip(clip, i) {
   });
   canvas.addEventListener("pointermove", e => {
     if (!selected || selected.clip !== i || !canvas.hasPointerCapture(e.pointerId)) return;
+    // A 1-px threshold keeps a tap that selects a handle from also moving (and so "adjusting") it.
+    if (dragStart && !dragStart.moved && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) < 1) return;
+    if (dragStart) dragStart.moved = true;
     const pt = eventPoint(i, e); moveSelected(i, pt.x, pt.y);
   });
   return card;
@@ -305,7 +312,7 @@ document.getElementById("download").onclick = () => {
   if (problem) { alert(problem); return; }
   const url = URL.createObjectURL(new Blob([sessionCsv(CONFIG, states)], { type: "text/csv" }));
   const a = document.createElement("a"); a.href = url; a.download = "vbt-session-" + CONFIG.session_id + ".csv"; a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);  // some browsers read the blob after click() returns
 };
 document.getElementById("title").textContent = "VBT session " + CONFIG.session_id + " · page " + CONFIG.page_id;
 const container = document.getElementById("clips");

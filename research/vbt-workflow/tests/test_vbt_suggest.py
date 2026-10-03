@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 WORKFLOW_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKFLOW_DIR))
@@ -130,6 +131,31 @@ class FrameFileTests(unittest.TestCase):
             cv2.imwrite(str(path), image)
             result = vbt_suggest.suggest_frame(path)
         self.assertEqual({result["plate"]["status"], result["stick"]["status"]}, {"suggested"})
+
+    def test_a_raising_method_fails_only_its_item(self) -> None:
+        image = blank()
+        draw_plate(image, (240.0, 610.0), 120.0)
+        draw_stick(image, 500, 150, 900, [220, 500, 800])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "frame_000000.png"
+            cv2.imwrite(str(path), image)
+            with mock.patch.object(vbt_suggest, "suggest_plate", side_effect=RuntimeError("boom")):
+                result = vbt_suggest.suggest_frame(path)
+        self.assertEqual(result["plate"]["status"], "failed")
+        self.assertIn("boom", result["plate"]["reason"])
+        self.assertEqual(result["stick"]["status"], "suggested")
+
+    def test_id_covers_the_parameters(self) -> None:
+        image = blank()
+        draw_plate(image, (240.0, 610.0), 120.0)
+        default = vbt_suggest.suggest_plate(image)
+        other = vbt_suggest.suggest_plate(image, vbt_suggest.PlateParams(min_support=0.39))
+        self.assertEqual(default["center_x_px"], other["center_x_px"])
+        self.assertNotEqual(default["id"], other["id"])
+
+    def test_environment_records_versions(self) -> None:
+        self.assertEqual(vbt_suggest.environment(), {"opencv_version": cv2.__version__,
+                                                     "numpy_version": np.__version__})
 
     def test_unreadable_frame_fails_both(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

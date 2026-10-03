@@ -21,7 +21,8 @@ EXERCISES = ("snatch", "clean", "back_squat", "other")
 DECISIONS = ("confirmed", "skipped")
 STATUSES = ("accepted", "adjusted", "manual")
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-VALUE_TOLERANCE = 0.005  # coordinates are written with 2 decimals
+# Folder names next to sessions/ under validation/private/vbt/; a session must never be named like one.
+RESERVED_SESSION_IDS = ("media", "seeds", "analyses", "sam2", "sessions", "scale-report")
 
 IDENTITY_COLUMNS = [
     "format", "session_id", "page_id", "clip_index", "fixture_id", "source_video_sha256", "package_id",
@@ -60,6 +61,8 @@ def require(condition: bool, message: str) -> None:
 def require_session_id(value: str) -> str:
     require(SESSION_ID_RE.fullmatch(value) is not None,
             f"session id {value!r} must match {SESSION_ID_RE.pattern} (e.g. 2026-10-03)")
+    require(value.lower() not in RESERVED_SESSION_IDS,
+            f"session id {value!r} is reserved ({', '.join(RESERVED_SESSION_IDS)} are personal-workflow folders)")
     return value
 
 
@@ -139,8 +142,8 @@ def _check_status(row: dict[str, str], values: dict[str, float], number: int, cl
         else:
             require(row[f"{kind}_suggestion_id"] == suggestion["id"],
                     f"row {number}: {kind}_suggestion_id does not match the session's suggestion")
-            unchanged = all(abs(values[column] - float(suggestion[key])) <= VALUE_TOLERANCE
-                            for column, key in zip(columns, keys))
+            # Exact equality at the CSV's 2 decimals; the page decides with Number(v.toFixed(2)) the same way.
+            unchanged = all(values[column] == round(float(suggestion[key]), 2) for column, key in zip(columns, keys))
             require(status != "manual", f"row {number}: {status_column} cannot be manual: there was a suggestion")
             require(unchanged == (status == "accepted"),
                     f"row {number}: {status_column} is {status}, but the values are "

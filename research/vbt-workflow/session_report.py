@@ -178,7 +178,9 @@ def crops_html(crops: list[dict[str, Any]]) -> str:
             f"<image href='data:image/png;base64,{crop['png']}' width='{right - left}' height='{bottom - top}'/>"
             f"{overlay}</svg><figcaption>frame {crop['frame_index']} · t={num(crop['timestamp_s'], 3)} s · "
             f"{esc(crop['state'])}</figcaption></figure>")
-    return "<div class='crops'>" + "".join(cells) + "</div>"
+    legend = ("<p class='muted'>Orange dot: the tracked centre in that frame; orange circle: seed radius at the "
+              "tracked centre (the tracker's own radius is not drawn).</p>")
+    return "<div class='crops'>" + "".join(cells) + "</div>" + legend
 
 
 def rep_table(reps: list[dict[str, float]], ratio: float | None) -> str:

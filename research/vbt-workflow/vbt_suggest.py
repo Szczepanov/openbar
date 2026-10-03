@@ -161,7 +161,9 @@ def suggest_plate(image: np.ndarray, params: PlateParams = PlateParams()) -> dic
         return {**method, "status": "failed",
                 "reason": f"best circle has edge support {support:.2f} < {params.min_support}"}
     values = {"center_x_px": r2(cx), "center_y_px": r2(cy), "radius_px": r2(radius)}
-    return {**method, "status": "suggested", "id": suggestion_id(PLATE_METHOD, values),
+    if not _fits(values["center_x_px"], values["center_y_px"], values["radius_px"], width, height):
+        return {**method, "status": "failed", "reason": "the rounded circle does not fit inside the frame"}
+    return {**method, "status": "suggested", "id": suggestion_id(PLATE_METHOD, {**values, "parameters": asdict(params)}),
             "confidence": round(support, 4), **values}
 
 
@@ -266,8 +268,21 @@ def suggest_stick(image: np.ndarray, params: StickParams = StickParams()) -> dic
     values = {"low_x_px": r2(low[0]), "low_y_px": r2(low[1]), "high_x_px": r2(high[0]), "high_y_px": r2(high[1])}
     if not all(0 <= values[f"{end}_x_px"] < width and 0 <= values[f"{end}_y_px"] < height for end in ("low", "high")):
         return {**method, "status": "failed", "reason": "a marker lies outside the ADR-0007 point window"}
-    return {**method, "status": "suggested", "id": suggestion_id(STICK_METHOD, values),
+    return {**method, "status": "suggested", "id": suggestion_id(STICK_METHOD, {**values, "parameters": asdict(params)}),
             "confidence": round(min(1.0, low[2], high[2]), 4), "marker_count": len(markers), **values}
+
+
+def environment() -> dict[str, str]:
+    """Library versions that can change a suggestion; ingest records them in session.json."""
+    return {"opencv_version": cv2.__version__, "numpy_version": np.__version__}
+
+
+def _guarded(method: str, suggest: Any, *args: Any) -> dict[str, Any]:
+    """A method that raises fails only its own item, which the page then leaves for manual clicks."""
+    try:
+        return suggest(*args)
+    except Exception as error:  # noqa: BLE001 - any failure means "no suggestion", never a crash
+        return {"method": method, "status": "failed", "reason": f"{type(error).__name__}: {error}"}
 
 
 def suggest_frame(path: Path, plate: PlateParams = PlateParams(), stick: StickParams = StickParams()) -> dict[str, Any]:
@@ -276,4 +291,5 @@ def suggest_frame(path: Path, plate: PlateParams = PlateParams(), stick: StickPa
     if image is None:
         failure = {"status": "failed", "reason": f"cannot read {path.name}"}
         return {"plate": {"method": PLATE_METHOD, **failure}, "stick": {"method": STICK_METHOD, **failure}}
-    return {"plate": suggest_plate(image, plate), "stick": suggest_stick(image, stick)}
+    return {"plate": _guarded(PLATE_METHOD, suggest_plate, image, plate),
+            "stick": _guarded(STICK_METHOD, suggest_stick, image, stick)}

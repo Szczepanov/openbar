@@ -129,6 +129,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn("Skipped on the page: VID_2.mp4", html)
         self.assertEqual(len(re.findall(r"<polyline", html)), 2, "the gap splits the velocity line")
         self.assertIn("data:image/png;base64,cG5n", html)
+        self.assertIn("orange circle: seed radius at the tracked centre", html)
 
     def test_clip_without_scale_row(self) -> None:
         html = session_report.render_report("s", {}, [{**clip(two_reps()), "scale_row": None}], [])

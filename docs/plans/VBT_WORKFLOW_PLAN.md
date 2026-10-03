@@ -344,8 +344,14 @@ never overwritten. There is no Drive API access and no upload step.
 skipped (`--include-registered` adds it, reusing the registered copy). Re-running ingest keeps the
 session's clips in their order and appends new inbox videos in file-name order; identical inputs give
 a byte-identical `session.json` and `session.html`. The seed frame is frame 0, or the decoded frame
-nearest `--at-s <file name or fixture id>=<seconds>`, which is remembered for later ingests. Frames
-are decoded only through `label_package.py` (ADR-0006, PTS-checked).
+nearest `--at-s <file name or fixture id>=<seconds>`, which is remembered for later ingests (naming one
+clip both ways is refused). Frames are decoded only through `label_package.py` (ADR-0006, PTS-checked).
+Once a session has been run, ingest refuses to rebuild its page unless `--force` is given; it then
+removes `session-record.json` first, so the earlier run counts as incomplete until `run --force`.
+Session ids are limited to `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, and the names of the personal-workflow
+folders (`media`, `seeds`, `analyses`, `sam2`, `sessions`, `scale-report`) are reserved.
+Ingest needs OpenCV (the research venv) and stops with a clear message before copying anything
+without it. A suggester that raises leaves that clip's items for manual clicks.
 
 **Registration waits for the lift.** Ingest never writes the personal manifest. `label_package.py`
 needs a manifest to find the media, so ingest writes a session-local `frame-manifest.json` with only
@@ -353,15 +359,18 @@ the fields it reads (media path and SHA-256, raster size, rotation, `private_onl
 fixture manifest and is never passed to tracking or `analyze`. `run` registers each confirmed clip
 with the lift chosen on the page, through the same `analyze_lift.register_video` as `register`.
 Registering as `other` first and changing it later would rewrite a binding field of a manifest entry;
-deferring registration means an entry is only ever written once, with the confirmed lift. If a video
-is already registered with a different lift or plate diameter, `run` stops before writing anything and
-names both values; registered exercises are never changed silently.
+deferring registration means an entry is only ever written once, with the confirmed lift. Before
+writing anything, `run` drafts each clip's entry read-only (`analyze_lift.draft_entry`, which probes the
+video) and compares every binding field (`exercise`, `media`, `video`, `load`) with an existing entry of
+that id, as `register_video` would. On any difference it stops and names both values; registered
+entries are never changed silently.
 
 **Suggestions, confirmed by a human.** The owner approved this on 2026-10-03 (#95): the tool may
 *propose* the plate circle and the two stick markers, but nothing is used until the clip is confirmed
 on the page. Fully automatic seeding stays out of scope. `vbt_suggest.py` records each method id and
-its parameters in `session.json`; each suggestion has an id and a heuristic confidence in [0, 1]
-(not a probability):
+its parameters in `session.json`, with the OpenCV and NumPy versions (`suggester_environment`). Each
+suggestion has an id (a hash of the method, its parameters and the proposed values) and a heuristic
+confidence in [0, 1] (not a probability):
 
 - `plate-hough-edge-v1`: OpenCV Hough circles on a blurred, downscaled grey frame, limited to radii
   of 4–30 % of the shorter frame side and to circles that fit inside the frame. Each candidate is
@@ -385,6 +394,11 @@ rim and stick markers (zoom 1×/3×/6×, arrow keys nudge 1 px, Shift 0.25 px), 
 Confirm and Skip toggles. Confirm is disabled until every item is present, the circle fits inside the
 frame and a lift is chosen; any later edit withdraws the confirmation. The download is blocked until
 every clip is confirmed or skipped and at least one is confirmed. Progress autosaves in the browser.
+A drag starts only after the pointer moves 1 screen pixel, so tapping a handle to select it does not
+mark it `adjusted`. Status is decided at the CSV's precision on both sides: the page compares
+`Number(v.toFixed(2))` with the suggestion and `run` compares the 2-decimal values exactly. The page
+embeds each frame as PNG, about 1 MB per 1080 × 1920 clip (7.6 MB for the 8-clip session). Every `<`
+in the injected configuration is escaped, so a file name cannot break out of the script.
 
 **Session CSV contract** (`openbar-vbt-session-v1`, one row per clip in page order, header exactly):
 
@@ -449,21 +463,33 @@ videos, so `--sessions-root` must be under `validation/private/vbt/`):
   shows mean and peak concentric velocity at plate scale and stick-corrected (× stick/plate ratio).
   It is a labelled, non-authoritative **preview**: a rep is a run of positive `vy_mps` rising at least
   0.10 m; authoritative segmentation stays with the recommender. Then the scale-ratio table;
-- `session-record.json` (`openbar-research-vbt-session-record`, version 1): the CSV, session-state and
-  manifest paths and hashes, the configuration and tracker policy, per clip the decision, lift,
+- `session-record.json` (`openbar-research-vbt-session-record`, version 1): the path and SHA-256 of
+  the session CSV and of `session.json`, the personal manifest's path (each clip's own analyze_lift run
+  record holds the hash of its manifest entry), the configuration and tracker policy (including
+  `--openbar-cli` as a repository-relative path), the outputs removed as stale, per clip the decision, lift,
   tracker, item statuses, suggestion ids, video, seed, label CSV, click CSV and analyze_lift run-record
   hashes and the `analyze_lift.py` command, the `scale_reference.py report` command and output hashes,
   the report hash, and the OpenBar git state. It has no wall-clock time.
 
+`run` also re-derives the page id from `session.json` and refuses a state edited after ingest.
 Existing outputs are refused without `--force`. The session record is removed first and written last,
-so **a session without `session-record.json` is incomplete**; re-run with `--force`. Re-running with
-`--force` on the same inputs gives byte-identical seeds, analyses (CSRT), reports and session record
-(the recorded commands leave out `--force`). `--watch <folder>` polls every 2 s for
-`vbt-session-<session>.csv` (or a browser's `vbt-session-<session> (1).csv`), reads it once its size is
-stable, and stops after `--watch-timeout-s` (default 900 s, at most 6 h) with a message to download
-the CSV or pass `--csv`. Two candidates are refused as ambiguous.
+so **a session without `session-record.json` is incomplete**; re-run with `--force`. With `--force`,
+outputs of clips or trackers that this run does not produce (a clip now skipped, or a lift whose policy
+tracker changed) are removed right after the record, so they cannot look current next to the new set.
+Only file names the tool itself writes are removed, and the record lists them under
+`removed_stale_outputs`. Without `--force` their presence is refused like any other existing output.
+Re-running with `--force` on the same inputs gives byte-identical seeds, analyses (CSRT), reports and
+session record (the recorded commands leave out `--force`).
 
-Tests: `research/vbt-workflow/tests/test_vbt_session.py`, `test_session_contract.py`,
+`--watch <folder>` first snapshots every `vbt-session-<session>*.csv` already there (modification time
+and size) and ignores those files unless they change, so an old download from an earlier attempt is
+never run. The wide match covers the browsers' duplicate names (Chrome `X (1).csv`, Firefox and
+Safari `X(1).csv` or `X-1.csv`). It polls every 2 s, reads a new file once its size is stable across
+two polls, refuses two new candidates as ambiguous, and stops after `--watch-timeout-s` (default
+900 s, at most 6 h) with a message naming the ignored files.
+
+Tests: `research/vbt-workflow/tests/test_vbt_session.py`, `test_session_review_fixes.py`,
+`test_session_watch.py`, `test_session_contract.py`,
 `test_session_report.py`, `test_session_page.py` (node-gated) and `test_vbt_suggest.py` (OpenCV-gated)
 run with fakes; `OPENBAR_VBT_E2E=1` adds `test_vbt_session_e2e.py`, which runs ingest, a CSV written by
 the test, `run` and a byte-identical `--force` re-run on the public synthetic fixture.

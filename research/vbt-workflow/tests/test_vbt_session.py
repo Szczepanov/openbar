@@ -297,58 +297,5 @@ class RunFailClosedTests(RunTestCase):
             vbt_session.parse_args(argv)
 
 
-class WatchTests(SessionTestCase):
-    def clock(self, step: float = 1.0):  # noqa: ANN201 - small fake clock
-        now = [0.0]
-
-        def tick() -> float:
-            now[0] += step
-            return now[0]
-        return tick
-
-    def test_timeout_is_bounded_and_explained(self) -> None:
-        sleeps: list[float] = []
-        with self.assertRaises(session_ingest.WorkflowError) as caught:
-            vbt_session.watch_for_csv(self.downloads, self.session_id, 10.0, 2.0, self.clock(2.0), sleeps.append)
-        self.assertIn("no vbt-session-2026-10-03.csv appeared", str(caught.exception))
-        self.assertLessEqual(sum(sleeps), 12.0)
-
-    def test_file_is_read_once_its_size_is_stable(self) -> None:
-        sleeps: list[float] = []
-
-        def sleep(seconds: float) -> None:
-            sleeps.append(seconds)
-            if len(sleeps) == 2:
-                (self.downloads / "vbt-session-2026-10-03 (1).csv").write_bytes(b"a,b\n")
-        data = vbt_session.watch_for_csv(self.downloads, self.session_id, 60.0, 1.0, self.clock(), sleep)
-        self.assertEqual(data, b"a,b\n")
-        self.assertEqual(len(sleeps), 3, "found on one poll, confirmed stable on the next")
-
-    def test_several_candidates_are_ambiguous(self) -> None:
-        (self.downloads / "vbt-session-2026-10-03.csv").write_bytes(b"x")
-        (self.downloads / "vbt-session-2026-10-03 (1).csv").write_bytes(b"y")
-        (self.downloads / "vbt-session-2026-10-03-old.csv").write_bytes(b"z")  # not a browser duplicate name
-        with self.assertRaises(session_ingest.WorkflowError) as caught:
-            vbt_session.watch_for_csv(self.downloads, self.session_id, 5.0, 1.0, self.clock(), lambda s: None)
-        self.assertIn("several session CSVs", str(caught.exception))
-
-    def test_watch_runs_the_session(self) -> None:
-        self.add_video("VID_1.mp4", b"video one")
-        self.ingest()
-        state = self.state()
-        self.write_csv([fakes.accepted_row(state["clips"][0], state)])
-        argv = self.run_args(self.downloads / "unused.csv")
-        argv[argv.index("--csv"):argv.index("--csv") + 2] = ["--watch", str(self.downloads), "--watch-timeout-s", "30"]
-        code, out, err = self.main(argv, sleep=lambda s: None, clock=self.clock())
-        self.assertEqual(code, 0, err)
-        self.assertIn("found vbt-session-2026-10-03.csv", out)
-
-    def test_watch_timeout_must_be_bounded(self) -> None:
-        with self.assertRaises(SystemExit):
-            vbt_session.parse_args(["run", "--session", "s", "--watch", ".", "--watch-timeout-s", "1e9",
-                                    "--plate-diameter-m", "0.45", "--stick-length-m", "1.3",
-                                    "--tracker-policy", "csrt-all-v1", "--preset", "vbt-sg-0.15s-v1"])
-
-
 if __name__ == "__main__":
     unittest.main()

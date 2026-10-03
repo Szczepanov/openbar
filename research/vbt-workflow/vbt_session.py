@@ -42,31 +42,56 @@ def csv_name(session_id: str) -> str:
     return f"vbt-session-{session_id}.csv"
 
 
+def csv_candidates(folder: Path, session_id: str) -> dict[Path, tuple[int, int]]:
+    """Every vbt-session-<session>*.csv with its (mtime_ns, size).
+
+    The wide match covers the browsers' duplicate names: Chrome `X (1).csv`, Firefox/Safari `X(1).csv`
+    and `X-1.csv`. A file for another session that happens to match is still refused by the CSV check.
+    """
+    stem = csv_name(session_id)[:-len(".csv")]
+    found = {}
+    for path in folder.glob(f"{stem}*.csv"):
+        try:
+            info = path.stat()
+        except OSError:
+            continue  # vanished between listing and stat (a browser renaming its partial download)
+        if path.is_file():
+            found[path] = (info.st_mtime_ns, info.st_size)
+    return found
+
+
 def watch_for_csv(folder: Path, session_id: str, timeout_s: float, poll_s: float,
                   clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> bytes:
-    """Wait for exactly one vbt-session-<session>*.csv whose size is stable across two polls."""
+    """Wait for one session CSV that appears, or changes, after the watch starts.
+
+    Candidates present at the start are snapshotted (mtime and size) and ignored unless they change: an
+    old download from an earlier attempt must never be run after the page was edited. The file is read
+    once its size is unchanged across two polls; two new candidates at once are ambiguous.
+    """
     if not folder.is_dir():
         raise WorkflowError(f"--watch {folder} is not a folder")
-    stem = csv_name(session_id)[:-len(".csv")]
-    print(f"waiting up to {timeout_s:g} s for {csv_name(session_id)} in {folder} (Ctrl+C to stop)...", flush=True)
+    before = csv_candidates(folder, session_id)
+    print(f"waiting up to {timeout_s:g} s for a new {csv_name(session_id)} in {folder} (Ctrl+C to stop)...",
+          flush=True)
     deadline = clock() + timeout_s
-    last_size: int | None = None
+    last: tuple[Path, int] | None = None
     while True:
-        # Browsers name a repeated download "<name> (1).csv"; more than one candidate is ambiguous.
-        found = sorted(path for path in folder.glob(f"{stem}*.csv")
-                       if path.is_file() and path.name[len(stem):-4] in ("",) + tuple(f" ({n})" for n in range(1, 100)))
-        if len(found) > 1:
-            raise WorkflowError(f"several session CSVs in {folder} ({', '.join(path.name for path in found)}); "
+        fresh = sorted(path for path, stamp in csv_candidates(folder, session_id).items() if before.get(path) != stamp)
+        if len(fresh) > 1:
+            raise WorkflowError(f"several new session CSVs in {folder} ({', '.join(path.name for path in fresh)}); "
                                 "pass the right one with --csv")
-        if found:
-            size = found[0].stat().st_size
-            if size > 0 and size == last_size:
-                print(f"found {found[0].name}", flush=True)
-                return found[0].read_bytes()
-            last_size = size
+        if fresh:
+            size = fresh[0].stat().st_size
+            if size > 0 and last == (fresh[0], size):
+                print(f"found {fresh[0].name}", flush=True)
+                return fresh[0].read_bytes()
+            last = (fresh[0], size)
         if clock() >= deadline:
-            raise WorkflowError(f"no {csv_name(session_id)} appeared in {folder} within {timeout_s:g} s; download it "
-                                "from session.html, then run again (or pass --csv)")
+            ignored = "" if not before else (
+                f" ({len(before)} matching file(s) existed before the watch and were ignored: "
+                f"{', '.join(sorted(path.name for path in before))})")
+            raise WorkflowError(f"no new {csv_name(session_id)} appeared in {folder} within {timeout_s:g} s{ignored}; "
+                                "download it from session.html, then run again (or pass --csv)")
         sleep(poll_s)
 
 
@@ -80,7 +105,8 @@ def bounded_timeout(text: str) -> float:
 def add_session(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--session", required=True, help="session id, e.g. 2026-10-03")
     parser.add_argument("--sessions-root", type=Path, default=DEFAULT_SESSIONS_ROOT,
-                        help="under validation/private/vbt/ or target/ (default validation/private/vbt/sessions)")
+                        help="under validation/private/vbt/, because sessions hold frames of private videos "
+                             "(default validation/private/vbt/sessions)")
     parser.add_argument("--manifest", type=Path, default=analyze_lift.DEFAULT_MANIFEST,
                         help="personal manifest (default validation/private/vbt/manifest.json)")
 
@@ -97,6 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "(default frame 0); repeatable")
     ingest.add_argument("--include-registered", action="store_true",
                         help="also add inbox videos that are already in the personal manifest")
+    ingest.add_argument("--force", action="store_true",
+                        help="rebuild the page of a session that was already run; its session record is removed "
+                             "first, so that run is marked incomplete until `run --force`")
 
     run = sub.add_parser("run", help="validate the session CSV, then seed, track, analyze and report")
     add_session(run)

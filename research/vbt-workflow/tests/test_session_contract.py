@@ -88,6 +88,10 @@ class FailClosedTests(unittest.TestCase):
     def test_accepted_claim_with_changed_values(self) -> None:
         self.refused_row("values are changed", plate_center_x_px="401.50")
 
+    def test_accepted_means_exactly_equal_at_two_decimals(self) -> None:
+        self.refused_row("values are changed", plate_center_x_px="400.504")
+        self.refused_row("values are changed", plate_radius_px="180.26")
+
     def test_adjusted_claim_with_unchanged_values(self) -> None:
         self.refused_row("values are unchanged", stick_low_status="adjusted")
 

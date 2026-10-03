@@ -70,7 +70,7 @@ def session_paths(directory: Path) -> dict[str, Path]:
     return {"input_csv": directory / "session-input.csv", "seeds": directory / "seeds",
             "scale": directory / "scale", "analyses": directory / "analyses",
             "scale_report": directory / "scale-report", "report": directory / "report.html",
-            "record": directory / "session-record.json", "frames": directory / "report-frames"}
+            "record": directory / session_ingest.RECORD_NAME, "frames": directory / "report-frames"}
 
 
 def plan_clip(clip: dict[str, Any], decision: dict[str, Any], tracker: str, paths: dict[str, Path]) -> dict[str, Any]:
@@ -87,7 +87,11 @@ def plan_clip(clip: dict[str, Any], decision: dict[str, Any], tracker: str, path
 
 
 def check_registrations(plans: list[dict[str, Any]], manifest: Path, plate: float) -> None:
-    """Fail before any write when a registered entry disagrees with the confirmed lift or plate."""
+    """Fail before any write when registration would conflict, exactly as analyze_lift.register_video would.
+
+    Each clip's entry is drafted read-only (`draft_entry`, which probes the video) and compared on every
+    analyze_lift.BINDING_FIELDS field (exercise, media, video, load) with an existing entry of that id.
+    """
     fixtures = analyze_lift.load_manifest_fixtures(manifest)
     for plan in plans:
         clip, exercise = plan["clip"], plan["decision"]["exercise"]
@@ -95,16 +99,17 @@ def check_registrations(plans: list[dict[str, Any]], manifest: Path, plate: floa
             same_media = str(fixture.get("media", {}).get("sha256", "")).lower() == clip["sha256"]
             if same_media and fixture.get("id") != clip["fixture_id"]:
                 raise WorkflowError(f"{clip['original_name']} is already registered as '{fixture.get('id')}'")
-            if fixture.get("id") != clip["fixture_id"]:
-                continue
-            if fixture.get("exercise") != exercise:
-                raise WorkflowError(
-                    f"{clip['fixture_id']} ({clip['original_name']}) is registered as {fixture.get('exercise')!r} in "
-                    f"{rel(manifest)}, but the page says {exercise!r}; fix the page choice or that entry deliberately "
-                    "(registered exercises are never changed silently)")
-            if fixture.get("load", {}).get("plate_diameter_m") != plate:
-                raise WorkflowError(f"{clip['fixture_id']} is registered with plate diameter "
-                                    f"{fixture.get('load', {}).get('plate_diameter_m')} m, not {plate} m")
+        existing = next((fixture for fixture in fixtures if fixture.get("id") == clip["fixture_id"]), None)
+        if existing is None:
+            continue
+        drafted = analyze_lift.draft_entry(plan["media"], clip["fixture_id"], plate, exercise)
+        conflicts = [field for field in analyze_lift.BINDING_FIELDS if existing.get(field) != drafted[field]]
+        if conflicts:
+            raise WorkflowError(
+                f"{clip['fixture_id']} ({clip['original_name']}) is registered as {existing.get('exercise')!r} in "
+                f"{rel(manifest)}, and this run differs in {', '.join(conflicts)} "
+                f"({analyze_lift.describe_conflicts(existing, drafted, conflicts)}); fix the page choice or that "
+                "entry deliberately (registered entries are never changed silently)")
 
 
 def planned_outputs(plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
@@ -113,6 +118,28 @@ def planned_outputs(plans: list[dict[str, Any]], paths: dict[str, Path]) -> list
     for plan in plans:
         outputs += [plan["seed"], plan["label_csv"], plan["click_csv"], *plan["outputs"].values()]
     return outputs
+
+
+def known_clip_outputs(session: dict[str, Any], paths: dict[str, Path]) -> list[Path]:
+    """Every per-clip file name this tool writes, for every clip of the session and every tracker."""
+    outputs = []
+    for clip in session["clips"]:
+        fixture_id = clip["fixture_id"]
+        outputs += [paths["seeds"] / f"{fixture_id}.manual-target-seed-v1.json",
+                    paths["seeds"] / f"{fixture_id}.session-label.csv",
+                    paths["scale"] / f"{fixture_id}.scale-reference.csv"]
+        for tracker in sorted(TRACKERS):
+            outputs += analyze_lift.output_paths(paths["analyses"], fixture_id, tracker).values()
+        outputs += sorted((paths["frames"] / fixture_id).glob("frame_*.png"))
+    return outputs
+
+
+def stale_outputs(session: dict[str, Any], plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
+    """Existing outputs of an earlier run that this run will not rewrite (dropped clips, other trackers)."""
+    planned = set(planned_outputs(plans, paths))
+    kept_frames = {paths["frames"] / plan["clip"]["fixture_id"] for plan in plans}
+    return [path for path in known_clip_outputs(session, paths)
+            if path.exists() and path not in planned and path.parent not in kept_frames]
 
 
 def resolve_trackers(args: argparse.Namespace, decisions: list[dict[str, Any]],
@@ -177,7 +204,7 @@ def click_csv_text(clip: dict[str, Any], config: dict[str, Any], values: dict[st
 
 def write_scale_inputs(plan: dict[str, Any], stick_length_m: float) -> None:
     try:
-        config = scale_reference._reference_config_from_label_package(plan["package_dir"], stick_length_m)
+        config = scale_reference.reference_config_from_label_package(plan["package_dir"], stick_length_m)
     except scale_reference.ScaleReferenceError as error:
         raise WorkflowError(f"{plan['clip']['fixture_id']}: {error}") from error
     session_ingest.write_text(plan["package_dir"] / scale_reference.REFERENCE_CONFIG_NAME,
@@ -198,15 +225,15 @@ def register(plan: dict[str, Any], manifest: Path, plate: float) -> None:
 # --- analyze_lift and the scale report -----------------------------------------------------------
 
 def analyze_arguments(plan: dict[str, Any], args: argparse.Namespace, manifest: Path, gpu_python: str | None,
-                      paths: dict[str, Path], show: Any) -> list[str]:
+                      openbar_cli: Path | None, paths: dict[str, Path], show: Any) -> list[str]:
     argv = ["run", "--video", show(plan["media"]), "--seed", show(plan["seed"]),
             "--plate-diameter-m", args.plate_diameter_m, "--exercise", plan["decision"]["exercise"],
             "--manifest", show(manifest), "--output-dir", show(paths["analyses"]), "--tracker", plan["tracker"]]
     if TRACKERS[plan["tracker"]].needs_gpu_python:
         argv += ["--gpu-python", gpu_python]
     argv += ["--preset", args.preset] if args.preset else analyze_lift.analysis_options(args)
-    if args.openbar_cli:
-        argv += ["--openbar-cli", args.openbar_cli]
+    if openbar_cli is not None:
+        argv += ["--openbar-cli", show(openbar_cli)]
     return argv
 
 
@@ -286,8 +313,8 @@ def clip_record(plan: dict[str, Any], argv: list[str]) -> dict[str, Any]:
     }
 
 
-def command_run(args: argparse.Namespace, runner: Runner, csv_bytes: bytes,
-                cropper: session_report.Cropper | None = None) -> int:
+def prepare(args: argparse.Namespace, runner: Runner, csv_bytes: bytes) -> dict[str, Any]:
+    """Every check that can fail, in order, before the first write. Returns the run's plan."""
     manifest = analyze_lift.require_personal_manifest(args.manifest)
     plate = analyze_lift.parse_plate_diameter(args.plate_diameter_m)
     stick_length = positive_number(args.stick_length_m, "--stick-length-m")
@@ -295,74 +322,116 @@ def command_run(args: argparse.Namespace, runner: Runner, csv_bytes: bytes,
     session = session_ingest.load_session(directory)
     if session is None:
         raise WorkflowError(f"session {args.session} has no {session_ingest.STATE_NAME}; run `ingest` first")
+    if "template_sha256" not in session or session_ingest.compute_page_id(session) != session["page_id"]:
+        raise WorkflowError(f"{session_ingest.STATE_NAME} does not match its page id; it was edited after ingest. "
+                            "Re-run `ingest --force` and confirm the clips again")
     try:
         decisions = session_contract.parse_session_csv(csv_bytes, session)
     except session_contract.SessionCsvError as error:
         raise WorkflowError(f"session CSV refused: {error}") from error
+    openbar_cli = None if args.openbar_cli is None else analyze_lift.resolve_openbar_cli(args.openbar_cli)
     analyze_lift.require_tools(runner, ("ffmpeg", "ffprobe"))
     trackers, gpu_python = resolve_trackers(args, decisions, runner)
     paths = session_paths(directory)
     clips = {clip["fixture_id"]: clip for clip in session["clips"]}
     plans = [plan_clip(clips[d["fixture_id"]], d, trackers[d["fixture_id"]], paths)
              for d in decisions if d["decision"] == "confirmed"]
-    skipped = [clips[d["fixture_id"]]["original_name"] for d in decisions if d["decision"] == "skipped"]
     check_registrations(plans, manifest, plate)
-    existing = [path for path in planned_outputs(plans, paths) if path.exists()]
+    stale = stale_outputs(session, plans, paths)
+    existing = [path for path in planned_outputs(plans, paths) if path.exists()] + stale
     if existing and not args.force:
-        raise WorkflowError("session outputs already exist (pass --force to replace them): "
+        raise WorkflowError("session outputs already exist (pass --force to replace them; outputs of clips or "
+                            "trackers this run does not use are then removed): "
                             + ", ".join(rel(path) for path in existing[:6]) + (" ..." if len(existing) > 6 else ""))
-    git = analyze_lift.git_provenance(runner)
+    return {
+        "manifest": manifest, "plate": plate, "stick_length": stick_length, "directory": directory,
+        "session": session, "paths": paths, "plans": plans, "stale": stale, "openbar_cli": openbar_cli,
+        "gpu_python": gpu_python, "git": analyze_lift.git_provenance(runner),
+        "skipped": [clips[d["fixture_id"]]["original_name"] for d in decisions if d["decision"] == "skipped"],
+    }
 
-    paths["record"].unlink(missing_ok=True)  # no record = incomplete set, from here until the end
+
+def write_inputs(plan_set: dict[str, Any], csv_bytes: bytes) -> None:
+    """The record goes first, so the folder is marked incomplete before anything changes."""
+    paths, session, manifest = plan_set["paths"], plan_set["session"], plan_set["manifest"]
+    paths["record"].unlink(missing_ok=True)
+    # Outputs of clips or trackers this run does not use would otherwise sit next to the new set looking
+    # current (for example an analysis the recommender could import). Only names this tool writes are removed.
+    for path in plan_set["stale"]:
+        path.unlink()
+        print(f"removed stale output {rel(path)}")
     paths["input_csv"].parent.mkdir(parents=True, exist_ok=True)
     paths["input_csv"].write_bytes(csv_bytes)
-    for plan in plans:
-        register(plan, manifest, plate)
+    for plan in plan_set["plans"]:
+        register(plan, manifest, plan_set["plate"])
         session_ingest.write_text(plan["label_csv"], label_csv_text(plan["clip"], plan["decision"]["values"]))
         session_ingest.write_text(plan["seed"], json.dumps(build_seed_document(plan, session, manifest), indent=2,
                                                            allow_nan=False) + "\n")
-        write_scale_inputs(plan, stick_length)
+        write_scale_inputs(plan, plan_set["stick_length"])
+
+
+def run_clips(plan_set: dict[str, Any], args: argparse.Namespace, runner: Runner) -> list[dict[str, Any]]:
     records = []
-    for plan in plans:
+    common = (args, plan_set["manifest"], plan_set["gpu_python"], plan_set["openbar_cli"], plan_set["paths"])
+    for plan in plan_set["plans"]:
         # Executed with absolute paths (and --force when asked); recorded repository-relative without --force,
         # so a forced re-run on the same inputs writes the same record.
-        argv = analyze_arguments(plan, args, manifest, gpu_python, paths, lambda path: str(path.resolve()))
+        argv = analyze_arguments(plan, *common, lambda path: str(path.resolve()))
         argv += ["--force"] if args.force else []
-        print(f"[analyze_lift] {plan['clip']['fixture_id']} ({plan['decision']['exercise']}, {plan['tracker']})", flush=True)
+        print(f"[analyze_lift] {plan['clip']['fixture_id']} ({plan['decision']['exercise']}, {plan['tracker']})",
+              flush=True)
         if analyze_lift.main(argv, runner=runner) != 0:
             raise WorkflowError(f"analyze_lift.py run failed for {plan['clip']['fixture_id']}; see the error above")
-        records.append(clip_record(plan, analyze_arguments(plan, args, manifest, gpu_python, paths, rel)))
-    namespace = scale_report_namespace(plans, manifest, paths)
-    try:
-        scale_reference.write_report(namespace)
-    except (scale_reference.ScaleReferenceError, OSError, KeyError, ValueError) as error:
-        raise WorkflowError(f"scale_reference.py report failed: {error}") from error
-    configuration = {
-        "plate_diameter_m": plate, "stick_length_m": stick_length, "stick_markers": "lowest and highest marker",
-        "tracker_policy": args.tracker_policy, "tracker_policy_description":
-            TRACKER_POLICIES[args.tracker_policy]["description"],
-        "tracker_policy_trackers": TRACKER_POLICIES[args.tracker_policy]["trackers"],
-        "gpu_python": gpu_python, "preset": args.preset, "analyze_options": analyze_lift.analysis_options(args),
-    }
-    write_report(plans, session, configuration, skipped, paths, cropper or session_report.default_cropper)
-    record = {
+        records.append(clip_record(plan, analyze_arguments(plan, *common, rel)))
+    return records
+
+
+def session_record(plan_set: dict[str, Any], configuration: dict[str, Any], records: list[dict[str, Any]],
+                   namespace: argparse.Namespace) -> dict[str, Any]:
+    paths, session, directory = plan_set["paths"], plan_set["session"], plan_set["directory"]
+    return {
         "format": SESSION_RECORD_FORMAT, "format_version": SESSION_RECORD_VERSION,
         "workflow_version": analyze_lift.WORKFLOW_VERSION, "session_id": session["session_id"],
         "page_id": session["page_id"],
         "inputs": {"session_csv": {"path": rel(paths["input_csv"]), "sha256": sha(paths["input_csv"])},
                    "session_state": {"path": rel(directory / session_ingest.STATE_NAME),
                                      "sha256": sha(directory / session_ingest.STATE_NAME)},
-                   "manifest": {"path": rel(manifest)}},
+                   "manifest": {"path": rel(plan_set["manifest"])}},
         "configuration": configuration,
         "clips": records,
-        "skipped": skipped,
+        "skipped": plan_set["skipped"],
+        "removed_stale_outputs": [rel(path) for path in plan_set["stale"]],
         "scale_report": {"argv": scale_report_argv(namespace), "outputs": {
             name: sha(paths["scale_report"] / name) for name in ("scale-reference-v1.json", "SCALE_REFERENCE_REPORT.md")}},
         "report": {"path": rel(paths["report"]), "sha256": sha(paths["report"])},
         "commands_note": "Run from the repository root with the research venv's python. Each analyze_lift run record "
                          "lists its own track and analyze commands.",
-        "openbar": git,
+        "openbar": plan_set["git"],
     }
-    session_ingest.write_json(paths["record"], record)
+
+
+def command_run(args: argparse.Namespace, runner: Runner, csv_bytes: bytes,
+                cropper: session_report.Cropper | None = None) -> int:
+    plan_set = prepare(args, runner, csv_bytes)
+    write_inputs(plan_set, csv_bytes)
+    records = run_clips(plan_set, args, runner)
+    paths = plan_set["paths"]
+    namespace = scale_report_namespace(plan_set["plans"], plan_set["manifest"], paths)
+    try:
+        scale_reference.write_report(namespace)
+    except (scale_reference.ScaleReferenceError, OSError, KeyError, ValueError) as error:
+        raise WorkflowError(f"scale_reference.py report failed: {error}") from error
+    configuration = {
+        "plate_diameter_m": plan_set["plate"], "stick_length_m": plan_set["stick_length"],
+        "stick_markers": "lowest and highest marker", "tracker_policy": args.tracker_policy,
+        "tracker_policy_description": TRACKER_POLICIES[args.tracker_policy]["description"],
+        "tracker_policy_trackers": TRACKER_POLICIES[args.tracker_policy]["trackers"],
+        "gpu_python": plan_set["gpu_python"],
+        "openbar_cli": None if plan_set["openbar_cli"] is None else rel(plan_set["openbar_cli"]),
+        "preset": args.preset, "analyze_options": analyze_lift.analysis_options(args),
+    }
+    write_report(plan_set["plans"], plan_set["session"], configuration, plan_set["skipped"], paths,
+                 cropper or session_report.default_cropper)
+    session_ingest.write_json(paths["record"], session_record(plan_set, configuration, records, namespace))
     print(f"report: {rel(paths['report'])}\nsession record: {rel(paths['record'])}")
     return 0

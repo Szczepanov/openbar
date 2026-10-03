@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -30,14 +31,31 @@ PAGE_TEMPLATE = Path(__file__).with_name("session_page.html")
 PAGE_NAME = "session.html"
 STATE_NAME = "session.json"
 FRAME_MANIFEST_NAME = "frame-manifest.json"
+RECORD_NAME = "session-record.json"
 PACKAGE_ANNOTATOR = "session-seed"
 Suggester = Callable[[Path], dict[str, Any]]
 
 
-def default_suggester(frame: Path) -> dict[str, Any]:
-    import vbt_suggest  # OpenCV lives in the research venv; imported only when suggestions run
+def load_default_suggester() -> tuple[Suggester, dict[str, str]]:
+    """vbt_suggest needs OpenCV, which lives in the research venv; fail clearly (before copying) without it."""
+    try:
+        import vbt_suggest
+    except ImportError as error:
+        raise WorkflowError(
+            f"OpenCV is not importable ({error}); run ingest with the research venv interpreter, "
+            "e.g. research/opencv-tracking/.venv/Scripts/python research/vbt-workflow/vbt_session.py ingest ..."
+        ) from error
+    return vbt_suggest.suggest_frame, vbt_suggest.environment()
 
-    return vbt_suggest.suggest_frame(frame)
+
+def safe_suggestions(suggest: Suggester, frame: Path) -> dict[str, Any]:
+    """A suggester that raises gives no suggestion (both items manual), never a failed ingest."""
+    try:
+        return suggest(frame)
+    except Exception as error:  # noqa: BLE001 - a suggestion is optional; the page falls back to clicks
+        reason = f"suggester raised {type(error).__name__}: {error}"
+        return {kind: {"method": method, "status": "failed", "reason": reason}
+                for kind, method in (("plate", "plate-hough-edge-v1"), ("stick", "stick-yellow-markers-v1"))}
 
 
 def require_allowed(path: Path, flag: str) -> Path:
@@ -181,8 +199,15 @@ def render_page(state: dict[str, Any], images: list[str], template: str) -> str:
     for placeholder, value in replacements.items():
         if template.count(placeholder) != 1:
             raise WorkflowError(f"session page template must contain {placeholder} exactly once")
-        template = template.replace(placeholder, json.dumps(value, sort_keys=True).replace("</", "<\\/"))
+        # Every "<" is escaped, so no file name can close the script or open a comment inside it.
+        template = template.replace(placeholder, json.dumps(value, sort_keys=True).replace("<", "\\u003c"))
     return template
+
+
+def compute_page_id(state: dict[str, Any]) -> str:
+    """The page id binds a CSV to the clips, frames and suggestions shown, and to the page template."""
+    return session_contract.page_id({"template_sha256": state["template_sha256"], "session_id": state["session_id"],
+                                     "clips": [page_clip(clip) for clip in state["clips"]]})
 
 
 def frame_data_uri(path: Path) -> str:
@@ -232,6 +257,8 @@ def ingest_clip(clip: dict[str, Any], args: argparse.Namespace, registered: list
             raise WorkflowError(f"{clip['media_path']} is missing or changed since it was ingested")
         original = clip["original_name"]
     fixture_id = analyze_lift.fixture_id_for(sha256)
+    if original in overrides and fixture_id in overrides and original != fixture_id:
+        raise WorkflowError(f"--at-s names {original} both by file name and by id {fixture_id}; give only one")
     at_s = overrides.pop(original, overrides.pop(fixture_id, clip.get("at_s")))
     probe = analyze_lift.fixture_probe.probe_video(media)
     if probe["sha256"].lower() != sha256:
@@ -251,8 +278,15 @@ def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None)
     manifest = analyze_lift.require_personal_manifest(args.manifest)
     require_allowed(args.media_dir, "--media-dir")
     directory = session_dir(args.sessions_root, args.session)
+    record = directory / RECORD_NAME
+    if record.exists() and not args.force:
+        raise WorkflowError(
+            f"session {args.session} was already run ({analyze_lift.display_path(record)} exists); re-ingesting would "
+            "rebuild the page next to that run. Pass --force to do it anyway: the record is removed first, so the "
+            "earlier run counts as incomplete until `run --force`")
     previous = load_session(directory)
     overrides = parse_at_s(args.at_s)
+    suggest, environment = (suggester, None) if suggester is not None else load_default_suggester()
     registered = analyze_lift.load_manifest_fixtures(manifest)
     planned, notes = plan_clips(previous, list_inbox(args.inbox), registered, args.include_registered)
     if not planned:
@@ -264,13 +298,13 @@ def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None)
     write_json(frame_manifest, {"format": "openbar-research-vbt-frame-manifest", "format_version": 1,
                                 "note": "seed-frame extraction only; not a fixture manifest",
                                 "fixtures": [entry for _, entry, _ in ingested]})
-    suggest = suggester or default_suggester
+    record.unlink(missing_ok=True)  # only reached with --force when a record exists
     clips = []
     for index, (clip, _, action) in enumerate(ingested):
         package_dir = analyze_lift.ROOT / clip["package_dir"]
         config = build_package(frame_manifest, clip["fixture_id"], clip["at_s"], package_dir)
         frame = config["frames"][0]
-        suggestions = suggest(package_dir / frame["file"])
+        suggestions = safe_suggestions(suggest, package_dir / frame["file"])
         clips.append({**clip, "clip_index": index, "package_id": config["package_id"],
                       "frame_index": frame["frame_index"], "timestamp_s": frame["timestamp_s"],
                       "frame_file": frame["file"], "width_px": config["width_px"], "height_px": config["height_px"],
@@ -278,11 +312,11 @@ def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None)
         print(f"{clip['fixture_id']} ({clip['original_name']}): {action}; seed frame {frame['frame_index']} "
               f"at {frame['timestamp_s']} s; plate {suggestions['plate']['status']}, stick {suggestions['stick']['status']}")
     state = {"format": SESSION_STATE_FORMAT, "format_version": SESSION_STATE_VERSION,
-             "session_id": args.session, "workflow_version": analyze_lift.WORKFLOW_VERSION, "clips": clips}
+             "session_id": args.session, "workflow_version": analyze_lift.WORKFLOW_VERSION,
+             "suggester_environment": environment, "clips": clips}
     template = PAGE_TEMPLATE.read_text(encoding="utf-8")
-    page_config = {"template_sha256": analyze_lift.canonical_sha256(template),
-                   "clips": [page_clip(clip) for clip in clips], "session_id": args.session}
-    state["page_id"] = session_contract.page_id(page_config)
+    state["template_sha256"] = hashlib.sha256(template.encode("utf-8")).hexdigest()
+    state["page_id"] = compute_page_id(state)
     images = [frame_data_uri(analyze_lift.ROOT / clip["package_dir"] / clip["frame_file"]) for clip in clips]
     write_json(directory / STATE_NAME, state)
     write_text(directory / PAGE_NAME, render_page(state, images, template))

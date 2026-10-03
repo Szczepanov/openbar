@@ -434,7 +434,7 @@ def _fixture_from_manifest(manifest: Any, fixture_id: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _reference_config_from_label_package(
+def reference_config_from_label_package(
     package_dir: Path,
     known_length_m: float,
 ) -> dict[str, Any]:
@@ -466,6 +466,10 @@ def _reference_config_from_label_package(
     }
 
 
+# Former private name, kept so existing callers keep working.
+_reference_config_from_label_package = reference_config_from_label_package
+
+
 def build_reference_package(args: argparse.Namespace) -> Path:
     known_length_m = _positive(args.known_length_m, "known length")
     delegated = argparse.Namespace(
@@ -485,7 +489,7 @@ def build_reference_package(args: argparse.Namespace) -> Path:
     except label_package.PackageError as error:
         raise ScaleReferenceError(str(error)) from error
 
-    config = _reference_config_from_label_package(package_dir, known_length_m)
+    config = reference_config_from_label_package(package_dir, known_length_m)
     label_package.write_text(
         package_dir / REFERENCE_CONFIG_NAME,
         json.dumps(config, indent=2, sort_keys=True, allow_nan=False) + "\n",

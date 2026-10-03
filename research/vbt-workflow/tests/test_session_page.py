@@ -81,6 +81,15 @@ class PurePageTests(unittest.TestCase):
         """, self.config)
         self.assertEqual(out, [["accepted"] * 4, "adjusted", "accepted", None])
 
+    def test_status_compares_at_two_decimals_like_the_csv(self) -> None:
+        out = run_node("""
+          const c = config.clips[0], s = initialState(c), x = c.suggestions.plate.center_x_px;
+          const status = v => itemStatus(c, withEdit(s, {values: {plate_center: [v, c.suggestions.plate.center_y_px]}}),
+                                         "plate_center");
+          return [status(x + 0.004), status(x + 0.006), status(x - 0.004)];
+        """, self.config)
+        self.assertEqual(out, ["accepted", "adjusted", "accepted"])
+
     def test_failed_suggestion_needs_manual_clicks(self) -> None:
         out = run_node("""
           const c = config.clips[1]; let s = initialState(c);
