@@ -19,6 +19,17 @@ sys.path.insert(0, str(TOOLS))
 import scale_reference  # noqa: E402
 
 
+def valid_analysis(*, scale_m_per_px: float | int = 0.0025) -> dict:
+    analysis = json.loads(
+        (ROOT / "crates" / "openbar-core" / "tests" / "fixtures" / "analysis-v1.golden.json")
+        .read_text(encoding="utf-8")
+    )
+    analysis["identity"]["fixture_id"] = "clip"
+    analysis["identity"]["source_sha256"] = "a" * 64
+    analysis["calibration"]["scale"]["metres_per_pixel"] = scale_m_per_px
+    return analysis
+
+
 class SegmentMeasurementTests(unittest.TestCase):
     def test_synthetic_frame_with_drawn_segment_produces_expected_scale_and_uncertainty(self):
         width_px, height_px = 320, 240
@@ -115,18 +126,7 @@ class SegmentMeasurementTests(unittest.TestCase):
 
 class RatioTests(unittest.TestCase):
     def test_ratio_uses_analysis_plate_scale_exactly(self):
-        analysis = {
-            "schema_version": 1,
-            "identity": {
-                "fixture_id": "clip",
-                "source_sha256": "a" * 64,
-            },
-            "calibration": {
-                "method": "plate_diameter",
-                "method_version": 1,
-                "scale": {"metres_per_pixel": 0.0025},
-            },
-        }
+        analysis = valid_analysis()
         plate_scale = scale_reference.plate_scale_from_analysis(analysis, "clip", "a" * 64)
         self.assertEqual(plate_scale, 0.0025)
 
@@ -144,30 +144,14 @@ class RatioTests(unittest.TestCase):
         self.assertTrue(comparison["consistent_with_1"])
 
     def test_analysis_fixture_or_source_mismatch_is_rejected(self):
-        base = {
-            "schema_version": 1,
-            "identity": {"fixture_id": "clip", "source_sha256": "a" * 64},
-            "calibration": {
-                "method": "plate_diameter",
-                "method_version": 1,
-                "scale": {"metres_per_pixel": 0.0025},
-            },
-        }
+        base = valid_analysis()
         with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "fixture"):
             scale_reference.plate_scale_from_analysis(base, "other", "a" * 64)
         with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "source_sha256"):
             scale_reference.plate_scale_from_analysis(base, "clip", "b" * 64)
 
     def test_analysis_version_and_calibration_method_fail_closed(self):
-        base = {
-            "schema_version": 1,
-            "identity": {"fixture_id": "clip", "source_sha256": "a" * 64},
-            "calibration": {
-                "method": "plate_diameter",
-                "method_version": 1,
-                "scale": {"metres_per_pixel": 0.0025},
-            },
-        }
+        base = valid_analysis()
         for path, value, message in [
             (("schema_version",), 2, "analysis-v1"),
             (("calibration", "method"), "other", "plate_diameter"),
@@ -181,16 +165,14 @@ class RatioTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaisesRegex(scale_reference.ScaleReferenceError, message):
                 scale_reference.plate_scale_from_analysis(changed, "clip", "a" * 64)
 
+    def test_analysis_missing_required_structure_is_rejected(self):
+        analysis = valid_analysis()
+        del analysis["video"]
+        with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "analysis-v1 schema"):
+            scale_reference.plate_scale_from_analysis(analysis, "clip", "a" * 64)
+
     def test_analysis_numeric_overflow_is_rejected_as_invalid(self):
-        analysis = {
-            "schema_version": 1,
-            "identity": {"fixture_id": "clip", "source_sha256": "a" * 64},
-            "calibration": {
-                "method": "plate_diameter",
-                "method_version": 1,
-                "scale": {"metres_per_pixel": 10 ** 10000},
-            },
-        }
+        analysis = valid_analysis(scale_m_per_px=10 ** 10000)
         with self.assertRaisesRegex(scale_reference.ScaleReferenceError, "finite"):
             scale_reference.plate_scale_from_analysis(analysis, "clip", "a" * 64)
 
