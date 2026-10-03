@@ -295,10 +295,12 @@ def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None)
     if overrides:
         raise WorkflowError(f"--at-s names no clip of this session: {', '.join(sorted(overrides))}")
     frame_manifest = directory / FRAME_MANIFEST_NAME
+    # All read-only planning/probing succeeded. From this point the page is being rebuilt, so a
+    # completed prior run must stop looking current before any session-local artifact changes.
+    record.unlink(missing_ok=True)  # only changes anything with --force when a record exists
     write_json(frame_manifest, {"format": "openbar-research-vbt-frame-manifest", "format_version": 1,
                                 "note": "seed-frame extraction only; not a fixture manifest",
                                 "fixtures": [entry for _, entry, _ in ingested]})
-    record.unlink(missing_ok=True)  # only reached with --force when a record exists
     clips = []
     for index, (clip, _, action) in enumerate(ingested):
         package_dir = analyze_lift.ROOT / clip["package_dir"]
