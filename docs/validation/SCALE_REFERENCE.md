@@ -93,9 +93,8 @@ For clicked segment length `d_px`:
 ```text
 endpoint_precision_px = 1
 length_uncertainty_px = 2
-reference_scale_m_per_px = known_length_m / d_px
-reference_scale_uncertainty_m_per_px =
-    known_length_m * length_uncertainty_px / d_px^2
+distance_lower_px = d_px - length_uncertainty_px
+distance_upper_px = d_px + length_uncertainty_px
 ```
 
 The `±2 px` length bound is conservative: by the triangle inequality, moving each endpoint by at
