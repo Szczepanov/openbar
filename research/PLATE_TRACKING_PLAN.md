@@ -339,7 +339,7 @@ These come from `AGENTS.md`, ADR-0003/0005/0006/0007/0008 and lessons from this 
 - `visual_qa.py`: diagnostic labelled-frame crop overlays.
 - `research/gpu-tracking/`:
   - `centres.py`: pure mask centroid extraction, contour circle fitting via RANSAC, seed-disk rasterisation, and coordinate mapping.
-  - `track_gpu.py`: unified runner for candidates 3–10 (SAM 2.1 small/base+ centroid & circle, Cutie base centroid & circle, BootsTAPIR, CoTracker3). Decodes only the seed-to-end window into an ephemeral JPEG cache, keeps SAM 2 frames in host RAM, and with `--sibling-output` writes a mask model's centroid and circle candidates from one run (`compare.py` pairs them automatically).
+  - `track_gpu.py`: unified runner for candidates 3–10 (SAM 2.1 small/base+ centroid & circle, Cutie base centroid & circle, BootsTAPIR, CoTracker3). Decodes only the seed-to-end window into an ephemeral JPEG cache, keeps SAM 2 frames in host RAM, and with `--sibling-output` writes a mask model's centroid and circle candidates from one run (`compare.py` pairs them automatically). Opt-in `--omit-runtime` (no wall-clock `runtime`, LF line endings) and `--geometry-output` (explicit circle-sidecar path) exist for the #86 VBT workflow; default output is unchanged.
   - `download_models.py`: SHA-256-verified downloader for all 5 neural checkpoints into `validation/private/models/`.
   - `requirements.txt`: bootstrap constraints for the GPU venv, **not** an immutable historical lock. The
     reviewed runner now records critical installed package/VCS provenance per prediction and verifies model
