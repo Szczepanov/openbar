@@ -972,12 +972,14 @@ mod tests {
     }
 
     #[test]
-    fn duration_window_covers_same_time_at_30_and_60_fps() {
+    fn duration_window_covers_same_timestamp_span_at_30_and_60_fps() {
         for (lo, hi) in [(30.0, 60.0), (29.97, 59.94)] {
             for duration in [0.1, 0.15, 0.2, 0.3] {
                 let a = resolve_window_samples(duration, lo, 1).unwrap();
                 let b = resolve_window_samples(duration, hi, 1).unwrap();
-                assert!((a as f64 / lo - b as f64 / hi).abs() <= 1.0 / lo);
+                let a_span_s = (a - 1) as f64 / lo;
+                let b_span_s = (b - 1) as f64 / hi;
+                assert!((a_span_s - b_span_s).abs() <= 1.0 / lo);
             }
         }
     }
