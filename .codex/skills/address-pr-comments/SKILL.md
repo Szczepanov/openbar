@@ -54,7 +54,7 @@ Group unresolved feedback by file and subsystem (`crates/openbar-core`, `crates/
   - Determinism (`BTreeMap`, no wall-clock/random data).
   - NaN/$\pm\infty$ strict rejection.
   - Pixel-centre coordinate convention (ADR-0007).
-  - Clean-room discipline (PolyForm Shield 1.0.0, no competitor code copied).
+  - Clean-room discipline (MIT licence, no competitor code copied).
 - If a comment requests a change that violates an accepted ADR or measurement invariant, prepare an explanation for the reviewer instead of making the change blindly.
 
 ### 4. Implement Fixes

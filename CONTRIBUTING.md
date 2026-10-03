@@ -11,7 +11,7 @@ OpenBar is currently in an architecture/validation bootstrap phase.
 
 ## Contributor licensing
 
-External contributions should **not be merged until the project has adopted a professionally reviewed contributor agreement or equivalent rights-management process**. This is intentional: the project may need future dual/commercial licensing flexibility.
+OpenBar is MIT-licensed. By submitting a contribution, you agree that it is licensed under the MIT License, the same licence as the project. No contributor agreement is required.
 
 See [docs/legal/CONTRIBUTOR_LICENSING.md](docs/legal/CONTRIBUTOR_LICENSING.md).
 

@@ -37,8 +37,8 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 8.1 | 6.7 | 18.2 | 22.5 | 0 | 1 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 10.4 | 10.2 | 21.2 | 25.4 | 0 | 22 |
 | | opencv-kcf | Apache-2.0 | 72.0 % | 19.6 | 4.3 | 88.4 | 89.2 | 7 | 4 |
-| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 52.2 | 10.3 | 166.0 | 178.3 | 0 | 13 |
-| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 108.9 | 75.3 | 251.5 | 281.6 | 0 | 24 |
+| | template-sad-v1 (OpenBar) | MIT | 100.0 % | 52.2 | 10.3 | 166.0 | 178.3 | 0 | 13 |
+| | local-contrast-centroid-v1 (OpenBar) | MIT | 100.0 % | 108.9 | 75.3 | 251.5 | 281.6 | 0 | 24 |
 | | opencv-vit | Apache-2.0 | 80.0 % | 133.6 | 27.7 | 326.4 | 384.0 | 5 | 0 |
 | `self-clean-jerk-side-002` | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 5.7 | 5.1 | 9.9 | 14.3 | 0 | 2 |
 | | opencv-csrt | Apache-2.0 | 100.0 % | 6.1 | 5.7 | 10.2 | 14.3 | 0 | 2 |
@@ -47,10 +47,10 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 10.1 | 8.2 | 17.1 | 18.6 | 0 | 2 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 21.7 | 22.5 | 44.3 | 46.9 | 0 | 9 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 25.7 | 22.5 | 48.0 | 50.9 | 0 | 19 |
-| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 198.8 | 199.4 | 423.3 | 439.8 | 0 | 18 |
+| | template-sad-v1 (OpenBar) | MIT | 100.0 % | 198.8 | 199.4 | 423.3 | 439.8 | 0 | 18 |
 | | opencv-kcf | Apache-2.0 | 85.7 % | 231.2 | 65.3 | 509.8 | 520.5 | 3 | 3 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 231.6 | 87.7 | 516.8 | 552.3 | 0 | 0 |
-| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 746.1 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
+| | local-contrast-centroid-v1 (OpenBar) | MIT | 100.0 % | 746.1 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
 | `self-snatch-side-002` | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 3.5 | 2.9 | 8.6 | 9.3 | 0 | 2 |
 | | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 3.6 | 2.9 | 8.8 | 9.9 | 0 | 2 |
 | | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 3.7 | 2.9 | 8.7 | 9.4 | 0 | 2 |
@@ -58,8 +58,8 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-csrt | Apache-2.0 | 100.0 % | 7.2 | 7.8 | 10.3 | 11.4 | 0 | 3 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 15.9 | 9.0 | 26.1 | 77.8 | 0 | 18 |
 | | opencv-kcf | Apache-2.0 | 87.0 % | 17.9 | 11.5 | 23.0 | 127.2 | 3 | 0 |
-| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 95.7 % | 32.9 | 8.2 | 119.3 | 243.0 | 1 | 19 |
-| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 57.3 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+| | template-sad-v1 (OpenBar) | MIT | 95.7 % | 32.9 | 8.2 | 119.3 | 243.0 | 1 | 19 |
+| | local-contrast-centroid-v1 (OpenBar) | MIT | 100.0 % | 57.3 | 19.1 | 211.5 | 392.6 | 0 | 9 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 60.5 | 60.6 | 121.1 | 233.6 | 0 | 0 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 103.2 | 63.2 | 185.4 | 660.6 | 0 | 0 |
 
@@ -75,8 +75,8 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 8.4 | 6.7 | 18.2 | 22.5 | 0 | 1 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 10.8 | 10.2 | 21.2 | 25.4 | 0 | 22 |
 | | opencv-kcf | Apache-2.0 | 70.8 % | 20.8 | 4.5 | 88.4 | 89.2 | 7 | 4 |
-| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 54.3 | 10.3 | 166.0 | 178.3 | 0 | 13 |
-| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 113.4 | 75.3 | 251.5 | 281.6 | 0 | 24 |
+| | template-sad-v1 (OpenBar) | MIT | 100.0 % | 54.3 | 10.3 | 166.0 | 178.3 | 0 | 13 |
+| | local-contrast-centroid-v1 (OpenBar) | MIT | 100.0 % | 113.4 | 75.3 | 251.5 | 281.6 | 0 | 24 |
 | | opencv-vit | Apache-2.0 | 79.2 % | 140.6 | 28.7 | 361.6 | 384.0 | 5 | 0 |
 | `self-clean-jerk-side-002` | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 6.0 | 5.1 | 9.9 | 14.3 | 0 | 2 |
 | | opencv-csrt | Apache-2.0 | 100.0 % | 6.4 | 5.7 | 10.2 | 14.3 | 0 | 2 |
@@ -85,10 +85,10 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 10.6 | 8.2 | 17.1 | 18.6 | 0 | 2 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 22.8 | 22.5 | 44.3 | 46.9 | 0 | 9 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 27.0 | 22.5 | 48.0 | 50.9 | 0 | 19 |
-| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 208.7 | 199.4 | 423.3 | 439.8 | 0 | 18 |
+| | template-sad-v1 (OpenBar) | MIT | 100.0 % | 208.7 | 199.4 | 423.3 | 439.8 | 0 | 18 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 243.2 | 87.7 | 516.8 | 552.3 | 0 | 0 |
 | | opencv-kcf | Apache-2.0 | 85.0 % | 244.8 | 82.3 | 509.8 | 520.5 | 3 | 3 |
-| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 783.4 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
+| | local-contrast-centroid-v1 (OpenBar) | MIT | 100.0 % | 783.4 | 883.3 | 1144.2 | 1162.2 | 0 | 20 |
 | `self-snatch-side-002` | opencv-csrt+circle-b5 | Apache-2.0 | 100.0 % | 3.6 | 2.9 | 8.6 | 9.3 | 0 | 2 |
 | | opencv-csrt+circle-a | Apache-2.0 | 100.0 % | 3.7 | 2.9 | 8.8 | 9.9 | 0 | 2 |
 | | opencv-csrt+circle-b1 | Apache-2.0 | 100.0 % | 3.8 | 2.9 | 8.7 | 9.4 | 0 | 2 |
@@ -96,8 +96,8 @@ Scored by `openbar-cli benchmark` against the owner's manual labels, `min_confid
 | | opencv-csrt | Apache-2.0 | 100.0 % | 7.5 | 7.8 | 10.3 | 11.4 | 0 | 3 |
 | | opencv-dasiamrpn | MIT | 100.0 % | 16.6 | 9.0 | 26.1 | 77.8 | 0 | 18 |
 | | opencv-kcf | Apache-2.0 | 86.4 % | 18.8 | 12.2 | 31.8 | 127.2 | 3 | 0 |
-| | template-sad-v1 (OpenBar) | PolyForm Shield 1.0.0 | 95.5 % | 34.5 | 8.3 | 119.3 | 243.0 | 1 | 19 |
-| | local-contrast-centroid-v1 (OpenBar) | PolyForm Shield 1.0.0 | 100.0 % | 59.9 | 19.1 | 211.5 | 392.6 | 0 | 9 |
+| | template-sad-v1 (OpenBar) | MIT | 95.5 % | 34.5 | 8.3 | 119.3 | 243.0 | 1 | 19 |
+| | local-contrast-centroid-v1 (OpenBar) | MIT | 100.0 % | 59.9 | 19.1 | 211.5 | 392.6 | 0 | 9 |
 | | opencv-nano | Unconfirmed / all rights reserved (not shippable without confirmation) | 100.0 % | 63.2 | 60.6 | 121.1 | 233.6 | 0 | 0 |
 | | opencv-vit | Apache-2.0 | 100.0 % | 107.9 | 63.2 | 185.4 | 660.6 | 0 | 0 |
 
@@ -157,8 +157,8 @@ before any × 0.7 fallback penalty.
 
 | Clip | Tracker | License | Availability | MAE px | MAE mm (nom) | p90 px | p90 mm (nom) | Max px | False Tracks | FT (Base Conf) | High Errors (>3px) |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `self-back-squat-side-002` | template-sad-v1 | PolyForm Shield 1.0.0 | 100.0 % | 54.34 | 134.47 | 165.96 | 410.71 | 178.28 | 13 | 13 | 13 |
-| `self-back-squat-side-002` | local-contrast-centroid-v1 | PolyForm Shield 1.0.0 | 100.0 % | 113.42 | 280.69 | 251.49 | 622.35 | 281.63 | 24 | 24 | 24 |
+| `self-back-squat-side-002` | template-sad-v1 | MIT | 100.0 % | 54.34 | 134.47 | 165.96 | 410.71 | 178.28 | 13 | 13 | 13 |
+| `self-back-squat-side-002` | local-contrast-centroid-v1 | MIT | 100.0 % | 113.42 | 280.69 | 251.49 | 622.35 | 281.63 | 24 | 24 | 24 |
 | `self-back-squat-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 3.22 | 7.96 | 5.00 | 12.36 | 5.83 | 5 | 5 | 14 |
 | `self-back-squat-side-002` | opencv-lk-affine | Apache-2.0 | 8.3 % | 1.22 | 3.03 | 1.71 | 4.23 | 1.71 | 0 | 0 | 0 |
 | `self-back-squat-side-002` | opencv-csrt+lk | Apache-2.0 | 100.0 % | 2.96 | 7.33 | 5.00 | 12.36 | 5.83 | 0 | 4 | 12 |
@@ -170,8 +170,8 @@ before any × 0.7 fallback penalty.
 | `self-back-squat-side-002` | cutie-base-circle | MIT / unconfirmed weights | 100.0 % | 2.24 | 5.53 | 3.85 | 9.53 | 4.74 | 5 | 5 | 5 |
 | `self-back-squat-side-002` | bootstapir-affine | Apache-2.0 / Apache-2.0 | 4.2 % | 1.24 | 3.07 | 1.24 | 3.07 | 1.24 | 0 | 0 | 0 |
 | `self-back-squat-side-002` | cotracker3-affine | CC-BY-NC-4.0 / CC-BY-NC-4.0 | 12.5 % | 0.69 | 1.70 | 0.94 | 2.32 | 0.94 | 0 | 0 | 0 |
-| `self-clean-jerk-side-002` | template-sad-v1 | PolyForm Shield 1.0.0 | 100.0 % | 208.69 | 235.72 | 423.28 | 478.10 | 439.77 | 18 | 18 | 18 |
-| `self-clean-jerk-side-002` | local-contrast-centroid-v1 | PolyForm Shield 1.0.0 | 100.0 % | 783.38 | 884.84 | 1144.20 | 1292.40 | 1162.22 | 20 | 20 | 20 |
+| `self-clean-jerk-side-002` | template-sad-v1 | MIT | 100.0 % | 208.69 | 235.72 | 423.28 | 478.10 | 439.77 | 18 | 18 | 18 |
+| `self-clean-jerk-side-002` | local-contrast-centroid-v1 | MIT | 100.0 % | 783.38 | 884.84 | 1144.20 | 1292.40 | 1162.22 | 20 | 20 | 20 |
 | `self-clean-jerk-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 6.44 | 7.27 | 10.25 | 11.57 | 14.33 | 2 | 2 | 18 |
 | `self-clean-jerk-side-002` | opencv-lk-affine | Apache-2.0 | 40.0 % | 4.64 | 5.24 | 8.22 | 9.29 | 8.22 | 1 | 1 | 7 |
 | `self-clean-jerk-side-002` | opencv-csrt+lk | Apache-2.0 | 100.0 % | 5.44 | 6.15 | 9.31 | 10.52 | 10.51 | 1 | 1 | 18 |
@@ -183,8 +183,8 @@ before any × 0.7 fallback penalty.
 | `self-clean-jerk-side-002` | cutie-base-circle | MIT / unconfirmed weights | 100.0 % | 4.30 | 4.86 | 7.15 | 8.08 | 10.52 | 14 | 14 | 14 |
 | `self-clean-jerk-side-002` | bootstapir-affine | Apache-2.0 / Apache-2.0 | 100.0 % | 4.89 | 5.52 | 7.21 | 8.15 | 8.70 | 1 | 1 | 15 |
 | `self-clean-jerk-side-002` | cotracker3-affine | CC-BY-NC-4.0 / CC-BY-NC-4.0 | 100.0 % | 3.97 | 4.49 | 5.56 | 6.28 | 9.12 | 1 | 1 | 16 |
-| `self-snatch-side-002` | template-sad-v1 | PolyForm Shield 1.0.0 | 95.5 % | 34.49 | 58.72 | 119.31 | 203.16 | 243.05 | 19 | 19 | 19 |
-| `self-snatch-side-002` | local-contrast-centroid-v1 | PolyForm Shield 1.0.0 | 100.0 % | 59.87 | 101.94 | 211.48 | 360.09 | 392.57 | 9 | 9 | 22 |
+| `self-snatch-side-002` | template-sad-v1 | MIT | 95.5 % | 34.49 | 58.72 | 119.31 | 203.16 | 243.05 | 19 | 19 | 19 |
+| `self-snatch-side-002` | local-contrast-centroid-v1 | MIT | 100.0 % | 59.87 | 101.94 | 211.48 | 360.09 | 392.57 | 9 | 9 | 22 |
 | `self-snatch-side-002` | opencv-csrt | Apache-2.0 | 100.0 % | 7.51 | 12.78 | 10.31 | 17.56 | 11.45 | 3 | 3 | 21 |
 | `self-snatch-side-002` | opencv-lk-affine | Apache-2.0 | 0.0 % | N/A | N/A | N/A | N/A | N/A | 0 | 0 | 0 |
 | `self-snatch-side-002` | opencv-csrt+lk | Apache-2.0 | 100.0 % | 7.51 | 12.78 | 10.31 | 17.56 | 11.45 | 0 | 3 | 21 |

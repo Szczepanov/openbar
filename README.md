@@ -79,11 +79,9 @@ See [docs/clean-room/COMPETITOR_BOUNDARIES.md](docs/clean-room/COMPETITOR_BOUNDA
 
 ## Licensing
 
-This repository is **source-available**, not OSI open source.
+OpenBar is open source under the [MIT License](LICENSE). Contributions are accepted under the same licence; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The code is licensed under the [PolyForm Shield License 1.0.0](LICENSE.md), subject to the notices in [NOTICE](NOTICE). The licence permits broad use, modification, and redistribution but excludes use to provide a competing product.
-
-This is an intentional starting position. Licensing, trademarks, contributor agreements, App Store distribution, and future commercial licensing should receive professional legal review before a public product launch.
+Third-party tools, models and datasets that OpenBar uses or evaluates keep their own licences. FFmpeg runs as a separate program, and research model checkpoints are downloaded rather than committed. Some of those checkpoints are licensed for non-commercial use only; see [docs/plans/TRACKER_BAKEOFF_PLAN.md](docs/plans/TRACKER_BAKEOFF_PLAN.md).
 
 See [docs/legal/LICENSING_STRATEGY.md](docs/legal/LICENSING_STRATEGY.md).
 

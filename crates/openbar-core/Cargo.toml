@@ -2,7 +2,7 @@
 name = "openbar-core"
 version = "0.1.0"
 edition = "2021"
-license-file = "../../LICENSE.md"
+license = "MIT"
 publish = false
 description = "Deterministic measurement core for OpenBar."
 

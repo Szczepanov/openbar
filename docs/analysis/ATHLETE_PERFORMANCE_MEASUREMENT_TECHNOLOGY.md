@@ -216,15 +216,12 @@ However, it should not currently be a foundational OpenBar dependency.
 
 The current Ultralytics repository is licensed under AGPL-3.0, while Ultralytics also offers separate commercial/enterprise licensing for proprietary integration.
 
-That creates an important compatibility problem with OpenBar's current source-available / PolyForm Shield direction.
+That creates an important compatibility problem with OpenBar's MIT licence (ADR-0011; this
+section was written under the earlier PolyForm Shield licence, and the conclusion is unchanged).
 
-OpenBar intentionally wants:
-
-- inspectable source;
-- optional commercial features later;
-- no easy path to a competing commercial fork.
-
-Introducing AGPL code into the application could materially change distribution obligations and should not be done casually.
+AGPL-3.0 is copyleft: distributing or serving a combined work would put the whole application
+under AGPL obligations, which the permissive MIT codebase and any closed derivative could not
+honour. Introducing AGPL code into the application should not be done casually.
 
 ### Recommendation
 
@@ -233,7 +230,7 @@ Treat Ultralytics as:
 - a benchmark candidate in an isolated evaluation environment where its licence obligations are understood;
 - an optional commercial dependency only if a future commercial licence is explicitly evaluated and accepted.
 
-Do not commit Ultralytics code/models or derived shipping assets into OpenBar under the current PolyForm Shield distribution posture without an explicit compatibility/legal review.
+Do not commit Ultralytics code/models or derived shipping assets into OpenBar's MIT codebase without an explicit compatibility/legal review.
 
 Do not make the core architecture or persisted model format dependent on Ultralytics.
 

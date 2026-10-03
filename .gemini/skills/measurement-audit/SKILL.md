@@ -54,7 +54,7 @@ Perform a diff-first, read-only code review on proposed changes before opening o
   - Serialized structs enforce `#[serde(deny_unknown_fields)]` and integer version constants.
   - Golden file `analysis-v1.golden.json` is not modified without an intentional, documented schema version bump.
 - [ ] **Clean-Room & Legal Discipline**:
-  - PolyForm Shield 1.0.0 compliance; no third-party code with conflicting licences.
+  - MIT licence compliance; no third-party code with conflicting licences.
   - Strict compliance with [docs/clean-room/COMPETITOR_BOUNDARIES.md](file:///c:/Users/mdszc/Downloads/projekty/openbar/docs/clean-room/COMPETITOR_BOUNDARIES.md).
   - No media (`*.mp4`), weights, or credentials committed.
 - [ ] **M0 Scope Boundary**:

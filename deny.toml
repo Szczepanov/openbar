@@ -13,8 +13,8 @@ yanked = "deny"
 
 [licenses]
 version = 2
-# Every licence currently in the dependency graph. Workspace crates are PolyForm Shield
-# (`license-file`) and `publish = false`, so they are excluded via `private.ignore`.
+# Every licence currently in the dependency graph. Workspace crates are MIT and
+# `publish = false`, so they are excluded via `private.ignore`.
 allow = [
     "Apache-2.0",
     "MIT",
