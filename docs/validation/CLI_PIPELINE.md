@@ -94,6 +94,55 @@ than rounded through a lossy floating-point conversion. OpenBar also records
 when present but intentionally does not enter canonical analysis output, so wall-clock timing
 cannot make repeated analysis non-deterministic.
 
+#### Personal VBT post-session workflow (#86)
+
+`research/vbt-workflow/analyze_lift.py` chains the external-observation path for the owner's own
+lifts: it registers the video in a separate personal manifest, runs `track.py --tracker csrt` over
+the whole clip from the seed (with `--omit-runtime`), then runs `analyze --observations`. It is research orchestration,
+not a second CLI. It adds no measurement logic and edits no prediction or analysis.
+
+```bash
+research/opencv-tracking/.venv/Scripts/python research/vbt-workflow/analyze_lift.py register \
+  --video validation/private/vbt/media/<file>.mp4 --plate-diameter-m 0.45 --exercise clean
+# make the seed before the first rep: label_package.py --at-s ... then annotations.py seed
+research/opencv-tracking/.venv/Scripts/python research/vbt-workflow/analyze_lift.py run \
+  --video validation/private/vbt/media/<file>.mp4 --seed <seed.json> \
+  --plate-diameter-m 0.45 --exercise clean --output-dir validation/private/vbt/analyses \
+  --filter savitzky-golay --filter-window-s 0.15 --filter-polynomial-order 2 --filter-max-gap-s 0.2 \
+  --kinematics-max-gap-s 0.2 --kinematics-min-confidence 0
+```
+
+The resulting `analyze` invocation is:
+
+```bash
+cargo run --locked --release -p openbar-cli -- analyze \
+  --manifest validation/private/vbt/manifest.json --fixture vbt-<16 hex> --seed <seed.json> \
+  --plate-diameter-m 0.45 \
+  --observations <output-dir>/.vbt-<16 hex>.opencv-csrt.prediction-v1.json.tmp \
+  --filter savitzky-golay --filter-window-s 0.15 --filter-polynomial-order 2 --filter-max-gap-s 0.2 \
+  --kinematics-max-gap-s 0.2 --kinematics-min-confidence 0 \
+  --output <output-dir>/.vbt-<16 hex>.analysis-v1.json.tmp
+```
+
+The `.tmp` files are renamed after every step succeeds, with the run record last. An output
+set without a run record is incomplete. Before promotion, the workflow re-checks the video, seed
+and registered manifest-entry hashes and validates the staged files against
+`tracker-prediction-v1.schema.json` and `analysis-v1.schema.json`. The run record lists the
+commands with the final file names.
+
+The plate diameter and the filter and kinematics settings are required. The named preset
+`--preset vbt-sg-0.15s-v1` expands to exactly the flags above and is recorded expanded. The seed's
+`fixture_id` must equal the id derived from the video's SHA-256. Manifests are accepted only
+under `validation/private/vbt/` or `target/`. Any path ending in `validation/private/manifest.json`
+(the #57 manifest) is refused. A run record next to the outputs lists both commands, the input
+hashes and the OpenBar git state.
+
+`prediction_sha256` covers the exact prediction bytes. `track.py --omit-runtime` therefore leaves
+the wall-clock `runtime` out of the prediction and writes LF line endings, so repeated workflow runs
+give byte-identical predictions and `analysis-v1`. `track.py`'s default output still includes
+`runtime`. The full owner flow, outputs and fail-closed rules are in
+[`docs/plans/VBT_WORKFLOW_PLAN.md`](../plans/VBT_WORKFLOW_PLAN.md) (step 2).
+
 A direct media path may be supplied with `--video`. In fixture mode, `--video` is an explicit
 media override and the decoded source is still checked against the fixture's hash/encoded
 dimensions/rotation when those values are present. Fixture mode also cross-checks

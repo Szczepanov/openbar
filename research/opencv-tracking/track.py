@@ -692,6 +692,23 @@ def track(manifest_path: Path, fixture_id: str, seed_path: Path, tracker_name: s
     return prediction, sidecar_doc
 
 
+def write_prediction(output: Path, prediction: dict[str, Any], omit_runtime: bool) -> None:
+    text = json.dumps(prediction, indent=2) + "\n"
+    if omit_runtime:
+        # Reproducible mode: LF on every platform so identical runs give identical bytes.
+        with output.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+    else:
+        output.write_text(text, encoding="utf-8")
+
+
+def summary_line(prediction: dict[str, Any], output: Path, runtime_s: float | None) -> str:
+    tracked = sum(s["state"] == "tracked" for s in prediction["samples"])
+    runtime = "unknown" if runtime_s is None else runtime_s
+    return (f"{prediction['implementation']['name']}: {tracked}/{len(prediction['samples'])} tracked, "
+            f"{runtime} s -> {output}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -701,14 +718,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end-s", type=float, help="last timestamp to track (default: end of clip)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--allow-held-out", action="store_true", help="only for the frozen held-out evaluation")
+    parser.add_argument("--omit-runtime", action="store_true",
+                        help="leave the wall-clock `runtime` out of the prediction (printed only) and write LF "
+                             "line endings, so repeated runs give identical bytes; default output is unchanged")
     args = parser.parse_args(argv)
     try:
         prediction, sidecar_doc = track(args.manifest, args.fixture, args.seed, args.tracker, args.end_s, args.allow_held_out)
     except (SpikeError, label_package.PackageError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    runtime_s = (prediction.get("runtime") or {}).get("processing_wall_s")
+    if args.omit_runtime:
+        prediction = {key: value for key, value in prediction.items() if key != "runtime"}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(prediction, indent=2) + "\n", encoding="utf-8")
+    write_prediction(args.output, prediction, args.omit_runtime)
     if sidecar_doc is not None:
         stem = args.output.name
         if stem.endswith(".prediction-v1.json"):
@@ -719,9 +742,9 @@ def main(argv: list[str] | None = None) -> int:
             sidecar_name = stem + ".geometry.json"
         sidecar_path = args.output.parent / sidecar_name
         sidecar_path.write_text(json.dumps(sidecar_doc, indent=2) + "\n", encoding="utf-8")
-    tracked = sum(s["state"] == "tracked" for s in prediction["samples"])
-    print(f"{prediction['implementation']['name']}: {tracked}/{len(prediction['samples'])} tracked, "
-          f"{prediction['runtime']['processing_wall_s']} s -> {args.output}")
+    print(summary_line(prediction, args.output, runtime_s))
+    if args.omit_runtime:
+        print("runtime omitted from prediction (--omit-runtime)")
     return 0
 
 
