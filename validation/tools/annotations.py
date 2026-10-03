@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import math
 import re
@@ -236,9 +237,24 @@ def _optional_int(row: dict[str, str], key: str, row_number: int) -> int | None:
         raise AnnotationError(f"CSV row {row_number} {key} must be an integer") from exc
 
 
-def _read_csv_samples(csv_path: Path, *, strict: bool = False) -> list[dict[str, Any]]:
+def _read_csv_bytes(csv_path: Path) -> bytes:
     try:
-        with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        return csv_path.read_bytes()
+    except OSError as exc:
+        raise AnnotationError(f"cannot read CSV {csv_path}: {exc}") from exc
+
+
+def _read_csv_samples(
+    csv_path: Path, *, strict: bool = False, content: bytes | None = None
+) -> list[dict[str, Any]]:
+    if content is None:
+        content = _read_csv_bytes(csv_path)
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AnnotationError(f"CSV {csv_path} must be UTF-8: {exc}") from exc
+    try:
+        with io.StringIO(text, newline="") as handle:
             reader = csv.DictReader(handle, strict=strict)
             _require(reader.fieldnames is not None, "CSV must have a header")
             _require(len(reader.fieldnames) == len(CSV_COLUMNS) and set(reader.fieldnames) == CSV_COLUMNS, "CSV header must match the documented annotation import columns exactly")
@@ -275,8 +291,6 @@ def _read_csv_samples(csv_path: Path, *, strict: bool = False) -> list[dict[str,
                 samples.append(sample)
     except csv.Error as exc:
         raise AnnotationError(f"malformed CSV {csv_path}: {exc}") from exc
-    except OSError as exc:
-        raise AnnotationError(f"cannot read CSV {csv_path}: {exc}") from exc
     return samples
 
 
@@ -293,20 +307,34 @@ def build_seed(metadata: dict[str, Any], csv_path: Path, manifest: dict[str, Any
     """Produce a manual selection from validated label rows without requiring an import date."""
     annotation = deepcopy(metadata)
     _require("samples" not in annotation, "seed metadata must not contain samples")
-    samples = _read_csv_samples(csv_path, strict=True)
+    csv_bytes = _read_csv_bytes(csv_path)
+    samples = _read_csv_samples(csv_path, strict=True, content=csv_bytes)
     annotation["samples"] = samples
     fixture_id, width, height, tolerance = _validate_metadata(annotation, manifest, require_date=False)
     fixture = _fixture(manifest, fixture_id)
+    coordinate = annotation["coordinate_system"]
+    coordinate_space = {
+        ("decoded_display_pixels", "top_left", "right", "down", True): "display_top_left",
+    }.get((
+        coordinate["space"],
+        coordinate["origin"],
+        coordinate["x_direction"],
+        coordinate["y_direction"],
+        coordinate["rotation_applied"],
+    ))
+    _require(coordinate_space is not None, "coordinate_system cannot be represented by manual-target-seed-v1")
     _require(annotation.get("source_video_sha256") is not None
              and fixture.get("media", {}).get("sha256") is not None,
              "source_video_sha256 and fixture media.sha256 are required for a seed")
     _validate_samples(samples, width, height, tolerance)
+    for i, sample in enumerate(samples):
+        if "frame_index" in sample:
+            _require(sample["frame_index"] <= 2**64 - 1, f"samples[{i}].frame_index must fit u64")
     candidate = next((sample for sample in samples
                       if sample["annotation_state"] == "labelled" and "center_px" in sample
                       and "radius_px" in sample.get("target_size_px", {})), None)
     _require(candidate is not None, "no labelled sample with centre and radius")
     _require("frame_index" in candidate, "seed frame_index is required")
-    _require(candidate["frame_index"] <= 2**64 - 1, "seed frame_index must fit u64")
     x, y = candidate["center_px"]["x_px"], candidate["center_px"]["y_px"]
     radius = candidate["target_size_px"]["radius_px"]
     _require(x - radius >= 0 and y - radius >= 0 and x + radius <= width and y + radius <= height,
@@ -315,17 +343,14 @@ def build_seed(metadata: dict[str, Any], csv_path: Path, manifest: dict[str, Any
         "timestamp_s": candidate["timestamp_s"],
         "frame_index": candidate["frame_index"],
         "target": {"center": candidate["center_px"], "radius_px": radius},
-        "coordinate_space": "display_top_left",
+        "coordinate_space": coordinate_space,
         "source_rotation_deg": fixture["video"].get("rotation_deg", 0) % 360,
     }
     if selection_confidence is not None:
         confidence = _number(selection_confidence, "selection_confidence", minimum=0)
         _require(confidence <= 1, "selection_confidence must be <= 1")
         seed["selection_confidence"] = confidence
-    try:
-        digest = hashlib.sha256(csv_path.read_bytes()).hexdigest()
-    except OSError as exc:
-        raise AnnotationError(f"cannot read CSV {csv_path}: {exc}") from exc
+    digest = hashlib.sha256(csv_bytes).hexdigest()
     annotator = annotation["provenance"]["annotator_id"]
     seed["notes"] = f"Manual seed from label CSV sha256={digest}; annotator_id={annotator}; tool=annotations.py seed."
     return {"schema_version": 1, "fixture_id": fixture_id, "seed": seed}

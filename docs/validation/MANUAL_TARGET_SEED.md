@@ -75,8 +75,10 @@ No coordinate or radius is clipped. An existing output is refused unless `--forc
 `--selection-confidence <0..1>` optionally records explicit human confidence; it must be finite
 and in range. Without that flag the field is omitted. Label quality is never converted to a
 probability. Notes record the source CSV's SHA-256 and annotator ID, without paths or wall-clock
-values, so identical CSV bytes and metadata/options produce byte-identical JSON. The seed is
-accepted directly by `openbar-cli analyze --seed target/seed.json` with the same fixture.
+values. The seed command reads the CSV bytes once and hashes the exact bytes it parses, so the
+provenance digest cannot drift from the content used to construct the seed. Identical CSV bytes and
+metadata/options therefore produce byte-identical JSON. The seed is accepted directly by
+`openbar-cli analyze --seed target/seed.json` with the same fixture.
 
 ## Time semantics
 

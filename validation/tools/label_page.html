@@ -317,8 +317,8 @@ function exportProblem(frames, labels) {
 }
 // END exportProblem
 // BEGIN progress (pure; exercised by validation/tests/test_label_package.py)
-// Counts for the status line. The seed is the first frame in time order with a centre and a radius; the
-// import builds the tracker seed from it, because trackers run forward from the seed.
+// Counts for the status line. The seed is the first frame in time order with a centre and a radius;
+// annotations.py seed selects that row explicitly, because trackers run forward from the seed.
 function progress(frames, labels) {
   const done = r => r && r.state === "labelled" && r.x !== null && r.x !== undefined;
   const result = { total: frames.length, labelled: 0, needQuality: 0, unlabelable: 0, seed: null };

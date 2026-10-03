@@ -379,6 +379,19 @@ class SeedTests(unittest.TestCase):
         with self.assertRaisesRegex(annotations.AnnotationError, "frame_index must fit u64"):
             self.build()
 
+    def test_seed_rejects_u64_overflow_in_any_row(self):
+        overflow = "0,,0,not_annotated,visible,not_assessed,,,,,,,,,".replace(
+            "0,,0", f"0.1,,{2**64}"
+        )
+        self.write_rows(self.row, overflow)
+        with self.assertRaisesRegex(annotations.AnnotationError, r"samples\[1\]\.frame_index must fit u64"):
+            self.build()
+
+    def test_seed_rejects_non_utf8_csv(self):
+        self.csv.write_bytes(b"\xff")
+        with self.assertRaisesRegex(annotations.AnnotationError, "UTF-8"):
+            self.build()
+
     def test_seed_output_passes_schema_check(self):
         spec = importlib.util.spec_from_file_location("schema_check", ROOT / "validation/tools/schema_check.py")
         module = importlib.util.module_from_spec(spec)

@@ -8,8 +8,9 @@ Frames are decoded the same way as the OpenBar frame source (ADR-0006): FFmpeg r
 process with display rotation applied, passthrough timing and the first video stream. Each frame is
 stamped with ``(pts - start_pts) * time_base`` from ``ffprobe``, and every extracted frame's PTS is
 checked against the probe so a decoder drop or duplicate cannot silently shift labels onto the wrong
-timestamp. Frames are chosen on a uniform time grid, without reference to tracker output, so the
-labeller is not anchored on what is being evaluated.
+timestamp. Grid mode chooses frames on a uniform time grid without reference to tracker output,
+while single-frame seed mode selects one decoded frame by index or nearest media timestamp. Both
+modes use the same probe, decode, extraction, and PTS-alignment path.
 
 Standard library only. FFmpeg/ffprobe must be on PATH.
 """
@@ -392,7 +393,13 @@ def main(argv: list[str] | None = None) -> int:
     except (PackageError, OSError, KeyError, ValueError) as error:
         print(f"label-package: {error}", file=sys.stderr)
         return 1
-    print(f"open {output_dir / 'index.html'} in a browser; import the downloaded CSV with metadata.json")
+    if args.frame_index is not None or args.at_s is not None:
+        print(
+            f"open {output_dir / 'index.html'} in a browser; download the CSV, then create the seed "
+            f"with annotations.py seed --metadata {output_dir / 'metadata.json'} --csv <downloaded.csv>"
+        )
+    else:
+        print(f"open {output_dir / 'index.html'} in a browser; import the downloaded CSV with metadata.json")
     return 0
 
 
