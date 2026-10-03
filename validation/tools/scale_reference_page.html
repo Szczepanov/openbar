@@ -48,7 +48,15 @@ image.src = CONFIG.frames[0].file;
 // BEGIN scaleReferencePure (pure; exercised by validation/tests/test_scale_reference.py)
 function pointInWindow(point, widthPx, heightPx) {
   return Number.isFinite(point.x_px) && Number.isFinite(point.y_px) &&
-    point.x_px >= 0 && point.y_px >= 0 && point.x_px < widthPx && point.y_px < heightPx;
+    point.x_px >= 0 && point.y_px >= 0 &&
+    point.x_px < widthPx - 0.5 && point.y_px < heightPx - 0.5;
+}
+function imagePointFromContentOffset(contentX, contentY, contentWidth, contentHeight, imageWidth, imageHeight) {
+  if (!(contentWidth > 0) || !(contentHeight > 0)) return {x_px: NaN, y_px: NaN};
+  return {
+    x_px: contentX * imageWidth / contentWidth - 0.5,
+    y_px: contentY * imageHeight / contentHeight - 0.5,
+  };
 }
 function referenceCsvRows(config, selected) {
   const header = "fixture_id,source_video_sha256,package_id,frame_index,timestamp_s,width_px,height_px,known_length_m,point_a_x_px,point_a_y_px,point_b_x_px,point_b_y_px";
@@ -110,9 +118,14 @@ image.onload = function() {
 canvas.addEventListener("click", function(event) {
   if (points.length === 2) return;
   const rect = canvas.getBoundingClientRect();
-  const imageX = (event.clientX - rect.left) * CONFIG.width_px / rect.width;
-  const imageY = (event.clientY - rect.top) * CONFIG.height_px / rect.height;
-  const point = {x_px: imageX - 0.5, y_px: imageY - 0.5};
+  const point = imagePointFromContentOffset(
+    event.clientX - rect.left - canvas.clientLeft,
+    event.clientY - rect.top - canvas.clientTop,
+    canvas.clientWidth,
+    canvas.clientHeight,
+    CONFIG.width_px,
+    CONFIG.height_px,
+  );
   if (!pointInWindow(point, CONFIG.width_px, CONFIG.height_px)) return;
   points.push(point);
   draw();
