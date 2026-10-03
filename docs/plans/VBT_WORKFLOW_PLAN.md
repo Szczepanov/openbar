@@ -91,6 +91,102 @@ Default tracker for the personal workflow: `opencv-csrt`, which runs on CPU and 
 `sam2.1-bplus-circle` is the optional higher-accuracy mode on a desktop GPU. Both run from
 `research/` to produce the prediction file; neither becomes an OpenBar production dependency here.
 
+### Step 2, post-session command — `research/vbt-workflow/analyze_lift.py` (#86)
+
+One script turns a lift video and a seed into `analysis-v1`. It is orchestration only: CSRT stays
+in `research/opencv-tracking/track.py`, and calibration, filtering and kinematics stay in
+`openbar-core` through `analyze --observations`. It never edits a prediction or an analysis. It is
+stdlib-only, but run it with the research venv's Python because `track.py` needs OpenCV.
+
+**Personal manifest.** Personal videos go into a separate manifest,
+`validation/private/vbt/manifest.json` by default. The script refuses
+`validation/private/manifest.json` (the #57 development/held-out manifest) and anything under
+`validation/fixtures/public/`, so personal lifts cannot contaminate tracker-selection evidence.
+The fixture id is `vbt-` plus the first 16 hex digits of the video's SHA-256. Entries are drafted
+by `fixture_probe.py` as `purpose: development`, `private_only`, side view, fixed camera, tagged
+`personal-vbt`.
+
+**Owner flow** (Windows paths shown; `py` = `research/opencv-tracking/.venv/Scripts/python`):
+
+1. Copy the video to `validation/private/vbt/media/` (it must be inside the repository).
+2. Register it. Registration is idempotent: the same video gets the same id, no duplicate entry,
+   and an identical entry is never rewritten. It prints the next commands with the id filled in.
+
+   ```bash
+   py research/vbt-workflow/analyze_lift.py register \
+     --video validation/private/vbt/media/<file>.mp4 --plate-diameter-m 0.45 --exercise clean
+   ```
+
+3. Make the seed on a frame **before the first rep**. Tracking runs forward from the seed, so
+   anything earlier is never tracked. Pick a time from the video player, then:
+
+   ```bash
+   python validation/tools/label_package.py --manifest validation/private/vbt/manifest.json \
+     --fixture <id> --at-s <seconds-before-first-rep> --annotator-id seed
+   # Open validation/private/annotations/work/<id>.seed/index.html in a browser:
+   # click the plate centre, Shift+click the rim, press 1/2/3 for quality, download the CSV.
+   python validation/tools/annotations.py seed --manifest validation/private/vbt/manifest.json \
+     --metadata validation/private/annotations/work/<id>.seed/metadata.json --csv <downloaded.csv> \
+     --output validation/private/vbt/seeds/<id>.manual-target-seed-v1.json
+   ```
+
+4. Run the workflow:
+
+   ```bash
+   py research/vbt-workflow/analyze_lift.py run \
+     --video validation/private/vbt/media/<file>.mp4 \
+     --seed validation/private/vbt/seeds/<id>.manual-target-seed-v1.json \
+     --plate-diameter-m 0.45 --exercise clean --output-dir validation/private/vbt/analyses \
+     --preset vbt-sg-0.15s-v1
+   ```
+
+   Check the `SEED:` line in the summary: the seed time must be before the first rep. The script
+   cannot detect a late seed, so it does not fail on one.
+
+**Outputs**, side by side in `--output-dir`:
+
+- `<id>.opencv-csrt.prediction-v1.json`: `track.py` output, unedited, whole clip from the seed;
+- `<id>.analysis-v1.json`: canonical analysis for the recommender import (step 3a);
+- `<id>.run-record.json` (`openbar-research-vbt-run-record`, format version 1): both commands as
+  run from the repository root, the video, seed and manifest-entry SHA-256, the seed timestamp, the
+  explicit analyze options and preset name, the OpenBar git commit with a flag for uncommitted
+  changes to tracked files, the output SHA-256, and the Python, FFmpeg, ffprobe, cargo/rustc (or
+  `--openbar-cli` binary hash), OpenCV and NumPy versions. It has no wall-clock time.
+
+**No silent defaults.** `--plate-diameter-m` and `--exercise` are required. The analyze
+configuration is either a named preset or the explicit `--filter ...` flags plus
+`--kinematics-max-gap-s` and `--kinematics-min-confidence`, never both. The only preset,
+`vbt-sg-0.15s-v1`, expands to `--filter savitzky-golay --filter-window-s 0.15
+--filter-polynomial-order 2 --filter-max-gap-s 0.2 --kinematics-max-gap-s 0.2
+--kinematics-min-confidence 0`, and the run record stores the expanded flags. 0.15 s resolves to 9
+samples at 60 fps and 5 at 30 fps; at 12 fps `analyze` rejects it, so use explicit flags there. The
+`analyze` step uses `cargo run --locked --release -p openbar-cli`, or `--openbar-cli <binary>`.
+
+**Fails closed**, before tracking and without touching the manifest, on:
+
+- a seed for a different video (its `fixture_id` is not the id derived from the video hash), or a
+  seed with no `fixture_id`;
+- missing `ffmpeg` or `ffprobe`;
+- an existing output without `--force`. With `--force`, the old outputs are deleted after these
+  checks pass, just before tracking starts;
+- the #57 or public manifest;
+- a registered entry with a different exercise, media, video metadata or plate diameter (the
+  conditions and notes may be hand-edited);
+- the same video already registered under another id;
+- no readable git commit.
+
+If tracking or analysis fails, the outputs of that run are removed, so a partial set never
+remains.
+
+**Determinism.** `analyze` over the same prediction file is byte-identical. Two complete runs,
+however, are not byte-identical today. `track.py` writes a wall-clock `runtime.processing_wall_s`
+into the prediction, and `analyze` records the SHA-256 of the exact prediction bytes
+(`prediction_sha256`). On the public synthetic fixture, two runs gave predictions that differ only
+in `runtime.processing_wall_s`, and analyses that differ only in `prediction_sha256`. Making whole
+runs byte-identical needs a decision outside this script (#86 PR).
+
+**Do not commit** anything under `validation/private/`. Report aggregates only.
+
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
 
 - **Mapping to vertical-up.** `analysis-v1` calibrated and kinematic coordinates use
@@ -162,6 +258,7 @@ Implications for #79:
 ## 7. Documents to update when steps land
 
 - Step 2: `docs/validation/CLI_PIPELINE.md`, and `research/PLATE_TRACKING_PLAN.md` (Phase 5 option (a)
-  is then done).
+  is then done). The #86 post-session command is documented above and in
+  `docs/validation/CLI_PIPELINE.md`.
 - Step 4: this plan's status, with the decision recorded in #79.
 - Step 5: an ADR-0008 M1 entry record and a phone plan in `docs/plans/`.
