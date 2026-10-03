@@ -29,6 +29,9 @@ TOOL = {"name": "openbar-scale-reference", "version": "1"}
 SCHEMA_VERSION = 1
 ENDPOINT_PRECISION_PX = 1.0
 LENGTH_UNCERTAINTY_PX = 2.0 * ENDPOINT_PRECISION_PX
+EXPECTED_ANALYSIS_SCHEMA_VERSION = 1
+EXPECTED_CALIBRATION_METHOD = "plate_diameter"
+EXPECTED_CALIBRATION_METHOD_VERSION = 1
 DEFAULT_REPORT_DIR = ROOT / "validation" / "private" / "scale-reference" / "reports"
 CSV_COLUMNS = [
     "fixture_id", "source_video_sha256", "package_id", "frame_index", "timestamp_s",
@@ -52,7 +55,7 @@ def _require(condition: bool, message: str) -> None:
 def _finite(value: Any, name: str) -> float:
     try:
         number = float(value)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise ScaleReferenceError(f"{name} must be a finite number") from error
     if not math.isfinite(number):
         raise ScaleReferenceError(f"{name} must be a finite number")
@@ -145,8 +148,8 @@ def measure_segment(
     """Measure a clicked segment using ADR-0007's v1 point window.
 
     Each endpoint has bounded radial click error +/-1 px. The segment length therefore has a
-    conservative +/-2 px bound. For scale = known_length / length_px, first-order propagation is
-    scale_uncertainty = known_length * 2 / length_px**2.
+    conservative +/-2 px bound. Because scale = known_length / length_px is nonlinear, propagate
+    that bound through the reciprocal exactly instead of using a first-order approximation.
     """
     length_m = _positive(known_length_m, "known length")
     width = _positive_int(width_px, "width_px")
@@ -165,15 +168,27 @@ def measure_segment(
     length_px = math.hypot(bx - ax, by - ay)
     _require(math.isfinite(length_px), "segment length is non-finite")
     _require(length_px > 0, "zero-length reference segment is invalid")
-    reference_scale = length_m / length_px
-    uncertainty = length_m * LENGTH_UNCERTAINTY_PX / (length_px * length_px)
     _require(
-        math.isfinite(reference_scale) and reference_scale > 0,
-        "reference scale is non-finite or non-positive",
+        length_px > LENGTH_UNCERTAINTY_PX,
+        "reference segment is too short for the bounded click-uncertainty model",
     )
+    reference_scale = length_m / length_px
+    reference_scale_lower = length_m / (length_px + LENGTH_UNCERTAINTY_PX)
+    reference_scale_upper = length_m / (length_px - LENGTH_UNCERTAINTY_PX)
+    minus_uncertainty = reference_scale - reference_scale_lower
+    plus_uncertainty = reference_scale_upper - reference_scale
     _require(
-        math.isfinite(uncertainty) and uncertainty > 0,
-        "reference scale uncertainty is non-finite or non-positive",
+        all(
+            math.isfinite(value) and value > 0
+            for value in (
+                reference_scale,
+                reference_scale_lower,
+                reference_scale_upper,
+                minus_uncertainty,
+                plus_uncertainty,
+            )
+        ),
+        "reference scale interval is non-finite or non-positive",
     )
     return {
         "known_length_m": length_m,
@@ -183,12 +198,19 @@ def measure_segment(
         "endpoint_precision_px": ENDPOINT_PRECISION_PX,
         "length_uncertainty_px": LENGTH_UNCERTAINTY_PX,
         "reference_scale_m_per_px": reference_scale,
-        "reference_scale_uncertainty_m_per_px": uncertainty,
+        "reference_scale_lower_m_per_px": reference_scale_lower,
+        "reference_scale_upper_m_per_px": reference_scale_upper,
+        "reference_scale_minus_uncertainty_m_per_px": minus_uncertainty,
+        "reference_scale_plus_uncertainty_m_per_px": plus_uncertainty,
     }
 
 
 def plate_scale_from_analysis(analysis: Any, fixture_id: str, source_sha256: str) -> float:
     _require(isinstance(analysis, dict), "analysis must be a JSON object")
+    _require(
+        analysis.get("schema_version") == EXPECTED_ANALYSIS_SCHEMA_VERSION,
+        "analysis must be analysis-v1 (schema_version 1)",
+    )
     identity = analysis.get("identity")
     _require(isinstance(identity, dict), "analysis.identity must be an object")
     _require(
@@ -199,8 +221,18 @@ def plate_scale_from_analysis(analysis: Any, fixture_id: str, source_sha256: str
         identity.get("source_sha256") == source_sha256,
         "analysis source_sha256 does not match the package/video bytes",
     )
+    calibration = analysis.get("calibration")
+    _require(isinstance(calibration, dict), "analysis.calibration must be an object")
+    _require(
+        calibration.get("method") == EXPECTED_CALIBRATION_METHOD,
+        "analysis calibration method must be plate_diameter",
+    )
+    _require(
+        calibration.get("method_version") == EXPECTED_CALIBRATION_METHOD_VERSION,
+        "analysis calibration method_version must be 1",
+    )
     try:
-        value = analysis["calibration"]["scale"]["metres_per_pixel"]
+        value = calibration["scale"]["metres_per_pixel"]
     except (KeyError, TypeError) as error:
         raise ScaleReferenceError("analysis is missing calibration.scale.metres_per_pixel") from error
     return _positive(value, "analysis calibration.scale.metres_per_pixel")
@@ -209,22 +241,34 @@ def plate_scale_from_analysis(analysis: Any, fixture_id: str, source_sha256: str
 def compare_to_plate(
     *,
     reference_scale_m_per_px: float,
-    reference_scale_uncertainty_m_per_px: float,
+    reference_scale_lower_m_per_px: float,
+    reference_scale_upper_m_per_px: float,
     plate_scale_m_per_px: float,
 ) -> dict[str, Any]:
     reference = _positive(reference_scale_m_per_px, "reference_scale_m_per_px")
-    uncertainty = _positive(
-        reference_scale_uncertainty_m_per_px,
-        "reference_scale_uncertainty_m_per_px",
-    )
+    lower = _positive(reference_scale_lower_m_per_px, "reference_scale_lower_m_per_px")
+    upper = _positive(reference_scale_upper_m_per_px, "reference_scale_upper_m_per_px")
+    _require(lower <= reference <= upper, "reference scale interval does not contain its nominal value")
     plate = _positive(plate_scale_m_per_px, "plate_scale_m_per_px")
     ratio = reference / plate
-    ratio_uncertainty = uncertainty / plate
-    _require(math.isfinite(ratio) and math.isfinite(ratio_uncertainty), "ratio is non-finite")
+    ratio_lower = lower / plate
+    ratio_upper = upper / plate
+    minus_uncertainty = ratio - ratio_lower
+    plus_uncertainty = ratio_upper - ratio
+    _require(
+        all(
+            math.isfinite(value)
+            for value in (ratio, ratio_lower, ratio_upper, minus_uncertainty, plus_uncertainty)
+        ),
+        "ratio interval is non-finite",
+    )
     return {
         "value": ratio,
-        "uncertainty": ratio_uncertainty,
-        "consistent_with_1": ratio - ratio_uncertainty <= 1.0 <= ratio + ratio_uncertainty,
+        "lower": ratio_lower,
+        "upper": ratio_upper,
+        "minus_uncertainty": minus_uncertainty,
+        "plus_uncertainty": plus_uncertainty,
+        "consistent_with_1": ratio_lower <= 1.0 <= ratio_upper,
     }
 
 
@@ -502,7 +546,8 @@ def evaluate_case(
     reference["timestamp_s"] = click["timestamp_s"]
     comparison = compare_to_plate(
         reference_scale_m_per_px=reference["reference_scale_m_per_px"],
-        reference_scale_uncertainty_m_per_px=reference["reference_scale_uncertainty_m_per_px"],
+        reference_scale_lower_m_per_px=reference["reference_scale_lower_m_per_px"],
+        reference_scale_upper_m_per_px=reference["reference_scale_upper_m_per_px"],
         plate_scale_m_per_px=plate_scale,
     )
     return {
@@ -538,7 +583,7 @@ def render_json_report(rows: list[dict[str, Any]]) -> bytes:
         "uncertainty_model": {
             "endpoint_precision_px": ENDPOINT_PRECISION_PX,
             "length_uncertainty_px": LENGTH_UNCERTAINTY_PX,
-            "propagation": "bounded_endpoint_error_first_order_scale",
+            "propagation": "bounded_endpoint_error_exact_reciprocal_interval",
         },
         "rows": _sorted_rows(rows),
     }
@@ -564,10 +609,10 @@ def render_markdown_report(rows: list[dict[str, Any]]) -> bytes:
         "Evidence only: this report does not alter analysis-v1 or plate calibration.",
         "",
         "Uncertainty model: each clicked endpoint has bounded radial precision of ±1 px; "
-        "segment length is therefore ±2 px. Scale uncertainty uses first-order propagation "
-        "u(scale) = known_length_m * 2 px / length_px². The plate scale is read unchanged "
-        "from calibration.scale.metres_per_pixel; only reference click uncertainty is "
-        "propagated into the ratio.",
+        "segment length is therefore bounded by ±2 px. That distance bound is propagated "
+        "exactly through scale = known_length_m / length_px, producing an asymmetric scale "
+        "interval. The plate scale is read unchanged from calibration.scale.metres_per_pixel; "
+        "only reference click uncertainty is propagated into the ratio.",
         "",
         "| Fixture | Reference scale | Plate scale | Reference / plate ratio | Consistent with 1? |",
         "| --- | ---: | ---: | ---: | :---: |",
@@ -577,10 +622,12 @@ def render_markdown_report(rows: list[dict[str, Any]]) -> bytes:
         ratio = row["reference_to_plate_ratio"]
         lines.append(
             f"| {row['fixture_id']} | "
-            f"{_num(ref['reference_scale_m_per_px'])} ± "
-            f"{_num(ref['reference_scale_uncertainty_m_per_px'])} m/px | "
+            f"{_num(ref['reference_scale_m_per_px'])} "
+            f"-{_num(ref['reference_scale_minus_uncertainty_m_per_px'])}/"
+            f"+{_num(ref['reference_scale_plus_uncertainty_m_per_px'])} m/px | "
             f"{_num(row['plate_scale_m_per_px'])} m/px | "
-            f"{_num(ratio['value'])} ± {_num(ratio['uncertainty'])} | "
+            f"{_num(ratio['value'])} -{_num(ratio['minus_uncertainty'])}/"
+            f"+{_num(ratio['plus_uncertainty'])} | "
             f"{'yes' if ratio['consistent_with_1'] else 'no'} |"
         )
     lines += ["", "## Provenance hashes", ""]
