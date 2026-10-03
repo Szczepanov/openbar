@@ -102,7 +102,9 @@ seed with the required `--tracker`, always with `--omit-runtime`:
 
 - `csrt`: `research/opencv-tracking/track.py`, CPU;
 - `sam2.1-bplus-circle`: `research/gpu-tracking/track_gpu.py`, run with `--gpu-python`. It needs a
-  CUDA GPU and the SHA-verified checkpoint, and takes about 80 s per 13 s clip on an RTX 3060 Ti.
+  CUDA GPU, a GPU research environment that can import torch and SAM 2 (see
+  `research/PLATE_TRACKING_PLAN.md`; `requirements.txt` is bootstrap constraints rather than a
+  complete lock), and the SHA-verified checkpoint. It takes about 80 s per 13 s clip on an RTX 3060 Ti.
 
 It then runs `analyze --observations`. It is research orchestration, not a second CLI. It adds no
 measurement logic and edits no prediction or analysis.
@@ -139,8 +141,9 @@ others. The `.tmp` files are renamed after every step succeeds, with the run rec
 output set without a run record is incomplete. Before promotion, the workflow re-checks the video,
 seed and registered manifest-entry hashes. It validates the staged files against
 `tracker-prediction-v1.schema.json` and `analysis-v1.schema.json`, and checks that the prediction
-and sidecar come from the requested tracker. The run record lists the commands with the final
-file names.
+comes from the requested tracker. For SAM 2 it also requires a format-0 geometry sidecar with the
+same implementation/provenance and one timestamp-aligned entry per prediction sample. The run
+record lists the commands with the final file names.
 
 The plate diameter and the filter and kinematics settings are required. The named preset
 `--preset vbt-sg-0.15s-v1` expands to exactly the flags above and is recorded expanded. The seed's

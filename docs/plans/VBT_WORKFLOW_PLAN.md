@@ -88,9 +88,11 @@ Non-goals:
   unchanged).
 
 Trackers for the personal workflow: `opencv-csrt` runs on CPU and is Apache-2.0.
-`sam2.1-bplus-circle` is the optional higher-accuracy mode on a desktop GPU. The post-session
-command requires an explicit `--tracker` choice, so there is no default. Both run from `research/` to
-produce the prediction file; neither becomes an OpenBar production dependency here.
+`sam2.1-bplus-circle` is an optional desktop-GPU research alternative. It reduced the specific
+fast-lift spikes described below, but it is not a selected production tracker: #57 Phase 3 remains
+PARTIAL and the SAM 2 circle candidates still fail some M0 tracker gates. The post-session command
+requires an explicit `--tracker` choice, so there is no default. Both run from `research/` to produce
+the prediction file; neither becomes an OpenBar production dependency here.
 
 ### Step 2, post-session command — `research/vbt-workflow/analyze_lift.py` (#86)
 
@@ -153,13 +155,16 @@ by `fixture_probe.py` as `purpose: development`, `private_only`, side view, fixe
 | `--tracker` | Runs | Needs | Cost |
 |---|---|---|---|
 | `csrt` | `track.py --tracker csrt --omit-runtime` with the interpreter running this script | the research venv (OpenCV) | seconds on CPU |
-| `sam2.1-bplus-circle` | `track_gpu.py --candidate sam2.1-bplus-circle --omit-runtime --geometry-output ...` with `--gpu-python` | an NVIDIA GPU with CUDA, the GPU venv (`research/gpu-tracking/requirements.txt`), and `sam2.1_hiera_base_plus.pt` in `validation/private/models/` with its committed SHA-256 (`download_models.py`) | about 80 s per 13 s clip on an RTX 3060 Ti; about 150 s was observed for an 832-frame clip |
+| `sam2.1-bplus-circle` | `track_gpu.py --candidate sam2.1-bplus-circle --omit-runtime --geometry-output ...` with `--gpu-python` | an NVIDIA GPU with CUDA; the GPU research environment (the requirements file is bootstrap constraints, plus SAM 2 installed as documented in `research/PLATE_TRACKING_PLAN.md`); and `sam2.1_hiera_base_plus.pt` in `validation/private/models/` with its committed SHA-256 (`download_models.py`) | about 80 s per 13 s clip on an RTX 3060 Ti; about 150 s was observed for an 832-frame clip |
 
-Use SAM 2 when CSRT drifts or spikes. On two of the owner's 30 kg snatches, CSRT gave a false
-first-rep peak of 3.1–3.4 m/s, against WL Analysis's 2.44 and 2.65 m/s. SAM 2.1 base-plus with the
-circle fit removed the spike: per-rep peaks were within 0.01–0.09 m/s of WL Analysis after a
-stick-based scale (a separate check, not this workflow's plate calibration), and the velocity-shape
-correlation was r = 0.999. Run the SAM 2 path like this:
+For the personal/research workflow, SAM 2 is an opt-in diagnostic alternative when CSRT shows an
+obvious drift or velocity spike; that does not promote it to the production path. On two private
+owner 30 kg snatch clips, preliminary #79 agreement data found CSRT first-rep peaks of 3.1–3.4 m/s
+against WL Analysis's 2.44 and 2.65 m/s, while SAM 2.1 base-plus with the circle fit removed those
+spikes. With a separately measured stick scale, the SAM 2 per-rep peaks were within 0.01–0.09 m/s
+of WL Analysis and the velocity-shape correlation was r = 0.999. WL Analysis is a comparison, not
+ground truth, and these two private clips are not the pre-registered formal #79 study. Run the SAM 2
+path like this:
 
 ```bash
 py research/vbt-workflow/analyze_lift.py run \
@@ -174,7 +179,7 @@ py research/vbt-workflow/analyze_lift.py run \
 `--openbar-cli` (from the current directory, `.exe` optional) and must be inside the repository.
 Links are not followed, because a POSIX venv `python` is a symlink to the base interpreter. Before
 registering or tracking, the workflow runs a short check in that interpreter. It stops with a clear
-error if torch does not import or no CUDA device is visible. `track_gpu.py` then verifies the
+error if torch or SAM 2 cannot import, or if no CUDA device is visible. `track_gpu.py` then verifies the
 checkpoint's SHA-256 before decoding. A missing or wrong checkpoint, or any other `track_gpu.py`
 failure, fails the run, and the error quotes `track_gpu.py`'s own last error line.
 `track_gpu.py` decodes the tracked window to temporary JPEGs under
@@ -244,8 +249,9 @@ the repository.
 - no readable git state;
 - a generated tracker prediction or analysis that does not match its committed JSON schema, a
   prediction whose `implementation.name` or `fixture_id` is not the requested tracker and video, or
-  (SAM 2) a geometry sidecar that is not a geometry sidecar for the same tracker and video. This
-  includes a missing sidecar;
+  (SAM 2) a geometry sidecar that is not format 0 for the same tracker and video, does not carry
+  the same implementation/provenance as the prediction, or is not sample-for-sample timestamp
+  aligned with the prediction. This includes a missing sidecar;
 - the video, seed, or registered manifest entry changing while tracking/analysis is running.
 
 Every step writes to `.<name>.tmp` files in the output directory; leftovers of a crashed run are
@@ -281,8 +287,8 @@ states this limit in `configuration.tracker_determinism`.
 The opt-in tests `OPENBAR_VBT_E2E=1 ... -k EndToEnd` in `research/vbt-workflow/tests` check both
 trackers with the real tools. The SAM 2 test also checks that CSRT and SAM 2 outputs coexist in one
 folder. It finds the GPU venv through `OPENBAR_VBT_GPU_PYTHON`, or `research/gpu-tracking/.venv` by
-default, and skips when the venv, torch, a CUDA device or the SHA-verified checkpoint is missing, as
-it is in CI.
+default, and skips when the venv, torch/SAM 2 environment, a CUDA device or the SHA-verified
+checkpoint is missing, as it is in CI.
 
 **Do not commit** anything under `validation/private/`. Report aggregates only.
 

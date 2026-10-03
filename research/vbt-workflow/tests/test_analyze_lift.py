@@ -79,17 +79,20 @@ class FakeRunner(analyze_lift.Runner):
 
     def __init__(self, *, missing: tuple[str, ...] = (), fail_step: str | None = None,
                  fail_message: str | None = None, bad_prediction: bool = False, bad_analysis: bool = False,
-                 bad_geometry: bool = False, wrong_implementation: bool = False,
-                 ignored: bool = False, torch: bool = True, cuda: bool = True) -> None:
+                 bad_geometry: bool = False, misaligned_geometry: bool = False,
+                 wrong_implementation: bool = False, ignored: bool = False,
+                 torch: bool = True, sam2: bool = True, cuda: bool = True) -> None:
         self.missing = set(missing)
         self.fail_step = fail_step
         self.fail_message = fail_message
         self.bad_prediction = bad_prediction
         self.bad_analysis = bad_analysis
         self.bad_geometry = bad_geometry
+        self.misaligned_geometry = misaligned_geometry
         self.wrong_implementation = wrong_implementation
         self.ignored = ignored
         self.torch = torch
+        self.sam2 = sam2
         self.cuda = cuda
         self.executed: list[list[str]] = []
         self.captured: list[list[str]] = []
@@ -106,8 +109,11 @@ class FakeRunner(analyze_lift.Runner):
         if argv[1:] == ["-c", analyze_lift.CUDA_PROBE]:
             if not self.torch:
                 raise analyze_lift.WorkflowError(f"{argv[0]} failed: ModuleNotFoundError: No module named 'torch'")
+            if not self.sam2:
+                raise analyze_lift.WorkflowError(f"{argv[0]} failed: ModuleNotFoundError: No module named 'sam2'")
             return (json.dumps({"torch": "2.5.1+cu124", "cuda_available": self.cuda,
-                                "device": "NVIDIA GeForce RTX 3060 Ti" if self.cuda else None}) + "\n").encode()
+                                "device": "NVIDIA GeForce RTX 3060 Ti" if self.cuda else None,
+                                "sam2_importable": True}) + "\n").encode()
         return f"{Path(argv[0]).name} version 1.0-test\nmore detail\n".encode()
 
     def succeeds(self, argv: list[str]) -> bool:
@@ -134,7 +140,12 @@ class FakeRunner(analyze_lift.Runner):
             sidecar = {"format": "openbar-research-geometry-sidecar", "format_version": 0,
                        "fixture_id": argv[argv.index("--fixture") + 1],
                        "implementation": {"name": SAM2, "version": "gpu-spike-3", "config": SAM2_CONFIG},
-                       "samples": [{"timestamp_s": 1.5, "fit_attempted": False, "accepted": True}]}
+                       "samples": [
+                           {"timestamp_s": 1.5, "fit_attempted": False, "accepted": True},
+                           {"timestamp_s": 1.7 if self.misaligned_geometry else 1.6,
+                            "fit_attempted": False, "accepted": False,
+                            "reject_reasons": ["frame_missing"], "base_confidence": 0.0},
+                       ]}
             geometry.write_text("[]\n" if self.bad_geometry else json.dumps(sidecar, indent=2) + "\n",
                                 encoding="utf-8")
 
@@ -954,8 +965,15 @@ class Sam2TrackerTests(WorkflowTestCase):
     def test_gpu_python_without_torch_fails_closed(self) -> None:
         code, _, stderr, runner = self.main(self.sam2_args(), FakeRunner(torch=False))
         self.assertNotEqual(code, 0)
-        self.assertIn("cannot import torch", stderr)
+        self.assertIn("cannot load the torch/SAM 2 environment", stderr)
         self.assertIn("No module named 'torch'", stderr)
+        self.assert_nothing_happened(runner)
+
+    def test_gpu_python_without_sam2_fails_closed(self) -> None:
+        code, _, stderr, runner = self.main(self.sam2_args(), FakeRunner(sam2=False))
+        self.assertNotEqual(code, 0)
+        self.assertIn("cannot load the torch/SAM 2 environment", stderr)
+        self.assertIn("No module named 'sam2'", stderr)
         self.assert_nothing_happened(runner)
 
     def test_no_cuda_device_fails_closed(self) -> None:
@@ -985,8 +1003,11 @@ class Sam2TrackerTests(WorkflowTestCase):
         self.assertIn("checkpoint sam2.1_hiera_base_plus.pt not found", stderr)
 
     def test_bad_sidecar_or_wrong_tracker_leaves_no_outputs(self) -> None:
-        for runner, needle in ((FakeRunner(bad_geometry=True), "geometry sidecar"),
-                               (FakeRunner(wrong_implementation=True), "expected 'sam2.1-bplus-circle'")):
+        for runner, needle in (
+            (FakeRunner(bad_geometry=True), "geometry sidecar"),
+            (FakeRunner(misaligned_geometry=True), "not aligned with the tracker prediction"),
+            (FakeRunner(wrong_implementation=True), "expected 'sam2.1-bplus-circle'"),
+        ):
             code, _, stderr, _ = self.main(self.sam2_args(), runner)
             self.assertNotEqual(code, 0)
             self.assertIn(needle, stderr)
@@ -1116,7 +1137,7 @@ class EndToEndSam2Tests(EndToEndBase):
         probe = subprocess.run([str(self.gpu_python), "-c", analyze_lift.CUDA_PROBE],
                                capture_output=True, text=True, encoding="utf-8", errors="replace")
         if probe.returncode != 0:
-            self.skipTest("SKIPPED: torch is not importable in the GPU venv")
+            self.skipTest("SKIPPED: the torch/SAM 2 environment is not importable in the GPU venv")
         if not json.loads(probe.stdout.strip().splitlines()[-1]).get("cuda_available"):
             self.skipTest("SKIPPED: no CUDA device")
         self.require_checkpoint()

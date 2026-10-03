@@ -23,9 +23,10 @@ GEOMETRY_SIDECAR_FORMAT = "openbar-research-geometry-sidecar"
 # Runs in the --gpu-python interpreter before tracking: SAM 2 needs torch with a visible CUDA device.
 CUDA_PROBE = (
     "import json, torch; "
+    "from sam2.build_sam import build_sam2_video_predictor; "
     "available = torch.cuda.is_available(); "
     "print(json.dumps({'torch': torch.__version__, 'cuda_available': available, "
-    "'device': torch.cuda.get_device_name(0) if available else None}))"
+    "'device': torch.cuda.get_device_name(0) if available else None, 'sam2_importable': True}))"
 )
 
 
@@ -105,7 +106,8 @@ def require_cuda(runner: Runner, gpu_python: str) -> None:
         text = runner.capture([gpu_python, "-c", CUDA_PROBE])
     except WorkflowError as error:
         raise WorkflowError(
-            f"--gpu-python {gpu_python} cannot import torch, so it cannot run SAM 2: {error}"
+            f"--gpu-python {gpu_python} cannot load the torch/SAM 2 environment required by "
+            f"--tracker sam2.1-bplus-circle: {error}"
         ) from error
     try:
         probe = json.loads(text.strip().splitlines()[-1])
@@ -137,7 +139,27 @@ def require_tracker_outputs(spec: TrackerSpec, fixture_id: str, prediction: dict
     except (schema_check.DocumentError, OSError) as error:
         raise WorkflowError(f"cannot read the geometry sidecar: {error}") from error
     if (not isinstance(sidecar, dict) or sidecar.get("format") != GEOMETRY_SIDECAR_FORMAT
+            or sidecar.get("format_version") != 0
             or sidecar.get("fixture_id") != fixture_id
             or sidecar.get("implementation", {}).get("name") != spec.implementation):
-        raise WorkflowError(f"the geometry sidecar is not a {GEOMETRY_SIDECAR_FORMAT} for {spec.implementation} "
-                            f"and {fixture_id}")
+        raise WorkflowError(f"the geometry sidecar is not a {GEOMETRY_SIDECAR_FORMAT} format 0 for "
+                            f"{spec.implementation} and {fixture_id}")
+    if sidecar.get("implementation") != prediction.get("implementation"):
+        raise WorkflowError("the geometry sidecar implementation/provenance does not match the tracker prediction")
+
+    prediction_samples = prediction.get("samples")
+    geometry_samples = sidecar.get("samples")
+    if not isinstance(prediction_samples, list) or not isinstance(geometry_samples, list):
+        raise WorkflowError("the geometry sidecar is not aligned with the tracker prediction: samples must be lists")
+    if len(geometry_samples) != len(prediction_samples):
+        raise WorkflowError(
+            "the geometry sidecar is not aligned with the tracker prediction: "
+            f"{len(geometry_samples)} geometry samples for {len(prediction_samples)} prediction samples"
+        )
+    for index, (prediction_sample, geometry_sample) in enumerate(zip(prediction_samples, geometry_samples)):
+        if (not isinstance(prediction_sample, dict) or not isinstance(geometry_sample, dict)
+                or geometry_sample.get("timestamp_s") != prediction_sample.get("timestamp_s")):
+            raise WorkflowError(
+                "the geometry sidecar is not aligned with the tracker prediction: "
+                f"timestamp mismatch at sample {index}"
+            )
