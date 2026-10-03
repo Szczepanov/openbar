@@ -72,11 +72,13 @@ class FakeRunner(analyze_lift.Runner):
         self.bad_prediction = bad_prediction
         self.ignored = ignored
         self.executed: list[list[str]] = []
+        self.captured: list[list[str]] = []
 
     def which(self, name: str) -> str | None:
         return None if name in self.missing else f"/usr/bin/{name}"
 
     def capture_bytes(self, argv: list[str]) -> bytes:
+        self.captured.append(list(argv))
         if argv[0] == "git":
             if "rev-parse" in argv:
                 return (COMMIT + "\n").encode()
@@ -90,6 +92,8 @@ class FakeRunner(analyze_lift.Runner):
         self.executed.append(list(argv))
         output = ROOT / argv[argv.index("--output") + 1]
         step = "track" if any(part.endswith("track.py") for part in argv) else "analyze"
+        if output.exists():  # the real analyze opens its output with create_new
+            raise analyze_lift.WorkflowError(f"{output} already exists")
         if step == "track":
             text = "{broken" if self.bad_prediction else json.dumps({
                 "schema_version": 1,
@@ -421,6 +425,67 @@ class FailClosedTests(WorkflowTestCase):
             self.assertNotEqual(code, 0)
             self.assertEqual({name: (self.output_dir / name).read_bytes() for name in self.outputs()}, previous)
 
+    def test_leftover_staging_files_are_removed_before_the_run(self) -> None:
+        self.output_dir.mkdir()
+        staged = analyze_lift.staged_paths(analyze_lift.output_paths(self.output_dir, FIXTURE_ID))
+        for path in staged.values():
+            path.write_text("crashed run\n", encoding="utf-8")
+        code, _, stderr, _ = self.main(self.run_args())
+        self.assertEqual(code, 0, stderr)
+        self.assertFalse(any(path.exists() for path in staged.values()))
+
+    def test_failing_second_rename_leaves_no_run_record(self) -> None:
+        self.main(self.run_args())
+        paths = analyze_lift.output_paths(self.output_dir, FIXTURE_ID)
+        paths["analysis"].write_bytes(b"old analysis\n")
+        old_analysis = paths["analysis"].read_bytes()
+        real_replace = os.replace
+
+        def locked_analysis(source: Any, target: Any) -> None:
+            if Path(target) == paths["analysis"]:
+                raise PermissionError("held open by a reader")
+            real_replace(source, target)
+
+        with mock.patch.object(analyze_lift.os, "replace", side_effect=locked_analysis),                 mock.patch.object(analyze_lift.time, "sleep") as sleep:
+            code, _, stderr, _ = self.main(self.run_args("--force"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("incomplete", stderr)
+        self.assertEqual(sleep.call_count, analyze_lift.RENAME_ATTEMPTS - 1)
+        self.assertFalse(paths["run_record"].exists())
+        self.assertEqual(paths["analysis"].read_bytes(), old_analysis)
+        self.assertFalse([name for name in self.outputs() if name.endswith(".tmp")])
+
+    def test_rename_retries_transient_permission_errors(self) -> None:
+        real_replace = os.replace
+        failures = {"left": 2}
+
+        def flaky(source: Any, target: Any) -> None:
+            if failures["left"] and Path(target).parent == self.output_dir:
+                failures["left"] -= 1
+                raise PermissionError("antivirus scan")
+            real_replace(source, target)
+
+        with mock.patch.object(analyze_lift.os, "replace", side_effect=flaky),                 mock.patch.object(analyze_lift.time, "sleep") as sleep:
+            code, _, stderr, _ = self.main(self.run_args())
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertTrue(analyze_lift.output_paths(self.output_dir, FIXTURE_ID)["run_record"].exists())
+
+    def test_cleanup_failure_does_not_hide_the_step_error(self) -> None:
+        runner = FakeRunner(fail_step="analyze")
+        real_unlink = Path.unlink
+
+        def locked_unlink(path: Path, missing_ok: bool = False) -> None:
+            if runner.executed and path.name.endswith(".tmp"):
+                raise OSError("locked")
+            real_unlink(path, missing_ok=missing_ok)
+
+        with mock.patch.object(Path, "unlink", locked_unlink):
+            code, _, stderr, _ = self.main(self.run_args(), runner)
+        self.assertNotEqual(code, 0)
+        self.assertIn("error: analyze step failed", stderr)
+        self.assertIn("warning: could not remove staging file", stderr)
+
     def test_failed_step_leaves_no_outputs(self) -> None:
         for runner in (FakeRunner(fail_step="track"), FakeRunner(fail_step="analyze")):
             code, _, stderr, _ = self.main(self.run_args(), runner)
@@ -476,6 +541,15 @@ class OpenbarCliTests(WorkflowTestCase):
         self.assertEqual(runner.executed[1][:2], [expected, "analyze"])
         self.assertEqual(self.record()["environment"]["openbar_cli"],
                          {"path": expected, "sha256": hashlib.sha256(b"fake binary").hexdigest()})
+
+    def test_match_in_cwd_instead_of_given_folder_is_rejected(self) -> None:
+        binary = self.make_binary()
+        (self.dir / "empty").mkdir()
+        cwd = os.getcwd()
+        os.chdir(binary.parent)
+        self.addCleanup(os.chdir, cwd)
+        with self.assertRaisesRegex(analyze_lift.WorkflowError, "--openbar-cli"):
+            analyze_lift.resolve_openbar_cli(str(self.dir / "empty" / "openbar-cli"))
 
     def test_missing_binary_fails_closed(self) -> None:
         code, _, stderr, runner = self.main(self.run_args("--openbar-cli", str(self.dir / "bin" / "openbar-cli")))
@@ -572,8 +646,14 @@ class RunTests(WorkflowTestCase):
             "untracked_source_files": 0,
         })
         self.assertEqual([command["step"] for command in record["commands"]], ["track", "analyze"])
-        self.assertEqual(record["commands"][0]["argv"], ["python", *runner.executed[0][1:]])
-        self.assertEqual(record["commands"][1]["argv"], runner.executed[1])
+        def final(argv: list[str]) -> list[str]:
+            return [arg.replace(f"/.{FIXTURE_ID}", f"/{FIXTURE_ID}").removesuffix(".tmp") for arg in argv]
+
+        self.assertEqual(record["commands"][0]["argv"], ["python", *final(runner.executed[0][1:])])
+        self.assertEqual(record["commands"][1]["argv"], final(runner.executed[1]))
+        self.assertNotIn(".tmp", json.dumps(record["commands"]))
+        diff = next(argv for argv in runner.captured if "diff" in argv)
+        self.assertEqual(diff[-6:], ["diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--no-color"])
         for name in ("prediction", "analysis"):
             path = self.output_dir / record["outputs"][name]["file"]
             self.assertEqual(record["outputs"][name]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())

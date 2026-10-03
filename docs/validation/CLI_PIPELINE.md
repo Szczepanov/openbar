@@ -124,7 +124,9 @@ cargo run --locked --release -p openbar-cli -- analyze \
   --output <output-dir>/.vbt-<16 hex>.analysis-v1.json.tmp
 ```
 
-The `.tmp` files are renamed to their final names only when every step succeeds.
+The `.tmp` files are renamed after every step succeeds, with the run record last. An output
+set without a run record is incomplete. The run record lists these commands with the final file
+names.
 
 The plate diameter and the filter and kinematics settings are required. The named preset
 `--preset vbt-sg-0.15s-v1` expands to exactly the flags above and is recorded expanded. The seed's

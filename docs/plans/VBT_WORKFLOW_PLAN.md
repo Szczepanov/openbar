@@ -157,7 +157,7 @@ repository, so the run record only holds repository-relative paths.
 - `<id>.run-record.json` (`openbar-research-vbt-run-record`, format version 1): both commands as
   run from the repository root, the video, seed and manifest-entry SHA-256, the seed timestamp, the
   explicit analyze options and preset name, and the output SHA-256. It also records the OpenBar
-  git state: the commit, whether tracked files changed, the SHA-256 of `git diff HEAD --binary`, and
+  git state: the commit, whether tracked files changed, the SHA-256 of `git diff HEAD --binary --no-ext-diff --no-textconv --no-color`, and
   the number of untracked files under `crates/`, `apps/` and `research/`. Tool versions: Python,
   FFmpeg, ffprobe, cargo and rustc (or the `--openbar-cli` path and SHA-256), OpenCV and NumPy. It
   has no wall-clock time.
@@ -187,9 +187,15 @@ the repository.
 - the same video already registered under another id;
 - no readable git state.
 
-Every step writes to `.<name>.tmp` files in the output directory. The three outputs replace the
-real files only when tracking, analysis and the run record all succeed. A failed run, including a
-failed `--force` run, therefore leaves the previous outputs and any unrelated files untouched.
+Every step writes to `.<name>.tmp` files in the output directory; leftovers of a crashed run are
+removed first. If tracking, analysis or writing the run record fails, nothing is renamed, so the
+previous outputs and any unrelated files stay untouched (this includes a failed `--force` run).
+Once everything has succeeded, the old run record is removed first. The files are then renamed in
+order: prediction, analysis, and the run record last. Each rename retries 5 times, 0.2 s apart, on
+a Windows `PermissionError`. Three renames cannot be atomic as a set, so the guarantee is: **an
+output set without a run record is incomplete**; re-run with `--force`. A set with a run record is
+complete, and the record's SHA-256 values identify its files. The recorded commands use the final
+file names; neither output embeds its own path.
 
 **Determinism.** Re-running on the same inputs gives byte-identical predictions and `analysis-v1`.
 The workflow always passes `track.py --omit-runtime`. With that flag, `track.py` leaves the

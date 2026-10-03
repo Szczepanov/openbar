@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +73,9 @@ TRACKER_IMPLEMENTATION = "opencv-csrt"
 CARGO_ANALYZE = ["cargo", "run", "--locked", "--release", "-p", "openbar-cli", "--"]
 EXERCISES = ("snatch", "clean", "back_squat", "other")
 FILTERS = ("raw", "moving-average", "savitzky-golay", "kalman")
-OUTPUT_NAMES = ("prediction", "analysis", "run_record")
+OUTPUT_NAMES = ("prediction", "analysis", "run_record")  # promotion order: the run record last
+RENAME_ATTEMPTS = 5
+RENAME_RETRY_SLEEP_S = 0.2
 
 # Named presets expand to explicit analyze flags, which the run record stores verbatim.
 PRESETS: dict[str, list[str]] = {
@@ -418,7 +421,8 @@ def git_provenance(runner: Runner) -> dict[str, Any]:
     git = ["git", "-C", str(ROOT)]
     try:
         commit = runner.capture([*git, "rev-parse", "HEAD"]).strip()
-        diff = runner.capture_bytes([*git, "diff", "HEAD", "--binary"])
+        diff = runner.capture_bytes([*git, "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv",
+                                     "--no-color"])
         untracked = runner.capture([*git, "ls-files", "--others", "--exclude-standard", "--",
                                     *UNTRACKED_SOURCE_DIRS])
     except WorkflowError as error:
@@ -478,6 +482,43 @@ def remove_files(paths: dict[str, Path]) -> None:
         path.unlink(missing_ok=True)
 
 
+def cleanup_staged(staged: dict[str, Path]) -> None:
+    """Best-effort removal of staging files; problems are reported, never raised over a real error."""
+    for path in staged.values():
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"warning: could not remove staging file {display_path(path)}: {error}", file=sys.stderr)
+
+
+def retry_on_permission_error(action: Any, describe: str) -> None:
+    """Windows readers/antivirus can hold a file briefly; retry a fixed number of times."""
+    for attempt in range(1, RENAME_ATTEMPTS + 1):
+        try:
+            action()
+            return
+        except PermissionError as error:
+            if attempt == RENAME_ATTEMPTS:
+                raise WorkflowError(
+                    f"could not {describe} after {RENAME_ATTEMPTS} attempts: {error}; the output set is "
+                    "incomplete (there is no run record), so re-run with --force"
+                ) from error
+            time.sleep(RENAME_RETRY_SLEEP_S)
+
+
+def promote_outputs(staged: dict[str, Path], paths: dict[str, Path]) -> None:
+    """Move staged outputs into place; the run record goes first-out and last-in.
+
+    Renames are not atomic as a set. Removing the old run record first and renaming the new one
+    last means an interrupted promotion always leaves no run record: no record = incomplete set.
+    """
+    record = paths["run_record"]
+    retry_on_permission_error(lambda: record.unlink(missing_ok=True), f"remove {display_path(record)}")
+    for name in OUTPUT_NAMES:
+        source, target = staged[name], paths[name]
+        retry_on_permission_error(lambda: os.replace(source, target), f"move {display_path(target)} into place")
+
+
 def run_steps(runner: Runner, commands: list[tuple[str, list[str]]]) -> None:
     for step, argv in commands:
         print(f"[{step}] {' '.join(argv)}", flush=True)
@@ -524,10 +565,7 @@ def build_run_record(*, fixture_id: str, video: Path, video_sha256: str, seed: P
             "analyze_options": options,
         },
         "commands": recorded_commands,
-        "commands_note": (
-            "Run from the repository root; 'python' is the research venv interpreter. Outputs are written "
-            "to .<name>.tmp in the output directory and renamed only when every step succeeds."
-        ),
+        "commands_note": "Run from the repository root; 'python' is the research venv interpreter.",
         "outputs": {
             name: {"file": paths[name].name, "sha256": file_sha256(staged[name])}
             for name in ("prediction", "analysis")
@@ -613,11 +651,16 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
     entry, action = register_video(args.video, manifest, video_sha256, plate, args.exercise)
 
     staged = staged_paths(paths)
-    commands = [
-        ("track", track_command(manifest, fixture_id, args.seed, staged["prediction"])),
-        ("analyze", analyze_command(openbar_cli, manifest, fixture_id, args.seed, args.plate_diameter_m,
-                                    staged["prediction"], options, staged["analysis"])),
-    ]
+
+    def commands_for(files: dict[str, Path]) -> list[tuple[str, list[str]]]:
+        return [
+            ("track", track_command(manifest, fixture_id, args.seed, files["prediction"])),
+            ("analyze", analyze_command(openbar_cli, manifest, fixture_id, args.seed, args.plate_diameter_m,
+                                        files["prediction"], options, files["analysis"])),
+        ]
+
+    commands = commands_for(staged)  # what runs: staged .tmp outputs
+    recorded = commands_for(paths)  # what is recorded: final names (no output embeds its path)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     remove_files(staged)  # leftovers of an interrupted run; never the real outputs
     try:
@@ -629,14 +672,13 @@ def command_run(args: argparse.Namespace, runner: Runner) -> int:
         record = build_run_record(
             fixture_id=fixture_id, video=args.video, video_sha256=video_sha256, seed=args.seed,
             seed_document=seed_document, manifest=manifest, entry=entry, args=args, plate=plate,
-            options=options, commands=commands, paths=paths, staged=staged, prediction=prediction,
+            options=options, commands=recorded, paths=paths, staged=staged, prediction=prediction,
             git=git, versions=versions,
         )
         write_json(staged["run_record"], record)
-        for name in OUTPUT_NAMES:
-            os.replace(staged[name], paths[name])
+        promote_outputs(staged, paths)
     finally:
-        remove_files(staged)
+        cleanup_staged(staged)
     print_summary(fixture_id, args.exercise, action, seed_document, prediction, paths, git)
     return 0
 
