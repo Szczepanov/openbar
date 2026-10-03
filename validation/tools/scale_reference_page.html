@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenBar scale reference</title>
+<style>
+:root { color-scheme: dark; --bg:#101216; --panel:#1a1e25; --text:#e9edf2; --muted:#9aa4b2; --accent:#4cc2ff; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px system-ui,sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+h1 { font-size:20px; margin:0; }
+p { margin:0; line-height:1.45; }
+.panel { background:var(--panel); border:1px solid #303743; border-radius:8px; padding:12px; }
+canvas { display:block; width:100%; height:auto; background:#000; border:1px solid #303743; touch-action:manipulation; }
+.controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+button { background:#2b313c; color:var(--text); border:1px solid #3a4250; border-radius:6px; padding:8px 10px; font:inherit; }
+button:disabled { opacity:.45; }
+.muted { color:var(--muted); }
+code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Scale reference</h1>
+    <p class="muted" id="identity"></p>
+  </div>
+  <div class="panel">
+    <p>Click endpoint A, then endpoint B of the known length. Coordinates follow OpenBar pixel-centre convention.
+    The report models each endpoint with bounded radial precision of ±1 px.</p>
+  </div>
+  <canvas id="view"></canvas>
+  <div class="panel controls">
+    <button id="clear" type="button">Clear points</button>
+    <button id="export" type="button" disabled>Download click CSV</button>
+    <span id="readout" class="muted">No points yet.</span>
+  </div>
+</main>
+<script>
+const CONFIG = /*CONFIG*/null;
+const points = [];
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+const image = new Image();
+image.src = CONFIG.frames[0].file;
+
+// BEGIN scaleReferencePure (pure; exercised by validation/tests/test_scale_reference.py)
+function pointInWindow(point, widthPx, heightPx) {
+  return Number.isFinite(point.x_px) && Number.isFinite(point.y_px) &&
+    point.x_px >= 0 && point.y_px >= 0 && point.x_px < widthPx && point.y_px < heightPx;
+}
+function referenceCsvRows(config, selected) {
+  const header = "fixture_id,source_video_sha256,package_id,frame_index,timestamp_s,width_px,height_px,known_length_m,point_a_x_px,point_a_y_px,point_b_x_px,point_b_y_px";
+  if (!Array.isArray(selected) || selected.length !== 2) return header + "\n";
+  const frame = config.frames[0];
+  const row = [
+    config.fixture_id,
+    config.source_video_sha256,
+    config.package_id,
+    frame.frame_index,
+    Number(frame.timestamp_s).toFixed(6),
+    config.width_px,
+    config.height_px,
+    config.known_length_m,
+    Number(selected[0].x_px).toFixed(6),
+    Number(selected[0].y_px).toFixed(6),
+    Number(selected[1].x_px).toFixed(6),
+    Number(selected[1].y_px).toFixed(6),
+  ];
+  return header + "\n" + row.join(",") + "\n";
+}
+// END scaleReferencePure
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (image.complete && image.naturalWidth) ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#4cc2ff";
+  ctx.fillStyle = "#4cc2ff";
+  if (points.length === 2) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x_px + 0.5, points[0].y_px + 0.5);
+    ctx.lineTo(points[1].x_px + 0.5, points[1].y_px + 0.5);
+    ctx.stroke();
+  }
+  points.forEach(function(p, i) {
+    const x = p.x_px + 0.5, y = p.y_px + 0.5;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = "14px system-ui"; ctx.fillText(i === 0 ? "A" : "B", x + 8, y - 8);
+  });
+  ctx.restore();
+  const readout = document.getElementById("readout");
+  if (points.length === 0) readout.textContent = "No points yet.";
+  else if (points.length === 1) readout.textContent = "A = (" + points[0].x_px.toFixed(2) + ", " + points[0].y_px.toFixed(2) + ") px; click B.";
+  else {
+    const dx = points[1].x_px - points[0].x_px, dy = points[1].y_px - points[0].y_px;
+    const length = Math.hypot(dx, dy);
+    readout.textContent = "clicked length = " + length.toFixed(2) + " px; known length = " + CONFIG.known_length_m + " m";
+  }
+  document.getElementById("export").disabled = points.length !== 2;
+}
+
+image.onload = function() {
+  canvas.width = CONFIG.width_px;
+  canvas.height = CONFIG.height_px;
+  draw();
+};
+canvas.addEventListener("click", function(event) {
+  if (points.length === 2) return;
+  const rect = canvas.getBoundingClientRect();
+  const imageX = (event.clientX - rect.left) * CONFIG.width_px / rect.width;
+  const imageY = (event.clientY - rect.top) * CONFIG.height_px / rect.height;
+  const point = {x_px: imageX - 0.5, y_px: imageY - 0.5};
+  if (!pointInWindow(point, CONFIG.width_px, CONFIG.height_px)) return;
+  points.push(point);
+  draw();
+});
+document.getElementById("clear").onclick = function() { points.length = 0; draw(); };
+document.getElementById("export").onclick = function() {
+  if (points.length !== 2) return;
+  const text = referenceCsvRows(CONFIG, points);
+  const url = URL.createObjectURL(new Blob([text], {type:"text/csv"}));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = CONFIG.fixture_id + ".scale-reference.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+};
+document.getElementById("identity").textContent =
+  CONFIG.fixture_id + " · frame " + CONFIG.frames[0].frame_index +
+  " · t=" + Number(CONFIG.frames[0].timestamp_s).toFixed(6) + " s · known " + CONFIG.known_length_m + " m";
+</script>
+</body>
+</html>
