@@ -12,7 +12,7 @@ main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:14px; }
 h1 { font-size:20px; margin:0; }
 p { margin:0; line-height:1.45; }
 .panel { background:var(--panel); border:1px solid #303743; border-radius:8px; padding:12px; }
-canvas { display:block; width:100%; height:auto; background:#000; border:1px solid #303743; touch-action:manipulation; }
+canvas { display:block; width:100%; height:auto; background:#000; outline:1px solid #303743; touch-action:manipulation; }
 .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 button { background:#2b313c; color:var(--text); border:1px solid #3a4250; border-radius:6px; padding:8px 10px; font:inherit; }
 button:disabled { opacity:.45; }
@@ -119,10 +119,10 @@ canvas.addEventListener("click", function(event) {
   if (points.length === 2) return;
   const rect = canvas.getBoundingClientRect();
   const point = imagePointFromContentOffset(
-    event.clientX - rect.left - canvas.clientLeft,
-    event.clientY - rect.top - canvas.clientTop,
-    canvas.clientWidth,
-    canvas.clientHeight,
+    event.clientX - rect.left,
+    event.clientY - rect.top,
+    rect.width,
+    rect.height,
     CONFIG.width_px,
     CONFIG.height_px,
   );
