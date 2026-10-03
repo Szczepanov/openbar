@@ -21,7 +21,7 @@ Checklist:
 - Domain Logic Authority: authoritative domain logic lives in crates/openbar-core. Tracking and CLI consume it and never duplicate calibration or kinematics.
 - Error Handling: domain errors are hand-written enums implementing Display + std::error::Error. No thiserror/anyhow.
 - Contracts & Golden Files: serialized structs enforce #[serde(deny_unknown_fields)] and integer versions. analysis-v1.golden.json is never updated casually.
-- Legal & Clean-Room: PolyForm Shield 1.0.0 compliance; no unapproved media, weights, or competitor code.
+- Legal & Clean-Room: MIT licence compliance; no unapproved media, weights, or competitor code.
 
 Verdict: APPROVE or CHANGES REQUESTED with concise remediation steps.
 """

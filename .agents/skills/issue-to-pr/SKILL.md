@@ -44,7 +44,7 @@ You take a GitHub issue number as input and drive it to an opened PR: issue inta
      - **Pixel coordinates:** display-oriented, +X right, +Y down, integer `(i, j)` at pixel centres; `(0, 0)` is the centre of the top-left pixel (ADR-0007). `[0, width)` / `[0, height)` for points; `[0, width]` / `[0, height]` for bounds.
      - **Units in field names:** `_px`, `_m`, `_mm`, `_s`.
    - **Data, legal and clean-room rules:**
-     - Licence is PolyForm Shield 1.0.0 (source-available, not OSI). Do not add files under incompatible licences or change licensing text.
+     - Licence is MIT. Do not add code, data or models under licences incompatible with MIT, and do not change licensing text unless the owner asks.
      - Clean-room discipline ([docs/clean-room/COMPETITOR_BOUNDARIES.md](file:///c:/Users/mdszc/Downloads/projekty/openbar/docs/clean-room/COMPETITOR_BOUNDARIES.md)): never reverse-engineer or copy proprietary competitor code, models, assets, UI, or text.
      - Never commit media (`*.mp4`, etc.), datasets, model weights, or `.onnx` files unless redistribution rights are documented in the fixture manifest. Public fixtures are force-added intentionally; private media belongs in `validation/private/` (git-ignored).
      - Never commit credentials, secrets, or API tokens.

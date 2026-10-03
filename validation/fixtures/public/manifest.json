@@ -40,7 +40,7 @@
         "kind": "synthetic",
         "reference": "Generated from first principles for the OpenBar annotation workflow; no external media or dataset was used.",
         "rights_holder": "OpenBar project",
-        "license": "PolyForm Shield License 1.0.0",
+        "license": "MIT",
         "redistribution_status": "allowed",
         "redistribution_evidence": "Repository-generated synthetic fixture committed with issue #4 implementation."
       },

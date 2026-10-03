@@ -1,6 +1,6 @@
 # ADR-0002: Start source-available under PolyForm Shield 1.0.0
 
-- Status: Accepted for project bootstrap; professional legal review required before product launch
+- Status: Superseded by [ADR-0011](0011-mit-licence.md) on 2026-10-03
 - Date: 2026-10-01
 
 ## Context

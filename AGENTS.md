@@ -131,8 +131,8 @@ These come from VISION.md and ADR-0003/0005. Violating them is a bug even if tes
 - Clean-room: never reverse engineer, decompile, or copy proprietary competitor code, models,
   assets, UI, or text. Implement from first principles or published literature. When referencing
   external code/data, cite source and licence. See `docs/clean-room/COMPETITOR_BOUNDARIES.md`.
-- Licence is PolyForm Shield 1.0.0 (source-available, not OSI). Don't add files under a
-  different licence or change licensing text.
+- Licence is MIT (ADR-0011). Don't add code, data or models under a licence incompatible with
+  MIT, and don't change licensing text unless the owner asks.
 
 ## Scope discipline
 

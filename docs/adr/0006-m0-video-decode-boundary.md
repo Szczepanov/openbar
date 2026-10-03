@@ -166,9 +166,9 @@ this ADR is accepted.
 
 FFmpeg is LGPL-2.1+ or GPL-2.0+ depending on build configuration. OpenBar invokes it as a
 separate executable via its documented command-line interface and neither links nor ships it, so
-FFmpeg's licence does not attach to OpenBar's source under PolyForm Shield 1.0.0. Bundling FFmpeg
-binaries with any future distribution is a separate decision requiring licence review under
-ADR-0002.
+FFmpeg's licence does not attach to OpenBar's MIT-licensed source (ADR-0011). Bundling FFmpeg
+binaries with any future distribution is a separate decision that requires its own LGPL/GPL
+review. (This note originally referred to ADR-0002's PolyForm Shield licence.)
 
 ## Revisit when
 

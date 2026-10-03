@@ -205,8 +205,8 @@ CANDIDATE_REGISTRY: dict[str, CandidateProducer] = {
 }
 
 TRACKER_LICENSES: dict[str, str] = {
-    "template-sad-v1": "PolyForm Shield 1.0.0",
-    "local-contrast-centroid-v1": "PolyForm Shield 1.0.0",
+    "template-sad-v1": "MIT",
+    "local-contrast-centroid-v1": "MIT",
     "opencv-csrt": "Apache-2.0",
     "opencv-kcf": "Apache-2.0",
     "opencv-vit": "Apache-2.0",
