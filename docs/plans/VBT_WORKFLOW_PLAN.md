@@ -369,6 +369,44 @@ Implications for #79:
   filter-dependent).
 - Report the 2 % scale difference separately: deciding which source is right is #58's job.
 
+### Step 5 groundwork — between-set timing check (#80)
+
+The owner trains in a home gym, so the first between-set candidate is the phone for recording,
+confirming and reading results, with tracking (SAM 2 included) on the home PC over the home
+network. Phone-only computation stays the #59 question. Before anything is built for it, one real
+set is timed through the existing session workflow:
+
+```bash
+py research/vbt-workflow/time_session.py --session timing-2026-10-04 --inbox <empty folder> \
+    --watch <Downloads> --rest-s 180 -- \
+    --plate-diameter-m 0.45 --stick-length-m 1.30 --tracker-policy sam2-all-v1 \
+    --gpu-python <gpu venv python> --openbar-cli target/release/openbar-cli.exe --preset vbt-sg-0.15s-v1
+```
+
+Everything after `--` is passed to `vbt_session.py run` and is checked before the wait starts. The
+script then:
+
+1. waits for the first video in `--inbox` and takes it once its size is stable across two polls;
+2. times `ingest`;
+3. waits for the confirmed session CSV, as `run --watch` does;
+4. times `run`, with every tracking and analysis process timed separately.
+
+The inbox must start empty and the session id must be new. The timing record (default
+`validation/private/vbt/timing/<session>.timing.json`, format `openbar-research-vbt-timing` v1)
+holds:
+
+- the stages reached;
+- machine time (ingest plus run);
+- the time from the video landing to the report;
+- the gap between arrival and the container's `creation_time` tag. This uses the phone clock, and
+  phones differ on whether the tag marks the start or the end of recording.
+
+Diagnostics only: nothing in the record reaches a seed, prediction or analysis. Pass a prebuilt
+`--openbar-cli`, because `cargo run` would add a build check to every clip's analyze step. SAM 2
+timings include loading the model for every clip, which a long-running server would avoid.
+
+Tests: `research/vbt-workflow/tests/test_time_session.py` (fakes).
+
 ## 5. Known risks
 
 | Risk | Effect | Mitigation |
