@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenBar VBT session</title>
+<style>
+:root { color-scheme: dark; --bg:#101216; --panel:#1a1e25; --text:#e9edf2; --muted:#9aa4b2; --accent:#4cc2ff;
+  --plate:#ffb020; --stick:#3ecf8e; --bad:#ff5d6c; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px system-ui,sans-serif; }
+header { position:sticky; top:0; z-index:2; background:#0b0d10; border-bottom:1px solid #303743; padding:10px 16px;
+  display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+main { max-width:1200px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+h1 { font-size:17px; margin:0; }
+.clip { background:var(--panel); border:1px solid #303743; border-radius:8px; padding:12px; display:grid;
+  grid-template-columns:minmax(0,1fr) 320px; gap:12px; }
+.clip.confirmed { border-color:var(--stick); } .clip.skipped { opacity:.6; }
+@media (max-width:800px) { .clip { grid-template-columns:1fr; } }
+canvas { display:block; max-width:100%; max-height:85vh; width:auto; height:auto; margin:0 auto; background:#000;
+  touch-action:none; cursor:crosshair; }
+.side { display:flex; flex-direction:column; gap:8px; }
+.row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+button, select { background:#2b313c; color:var(--text); border:1px solid #3a4250; border-radius:6px; padding:6px 9px; font:inherit; }
+button.on { background:var(--accent); color:#000; } button:disabled, input:disabled + span { opacity:.45; }
+.muted { color:var(--muted); font-size:12px; } .bad { color:var(--bad); }
+.status { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+label.toggle { display:flex; gap:6px; align-items:center; font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <span id="progress" class="muted"></span>
+  <button id="download" type="button" disabled>Download session CSV</button>
+  <span class="muted">Drag the orange plate centre and rim and the green stick markers. Tap or click on the
+    frame to place a missing item. Arrow keys nudge the selected handle 1 px (Shift: 0.25 px).
+    Pixel-centre coordinates (ADR-0007). Nothing is used until you confirm the clip.</span>
+</header>
+<main id="clips"></main>
+<script>
+const CONFIG = /*CONFIG*/null;
+const IMAGES = /*IMAGES*/null;
+
+// BEGIN sessionPure (pure; exercised by research/vbt-workflow/tests/test_session_page.py)
+const ITEMS = ["plate_center", "plate_radius", "stick_low", "stick_high"];
+// The CSV writes v.toFixed(2); every comparison uses the same rounding (session_contract.py compares exactly).
+function round2(v) { return Number(v.toFixed(2)); }
+function suggestedValues(clip) {
+  const p = clip.suggestions.plate, s = clip.suggestions.stick;
+  return {
+    plate_center: p.status === "suggested" ? [p.center_x_px, p.center_y_px] : null,
+    plate_radius: p.status === "suggested" ? [p.radius_px] : null,
+    stick_low: s.status === "suggested" ? [s.low_x_px, s.low_y_px] : null,
+    stick_high: s.status === "suggested" ? [s.high_x_px, s.high_y_px] : null,
+  };
+}
+function initialState(clip) {
+  const s = suggestedValues(clip);
+  return { values: { ...s }, exercise: clip.registered_exercise || "", decision: "" };
+}
+function itemStatus(clip, state, item) {
+  const value = state.values[item], suggested = suggestedValues(clip)[item];
+  if (!value) return "missing";
+  if (!suggested) return "manual";
+  return value.every((v, i) => round2(v) === suggested[i]) ? "accepted" : "adjusted";
+}
+function pointInWindow(x, y, w, h) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x < w - 0.5 && y < h - 0.5;
+}
+function imagePointFromContentOffset(cx, cy, cw, ch, w, h) {
+  if (!(cw > 0) || !(ch > 0)) return { x: NaN, y: NaN };
+  return { x: cx * w / cw - 0.5, y: cy * h / ch - 0.5 };
+}
+function geometryProblem(clip, state) {
+  const v = state.values, w = clip.width_px, h = clip.height_px;
+  for (const item of ITEMS) if (!v[item]) return item.replace("_", " ") + " is missing";
+  const [cx, cy] = v.plate_center.map(round2), r = round2(v.plate_radius[0]);
+  if (!(r > 0) || cx - r < 0 || cy - r < 0 || cx + r > w || cy + r > h) return "the plate circle must fit inside the frame";
+  for (const item of ["plate_center", "stick_low", "stick_high"]) {
+    const [x, y] = v[item].map(round2);
+    if (!(x >= 0 && y >= 0 && x < w && y < h)) return item.replace("_", " ") + " is outside the frame";
+  }
+  const [lx, ly] = v.stick_low.map(round2), [hx, hy] = v.stick_high.map(round2);
+  if (Math.hypot(hx - lx, hy - ly) <= 2) return "the stick markers are too close together";
+  return null;
+}
+const EXERCISES = ["snatch", "clean", "back_squat", "other"];
+function canConfirm(clip, state) {
+  return geometryProblem(clip, state) === null && EXERCISES.includes(state.exercise);
+}
+// Any edit returns a new state and withdraws an earlier confirmation.
+function withEdit(state, change) {
+  return { ...state, ...change, values: { ...state.values, ...(change.values || {}) },
+    decision: state.decision === "skipped" ? "skipped" : "" };
+}
+function movePoint(state, item, x, y) {
+  if (item === "plate_center" && state.values.plate_center) {
+    return withEdit(state, { values: { plate_center: [x, y] } });  // the radius is kept
+  }
+  if (item === "plate_radius") {
+    const c = state.values.plate_center;
+    return c ? withEdit(state, { values: { plate_radius: [Math.hypot(x - c[0], y - c[1])] } }) : state;
+  }
+  return withEdit(state, { values: { [item]: [x, y] } });
+}
+function nextMissing(state) {
+  return ITEMS.find(item => !state.values[item]) || null;
+}
+function decide(clip, state, decision) {
+  if (decision === "confirmed" && !canConfirm(clip, state)) return state;
+  return { ...state, decision: state.decision === decision ? "" : decision };
+}
+function downloadProblem(clips, states) {
+  const open = clips.filter((c, i) => !["confirmed", "skipped"].includes(states[i].decision)).length;
+  if (open) return open + " clip(s) still need Confirm or Skip";
+  if (!states.some(s => s.decision === "confirmed")) return "confirm at least one clip";
+  for (let i = 0; i < clips.length; i++)
+    if (states[i].decision === "confirmed" && !canConfirm(clips[i], states[i])) return "clip " + (i + 1) + " is incomplete";
+  return null;
+}
+function sessionCsv(config, states) {
+  const head = ["format", "session_id", "page_id", "clip_index", "fixture_id", "source_video_sha256", "package_id",
+    "frame_index", "timestamp_s", "width_px", "height_px", "decision", "exercise",
+    "plate_suggestion_id", "plate_center_x_px", "plate_center_y_px", "plate_radius_px", "plate_center_status",
+    "plate_radius_status", "stick_suggestion_id", "stick_low_x_px", "stick_low_y_px", "stick_high_x_px",
+    "stick_high_y_px", "stick_low_status", "stick_high_status"];
+  const rows = config.clips.map((clip, i) => {
+    const s = states[i], confirmed = s.decision === "confirmed";
+    const f = v => v.toFixed(2);
+    const geometry = confirmed ? [
+      clip.suggestions.plate.status === "suggested" ? clip.suggestions.plate.id : "",
+      f(s.values.plate_center[0]), f(s.values.plate_center[1]), f(s.values.plate_radius[0]),
+      itemStatus(clip, s, "plate_center"), itemStatus(clip, s, "plate_radius"),
+      clip.suggestions.stick.status === "suggested" ? clip.suggestions.stick.id : "",
+      f(s.values.stick_low[0]), f(s.values.stick_low[1]), f(s.values.stick_high[0]), f(s.values.stick_high[1]),
+      itemStatus(clip, s, "stick_low"), itemStatus(clip, s, "stick_high"),
+    ] : Array(13).fill("");
+    return [config.format, config.session_id, config.page_id, i, clip.fixture_id, clip.sha256, clip.package_id,
+      clip.frame_index, String(clip.timestamp_s), clip.width_px, clip.height_px,
+      confirmed ? "confirmed" : "skipped", confirmed ? s.exercise : "", ...geometry].join(",");
+  });
+  return [head.join(","), ...rows].join("\n") + "\n";
+}
+// END sessionPure
+
+const KEY = "openbar-vbt-session-" + CONFIG.session_id + "-" + CONFIG.page_id;
+let states = CONFIG.clips.map(initialState);
+try {
+  const saved = JSON.parse(localStorage.getItem(KEY) || "null");
+  if (Array.isArray(saved) && saved.length === states.length) states = saved;
+} catch (e) { /* start fresh */ }
+const views = [];
+let selected = null;  // {clip, item}
+let dragStart = null;  // screen position where the current handle drag began
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify(states)); } catch (e) {} }
+function update(i, state) { states[i] = state; save(); render(i); renderHeader(); }
+
+function toCanvas(view, x, y) { return { x: (x + 0.5 - view.ox) * view.zoom, y: (y + 0.5 - view.oy) * view.zoom }; }
+function draw(i) {
+  const view = views[i], clip = CONFIG.clips[i], s = states[i], ctx = view.canvas.getContext("2d");
+  const W = clip.width_px, H = clip.height_px;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(view.zoom, 0, 0, view.zoom, -view.ox * view.zoom, -view.oy * view.zoom);
+  if (view.image.complete) { ctx.imageSmoothingEnabled = view.zoom < 2; ctx.drawImage(view.image, 0, 0, W, H); }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const lw = Math.max(1.5, W / 500), handle = Math.max(5, W / 120);
+  const dot = (item, colour) => {
+    const v = s.values[item]; if (!v) return;
+    const p = item === "plate_radius" ? toCanvas(view, s.values.plate_center[0] + v[0], s.values.plate_center[1])
+      : toCanvas(view, v[0], v[1]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, handle, 0, Math.PI * 2); ctx.lineWidth = lw; ctx.strokeStyle = colour;
+    if (selected && selected.clip === i && selected.item === item) { ctx.fillStyle = colour; ctx.fill(); }
+    ctx.stroke();
+  };
+  ctx.lineWidth = lw;
+  if (s.values.plate_center) {
+    const c = toCanvas(view, s.values.plate_center[0], s.values.plate_center[1]);
+    if (s.values.plate_radius) {
+      ctx.strokeStyle = "#ffb020"; ctx.beginPath(); ctx.arc(c.x, c.y, s.values.plate_radius[0] * view.zoom, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+  if (s.values.stick_low && s.values.stick_high) {
+    const a = toCanvas(view, ...s.values.stick_low), b = toCanvas(view, ...s.values.stick_high);
+    ctx.strokeStyle = "#3ecf8e"; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  dot("plate_center", "#ffb020"); dot("plate_radius", "#ffb020"); dot("stick_low", "#3ecf8e"); dot("stick_high", "#3ecf8e");
+}
+function render(i) {
+  const view = views[i], clip = CONFIG.clips[i], s = states[i];
+  draw(i);
+  view.card.className = "clip " + s.decision;
+  view.status.innerHTML = "";
+  ITEMS.forEach(item => {
+    const st = itemStatus(clip, s, item), line = document.createElement("div");
+    line.className = "status" + (st === "missing" ? " bad" : "");
+    line.textContent = item.replace("_", " ") + ": " + st;
+    view.status.appendChild(line);
+  });
+  const problem = geometryProblem(clip, s);
+  view.problem.textContent = problem ? "To confirm: " + problem : (s.exercise ? "" : "To confirm: choose the lift");
+  view.exercise.value = s.exercise;
+  view.confirm.checked = s.decision === "confirmed"; view.confirm.disabled = !canConfirm(clip, s);
+  view.skip.checked = s.decision === "skipped";
+  view.zoomButtons.forEach(b => b.classList.toggle("on", Number(b.dataset.zoom) === view.zoom));
+}
+function renderHeader() {
+  const done = states.filter(s => s.decision === "confirmed" || s.decision === "skipped").length;
+  const problem = downloadProblem(CONFIG.clips, states);
+  document.getElementById("progress").textContent = done + "/" + states.length + " clips decided" + (problem ? " · " + problem : "");
+  document.getElementById("download").disabled = problem !== null;
+}
+function setZoom(i, zoom) {
+  const view = views[i], clip = CONFIG.clips[i], s = states[i];
+  const focus = (selected && selected.clip === i && s.values[selected.item] && selected.item !== "plate_radius")
+    ? s.values[selected.item] : (s.values.plate_center || [clip.width_px / 2, clip.height_px / 2]);
+  view.zoom = zoom;
+  view.ox = Math.min(Math.max(focus[0] + 0.5 - clip.width_px / zoom / 2, 0), clip.width_px - clip.width_px / zoom);
+  view.oy = Math.min(Math.max(focus[1] + 0.5 - clip.height_px / zoom / 2, 0), clip.height_px - clip.height_px / zoom);
+  render(i);
+}
+function eventPoint(i, event) {
+  const view = views[i], clip = CONFIG.clips[i], rect = view.canvas.getBoundingClientRect();
+  const p = imagePointFromContentOffset(event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height,
+    clip.width_px / view.zoom, clip.height_px / view.zoom);
+  return { x: p.x + view.ox, y: p.y + view.oy, scale: clip.width_px / view.zoom / rect.width };
+}
+function hit(i, p) {
+  const s = states[i], v = s.values; let best = null;
+  for (const item of ITEMS) {
+    if (!v[item]) continue;
+    const q = item === "plate_radius" ? [v.plate_center[0] + v[item][0], v.plate_center[1]] : v[item];
+    const d = Math.hypot(q[0] - p.x, q[1] - p.y);
+    if (d <= 18 * p.scale && (!best || d < best.d)) best = { item, d };
+  }
+  return best && best.item;
+}
+function moveSelected(i, x, y) {
+  const clip = CONFIG.clips[i], item = selected.item;
+  // The rim handle sets the radius from wherever it is dragged; the other handles stay in the point window.
+  if (item !== "plate_radius" && !pointInWindow(x, y, clip.width_px, clip.height_px)) return;
+  update(i, movePoint(states[i], item, x, y));
+}
+function buildClip(clip, i) {
+  const card = document.createElement("section"); card.className = "clip";
+  const left = document.createElement("div"), side = document.createElement("div"); side.className = "side";
+  const canvas = document.createElement("canvas"); canvas.width = clip.width_px; canvas.height = clip.height_px;
+  left.appendChild(canvas);
+  const zoomRow = document.createElement("div"); zoomRow.className = "row";
+  const zoomButtons = [1, 3, 6].map(z => { const b = document.createElement("button"); b.type = "button";
+    b.textContent = z + "×"; b.dataset.zoom = z; b.onclick = () => setZoom(i, z); zoomRow.appendChild(b); return b; });
+  const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "Reset to suggestion";
+  reset.onclick = () => update(i, initialState(clip)); zoomRow.appendChild(reset);
+  left.appendChild(zoomRow);
+  const info = document.createElement("div"); info.className = "muted";
+  const p = clip.suggestions.plate, st = clip.suggestions.stick;
+  info.textContent = "clip " + (i + 1) + " · " + clip.original_name + " · " + clip.fixture_id + " · frame " +
+    clip.frame_index + " (t=" + Number(clip.timestamp_s).toFixed(3) + " s) · plate " +
+    (p.status === "suggested" ? "suggested, confidence " + p.confidence : "not suggested (" + p.reason + "), click it") +
+    " · stick " + (st.status === "suggested" ? "suggested, confidence " + st.confidence : "not suggested (" + st.reason + "), click lowest then highest marker");
+  const exercise = document.createElement("select");
+  [["", "choose the lift…"], ...EXERCISES.map(e => [e, e.replace("_", " ")])].forEach(([v, t]) => {
+    const o = document.createElement("option"); o.value = v; o.textContent = t; exercise.appendChild(o); });
+  exercise.onchange = () => update(i, withEdit(states[i], { exercise: exercise.value }));
+  const status = document.createElement("div"), problem = document.createElement("div"); problem.className = "muted bad";
+  const confirmLabel = document.createElement("label"); confirmLabel.className = "toggle";
+  const confirm = document.createElement("input"); confirm.type = "checkbox";
+  confirmLabel.append(confirm, document.createTextNode("Confirm this clip"));
+  confirm.onchange = () => update(i, decide(clip, states[i], "confirmed"));
+  const skipLabel = document.createElement("label"); skipLabel.className = "toggle";
+  const skip = document.createElement("input"); skip.type = "checkbox";
+  skipLabel.append(skip, document.createTextNode("Skip this clip"));
+  skip.onchange = () => update(i, decide(clip, states[i], "skipped"));
+  side.append(info, exercise, status, problem, confirmLabel, skipLabel);
+  card.append(left, side);
+  const image = new Image(); image.onload = () => draw(i); image.src = IMAGES[i];
+  views[i] = { card, canvas, image, status, problem, exercise, confirm, skip, zoomButtons, zoom: 1, ox: 0, oy: 0 };
+  canvas.addEventListener("pointerdown", e => {
+    const pt = eventPoint(i, e), item = hit(i, pt);
+    if (item) {
+      selected = { clip: i, item }; dragStart = { x: e.clientX, y: e.clientY, moved: false };
+      canvas.setPointerCapture(e.pointerId); render(i); return;
+    }
+    const missing = nextMissing(states[i]);
+    if (!missing || !pointInWindow(pt.x, pt.y, clip.width_px, clip.height_px)) return;
+    selected = { clip: i, item: missing };
+    if (missing === "plate_radius") update(i, movePoint(states[i], missing, pt.x, pt.y));
+    else update(i, withEdit(states[i], { values: { [missing]: [pt.x, pt.y] } }));
+  });
+  canvas.addEventListener("pointermove", e => {
+    if (!selected || selected.clip !== i || !canvas.hasPointerCapture(e.pointerId)) return;
+    // A 1-px threshold keeps a tap that selects a handle from also moving (and so "adjusting") it.
+    if (dragStart && !dragStart.moved && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) < 1) return;
+    if (dragStart) dragStart.moved = true;
+    const pt = eventPoint(i, e); moveSelected(i, pt.x, pt.y);
+  });
+  return card;
+}
+document.addEventListener("keydown", e => {
+  if (!selected || e.target.tagName === "SELECT") return;
+  const step = e.shiftKey ? 0.25 : 1, d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+  if (!d) return;
+  e.preventDefault();
+  const i = selected.clip, v = states[i].values, item = selected.item;
+  if (!v[item]) return;
+  if (item === "plate_radius") { update(i, withEdit(states[i], { values: { plate_radius: [Math.max(0.25, v[item][0] + d[0] - d[1])] } })); return; }
+  moveSelected(i, v[item][0] + d[0], v[item][1] + d[1]);
+});
+document.getElementById("download").onclick = () => {
+  const problem = downloadProblem(CONFIG.clips, states);
+  if (problem) { alert(problem); return; }
+  const url = URL.createObjectURL(new Blob([sessionCsv(CONFIG, states)], { type: "text/csv" }));
+  const a = document.createElement("a"); a.href = url; a.download = "vbt-session-" + CONFIG.session_id + ".csv"; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);  // some browsers read the blob after click() returns
+};
+document.getElementById("title").textContent = "VBT session " + CONFIG.session_id + " · page " + CONFIG.page_id;
+const container = document.getElementById("clips");
+CONFIG.clips.forEach((clip, i) => { container.appendChild(buildClip(clip, i)); render(i); });
+renderHeader();
+</script>
+</body>
+</html>

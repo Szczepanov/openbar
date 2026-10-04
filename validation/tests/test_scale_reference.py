@@ -204,6 +204,10 @@ class CsvTests(unittest.TestCase):
 
 
 class PackageBindingTests(unittest.TestCase):
+    def test_reference_config_builder_is_public_with_the_old_alias(self):
+        self.assertIs(scale_reference._reference_config_from_label_package,
+                      scale_reference.reference_config_from_label_package)
+
     def test_package_and_click_must_match_fixture_video_and_selected_frame(self):
         metadata = {
             "fixture_id": "clip",

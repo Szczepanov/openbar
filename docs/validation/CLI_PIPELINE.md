@@ -203,6 +203,20 @@ configuration.
 
 The kinematics continuity threshold and minimum-confidence threshold are also required explicitly.
 
+#### One-page VBT session (#95)
+
+`research/vbt-workflow/vbt_session.py` runs a whole filmed session through the post-session workflow
+above. `ingest` copies the videos from an inbox folder, extracts each seed frame through
+`label_package.py`, proposes the plate circle and the two stick markers, and builds one private
+page. The owner confirms or adjusts each clip and picks its lift there. `run` then validates the
+downloaded CSV and writes the seeds through `annotations.build_seed`, the stick click CSVs for
+`scale_reference.py`, and one `analyze_lift.py run` per clip, using the tracker that the named
+`--tracker-policy` assigns to the lift. It finishes with a self-contained `report.html` and a
+session record. Every `analyze` invocation is the one documented above; calibration stays the plate
+diameter, and the stick only appears as a labelled comparison in the report. See
+`docs/plans/VBT_WORKFLOW_PLAN.md` (step 2, one-page session) for the CSV contract, the policies and
+the fail-closed rules.
+
 #### Smoothing windows in samples or seconds
 
 For `moving-average` and `savitzky-golay`, provide exactly one of
