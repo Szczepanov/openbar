@@ -3,7 +3,8 @@
 Status: proposed  
 Related: #57, #53, #59, #95, ADR-0004, ADR-0008, ADR-0009  
 Analysis basis: [M0_BAR_PATH_MEASUREMENT_STRATEGY.md](../analysis/M0_BAR_PATH_MEASUREMENT_STRATEGY.md)  
-Existing tracker work: [TRACKER_BAKEOFF_PLAN.md](TRACKER_BAKEOFF_PLAN.md), [PLATE_GEOMETRY_REFINEMENT_PLAN.md](PLATE_GEOMETRY_REFINEMENT_PLAN.md), [research/PLATE_TRACKING_PLAN.md](../../research/PLATE_TRACKING_PLAN.md)
+Existing tracker work: [TRACKER_BAKEOFF_PLAN.md](TRACKER_BAKEOFF_PLAN.md), [PLATE_GEOMETRY_REFINEMENT_PLAN.md](PLATE_GEOMETRY_REFINEMENT_PLAN.md), [research/PLATE_TRACKING_PLAN.md](../../research/PLATE_TRACKING_PLAN.md)  
+Existing reference work: [VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md](VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md) (Phase 5 marker stub, advanced here as Phase 1), [VBT_OPEN_SOURCE_REFERENCE_REVIEW.md](../analysis/VBT_OPEN_SOURCE_REFERENCE_REVIEW.md)
 
 ## 1. Purpose
 
@@ -161,18 +162,29 @@ For matched labelled samples:
 
 1. absolute X/Y error;
 2. Euclidean centre error;
-3. per-axis consecutive-displacement error:
+3. per-axis displacement error between consecutive labelled samples:
    - delta-X prediction minus delta-X label;
    - delta-Y prediction minus delta-Y label;
+   - reported with the label interval length (frames and seconds), because the current development
+     labels are sparse (about 20 per clip) and consecutive labels are generally not adjacent frames;
 4. Euclidean delta-position error;
 5. de-biased trajectory error:
    - estimate one robust constant X/Y offset on the development comparison interval;
    - report residual error after removing that offset;
    - never use the de-biased trajectory as canonical output;
-6. cumulative relative-displacement drift from the seed;
-7. temporal jitter on deliberately stationary or near-stationary intervals where ground truth
+   - this removes only a constant offset, not the motion-linked component described in the
+     analysis §4.1;
+6. error-versus-labelled-velocity correlation per axis, so the motion-linked component stays
+   visible. It is a diagnostic only; research/PLATE_TRACKING_PLAN.md forbids tuning trackers to it;
+7. cumulative relative-displacement drift from the seed;
+8. temporal jitter on deliberately stationary or near-stationary intervals where ground truth
    permits;
-8. relative-displacement availability.
+9. relative-displacement availability.
+
+Label-delta noise is about sqrt(2) times the per-label annotation error, so delta metrics must be
+read against annotation repeatability (pass B, #57). Frame-to-frame jitter is not observable from
+sparse labels; measure it on a short densely labelled development window, on the Phase 1 marker
+trajectory, on static intervals, or on synthetic sequences.
 
 For kinematic/reference cases when an independent definition-matched source is available:
 
@@ -260,16 +272,22 @@ shows enough residual ambiguity to justify it.
 Use a removable, high-contrast circular target rigidly aligned with the visible bar axis. The exact
 physical design is owner-controlled and must not obstruct lifting safety.
 
+This advances the deferred Phase 5 stub in
+`docs/plans/VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md` §12, whose triggers are now met by
+the residual tracker ambiguities.
+
 Record:
 
 - marker physical diameter;
-- mounting relationship to the bar axis;
+- mounting relationship to the bar axis and centring tolerance;
 - marker colour/material;
 - camera/lens/capture settings;
 - whether the natural plate remains simultaneously visible.
 
 The marker should be large enough for stable localization but should not become the physical scale
-reference by default. Keep plate/stick scale experiments separate.
+reference by default. Keep plate/stick scale experiments separate. Because a sleeve-end marker sits
+in a different depth plane than the plate face, estimate and report a fixed marker-to-plate pixel-scale
+ratio per clip to allow physically meaningful trajectory comparisons without altering the plate scale.
 
 ### P1.2 — independent marker tracker
 
@@ -292,22 +310,26 @@ Implement from first principles in research code:
 
 Do not copy BarbellCV source code; its repository has no explicit licence.
 
-### P1.3 — compare marker with manual labels
+### P1.3 — compare marker with manual labels and plate tracker
 
 For development clips with both natural plate labels and marker visibility:
 
-- marker centre vs manually annotated bar/plate centre after accounting for any fixed mounting
-  offset;
-- marker delta-position vs label delta-position;
-- marker temporal jitter;
+- marker centre vs manually annotated bar/plate centre after accounting for fixed mounting offset
+  and the depth scale ratio;
+- marker delta-position vs label delta-position (measured across matched labelled intervals);
+- marker temporal jitter on dense or static windows;
 - marker availability under fast motion;
-- blur/lighting failure cases.
+- sleeve-rotation effects (identifying whether off-axis marker mounting introduces rotation-synchronous
+  periodic residuals during turnover);
+- blur/lighting failure cases;
+- tripartite comparison (marker vs natural plate candidate vs manual labels / reference) to isolate
+  whether motion-linked bias originates from the labeller or the vision estimators.
 
 ### Decision
 
 - **GO:** marker evidence is materially more stable than natural tracking and good enough to
   distinguish localization error from downstream error;
-- **REJECT:** marker is itself too noisy/blurred/ambiguous;
+- **REJECT:** marker is itself too noisy/blurred/ambiguous or mounting rotation dominates error;
 - **DEFER:** insufficient same-video data.
 
 The marker remains a secondary development/reference aid, never an athlete-facing requirement.
@@ -399,16 +421,23 @@ background.
 
 The patch transform between frames must be mapped back to canonical display coordinates.
 
+Because plates rotate freely with the barbell sleeve (particularly in the catch and turnover of
+dynamic lifts), candidate registration models must account for rotation:
+- restrict registration to circularly symmetric / rotation-invariant rim profiles, OR
+- estimate rigid Euclidean motion (translation + rotation, e.g. via Fourier-Mellin or ECC Euclidean)
+  rather than pure translation, OR
+- expose a rotation/correlation diagnostic that flags or rejects frames corrupted by spinning texture.
+
 ### P3.2 — candidate A: phase/local DFT registration
 
-Implement a deterministic translation estimator based on phase correlation with local sub-pixel
-refinement.
+Implement a deterministic translation or similarity estimator based on phase correlation with local
+sub-pixel refinement.
 
 Starting point:
 - Guizar-Sicairos et al., 2008, DOI 10.1364/OL.33.000156.
 
-Do not assume whole-ROI pure translation. The candidate must expose a registration-quality
-diagnostic and fail when the model is not supported.
+Do not assume whole-ROI pure translation without rotation gating. The candidate must expose a
+registration-quality diagnostic and fail when the model is not supported.
 
 ### P3.3 — candidate B: ECC/robust local alignment
 

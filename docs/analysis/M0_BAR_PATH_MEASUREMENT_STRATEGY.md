@@ -57,11 +57,15 @@ On the current development clips, generic/traditional tracking has reached a pla
 - SAM 2.1 circle candidates improve the development results substantially and preserve availability,
   but still miss the provisional 3 px gate on fast lifts and their confidence does not discriminate
   positional error well;
-- the SAM error diagnosis already indicates that a meaningful fraction of error is a shared,
-  motion-linked offset rather than unstructured scatter.
+- the SAM error diagnosis (research/PLATE_TRACKING_PLAN.md §6 Phase 3, "Error diagnosis") already
+  indicates that a meaningful fraction of error is a shared offset rather than unstructured scatter:
+  mean signed error is 49–69 % of MAE, and its vertical component is anti-correlated with labelled
+  vertical velocity (Spearman −0.21 to −0.62) for SAM 2.1, CSRT and Cutie alike. The data cannot
+  say whether the labeller, the trackers, or both place a blurred moving plate's centre this way.
 
-This last point matters. A stable spatial bias and frame-to-frame jitter have very different effects
-on velocity.
+This last point matters, but it cuts both ways. A constant spatial bias, a motion-linked offset and
+frame-to-frame jitter have different effects on velocity (§4). Only the constant part cancels in
+displacement.
 
 ### 2.3 Current kinematic/reference status
 
@@ -115,6 +119,32 @@ This does not make absolute accuracy irrelevant. Absolute anchors are required t
 support overlays, detect failure and preserve the current M0 plate-centre gate. It does mean that
 centre MAE alone does not completely characterize usefulness for kinematics.
 
+### 4.1 Motion-linked offset does not cancel
+
+The development diagnosis (§2.2) is not a constant offset. A first-order model of what it reports
+is an offset that depends on velocity:
+
+    p_hat(t) = p(t) + b + k * v(t)
+
+The constant b still cancels in displacement, but the motion-linked term does not:
+
+    [p_hat(t2) - p_hat(t1)] - [p(t2) - p(t1)] = k * (v(t2) - v(t1))
+
+Velocity therefore inherits a term proportional to acceleration, which distorts the shape and
+timing of the velocity curve around the peak even when centre MAE looks moderate. Removing a single
+constant per-clip offset does not remove it.
+
+Two further consequences:
+
+- if the motion-linked part originates in the manual labels rather than in the estimator,
+  label-based delta metrics will penalize an estimator that is physically correct. Label-based
+  delta results therefore remain development evidence until pass-B repeatability (#57) or the
+  controlled marker (§9) separates labeller and estimator behaviour;
+- research/PLATE_TRACKING_PLAN.md already forbids tuning trackers to this offset in the current
+  round. The diagnostics proposed here measure it; they must not be used to fit it away.
+
+### 4.2 Temporal jitter
+
 The opposite failure mode is temporal jitter. For a 450 mm plate spanning 180 px:
 
     scale = 0.45 / 180 = 0.0025 m/px
@@ -127,18 +157,41 @@ If adjacent frames each contain independent 1 px position noise, the difference 
 deviation sqrt(2) px, or approximately 0.21 m/s at this scale and frame rate. Even at 30 fps the
 same approximation is about 0.11 m/s.
 
-Those values are on the order of, or larger than, the provisional M0 peak-velocity error target.
-This is why a visually stable path and low average centre MAE can still produce poor velocity.
+The canonical M0 velocity method is a backward difference (docs/validation/KINEMATIC_METRICS.md),
+so these raw-layer figures apply directly to unfiltered observations. They are larger than the
+provisional M0 peak-velocity target (MAE < 0.10 m/s) and well above the mean-velocity target
+(MAE < 0.05 m/s) in docs/validation/M0_VALIDATION.md. Filtering reduces them, but
+docs/analysis/VBT_REFERENCE_EXPERIMENTS_FINDINGS.md shows that aggressive smoothing buys this by
+attenuating true peaks. This is why a visually stable path and low average centre MAE can still
+produce poor velocity, and why reducing jitter at the measurement layer is preferable to removing
+it with a stronger filter.
+
+### 4.3 What sparse manual labels can measure
+
+The current development clips carry about 20 manual labels per clip, not labels on consecutive
+frames. Against those labels, "consecutive displacement" means displacement between consecutive
+*labelled* samples, which are usually several frames apart. The label-delta noise floor is about
+sqrt(2) times the per-label annotation error.
+
+Frame-to-frame jitter is therefore not directly observable from the existing labels. It needs one
+of:
+
+- a short densely labelled window on a development clip;
+- the controlled-marker same-video trajectory (§9);
+- static or near-static intervals, where the true displacement is known to be near zero;
+- synthetic sequences with known motion.
 
 ### Consequence
 
 Research benchmarking should retain the current absolute-centre metrics and add diagnostic metrics
 for:
 
-- per-axis consecutive-displacement error;
-- trajectory error after removing a constant per-clip XY offset;
+- per-axis displacement error between consecutive labelled samples, reported with the label
+  interval length;
+- trajectory error after removing a constant per-clip XY offset (removes b only, not k * v);
+- error-versus-labelled-velocity correlation, so the motion-linked component stays visible;
 - cumulative relative-displacement drift;
-- static or near-static temporal jitter;
+- static or near-static temporal jitter, and dense-window or marker-based frame-to-frame jitter;
 - velocity RMSE/bias on definition-matched intervals;
 - downstream mean and peak velocity error.
 
@@ -178,11 +231,30 @@ A promising plate-specific family is:
 6. refine the centre from inliers;
 7. emit fit residual, arc coverage, radius/axes and edge strength as diagnostics.
 
-This differs from the rejected Phase-2 geometry experiment in an important way. The prior experiment
-was a refinement attached to a CSRT box and, in some variants, fed the fitted geometry back into
-CSRT. The proposed experiment treats the coarse tracker only as an ROI provider. Precision
-measurement is independently estimated from raw ROI evidence, and no geometric refinement is fed
-back into the coarse tracker unless a later experiment separately proves that safe.
+This must be distinguished from the rejected #57 Phase 2 geometry experiment
+(docs/plans/PLATE_GEOMETRY_REFINEMENT_PLAN.md, outcome NO GAIN / REJECT in
+research/PLATE_TRACKING_PLAN.md §6 Phase 2) more carefully than "no feedback". That experiment
+already had a no-feedback variant: `opencv-csrt+circle-a` left CSRT untouched and only replaced the
+emitted centre. Feedback lock-in affected only the re-initialising `circle-b1`/`circle-b5`
+variants. `circle-a` failed for other reasons:
+
+- background edge distractors during the squat descent (squat MAE 3.22 -> 3.80 px);
+- 20 % fit acceptance on the large-plate clean & jerk, so it mostly emitted the CSRT box centre;
+- rejected fits fell back to the box centre, mixing two estimators with different biases frame by
+  frame.
+
+The proposed candidate is a meaningful new experiment only if it addresses those failure modes:
+
+- per-ray rim search constrained by a predicted centre and radius band, with sub-pixel edge
+  localization, instead of Canny edge pixels pooled in an annulus and fitted by RANSAC;
+- explicit ray-level rejection rules aimed at background/collar/inner-rim transitions;
+- no silent fallback to the coarse box centre: an unsupported frame is lost (or deferred to fusion
+  with an explicit absence of absolute evidence), so emitted coordinates come from one estimator;
+- scoring on displacement/jitter diagnostics as well as centre MAE.
+
+If a development run shows the same distractor and acceptance pattern as `circle-a`, the candidate
+should be rejected rather than tuned further. No geometric refinement is fed back into the coarse
+tracker unless a later experiment separately proves that safe.
 
 Radial-symmetry methods are also worth a development spike. Parthasarathy (2012) describes an
 analytic, non-iterative sub-pixel centre estimator for radially symmetric image distributions with
@@ -212,6 +284,15 @@ Source:
 
 The purpose is not to accumulate relative motion forever. Relative observations provide high
 precision locally; absolute geometric anchors prevent drift.
+
+Plate rotation is the main model risk. Plates turn with the sleeve, and in the snatch and clean the
+turnover can rotate them substantially between frames. Rotation about the plate centre does not move
+the centre, but on a textured region (logos, lettering, inserts) a translation-only phase
+correlation can turn it into a spurious translation or a weak, ambiguous peak. Candidates must
+therefore either estimate in-plane rotation explicitly (for example a log-polar/Fourier–Mellin step
+or a Euclidean ECC model), or restrict registration to evidence that rotation leaves unchanged (for
+example the outer rim profile), and record a rotation/quality diagnostic so that unsupported frames
+fail instead of producing a displacement.
 
 ## 6. Fuse the evidence over the whole offline clip
 
@@ -247,11 +328,12 @@ analyze --observations path remains authoritative for calibration, filtering and
 ### 7.1 Ellipse centre is not automatically the physical circle-centre projection
 
 Under perspective projection, the geometric centre of the observed ellipse can differ from the
-image projection of the physical circle centre. Recent optical-metrology literature describes this
-as circular-target eccentricity and shows that it can create systematic error.
+image projection of the physical circle centre. Liebold and Maas (2026) describe this as
+circular-target eccentricity and show that it can create systematic error.
 
 Source:
-- https://doi.org/10.3390/metrology6020028
+- Liebold, F. and Maas, H.-G. (2026), "Eccentricity Correction Methods for Circular Targets in
+  Perspective Projection", Metrology 6(2), 28. https://doi.org/10.3390/metrology6020028
 
 Therefore a future ellipse fit should retain axes/orientation/residual and should not silently claim
 that ellipse centre equals bar-axis projection under arbitrary camera pose. M0's near-side-view,
@@ -271,10 +353,15 @@ but only after the base estimator is measured.
 
 Kostecky's reference project undistorts the camera before measurement. OpenBar already records lens
 distortion as an unvalidated M0 geometry limitation. The existing lens-distortion sensitivity study
-remains the right place to decide whether correction is needed; this strategy does not introduce
-mandatory user calibration.
+(experiment E2 in docs/analysis/VBT_OPEN_SOURCE_REFERENCE_REVIEW.md; G4d in the deferred Phase 4 of
+docs/plans/VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md) remains the right place to decide
+whether correction is needed; this strategy does not introduce mandatory user calibration.
 
 ## 8. What the reviewed open-source projects teach
+
+docs/analysis/VBT_OPEN_SOURCE_REFERENCE_REVIEW.md already reviews kostecky/VBT-Barbell-Tracker and
+derives the controlled-marker (E1) and lens-distortion (E2) experiment ideas from it. This section
+does not replace that review; it adds three further projects and records the reviewed source heads.
 
 ### 8.1 kostecky/VBT-Barbell-Tracker
 
@@ -344,13 +431,24 @@ differences, reinforcing that peak velocity is particularly sensitive to measure
 noise.
 
 Sources:
-- https://pmc.ncbi.nlm.nih.gov/articles/PMC6572172/
-- https://pmc.ncbi.nlm.nih.gov/articles/PMC7900050/
+- Gonzalez et al. (2019), "Agreement between the Open Barbell and Tendo Linear Position
+  Transducers for Monitoring Barbell Velocity during Resistance Exercise".
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC6572172/
+- Weakley et al. (2021), "The Validity and Reliability of Commercially Available Resistance
+  Training Monitoring Devices: A Systematic Review".
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC7900050/
 
 ## 9. Controlled marker/fiducial as a same-video reference
 
 The repeated marker pattern deserves promotion from "interesting external idea" to a concrete
 development experiment, while remaining outside the athlete-facing M0 requirement.
+
+This is not a new idea in OpenBar. It is experiment E1 in
+docs/analysis/VBT_OPEN_SOURCE_REFERENCE_REVIEW.md and the deferred Phase 5 stub in
+docs/plans/VBT_REFERENCE_EXPERIMENTS_IMPLEMENTATION_PLAN.md §12. That stub's third trigger, "tracker
+experiments need a controlled target to isolate calibration/kinematics error from appearance-based
+tracking error", is what the current evidence now meets (§2.2, §4.1). The execution detail moves to
+Phase 1 of the experiment plan; the stub's approach, promotion and stop conditions still apply.
 
 Record the natural plate and a deliberately distinctive marker rigidly aligned with the bar axis in
 the same video:
@@ -369,12 +467,29 @@ the same video:
 A robust marker tracker can use deliberately simple colour/geometry processing and provide a
 same-video secondary reference with minimal identity ambiguity.
 
-This experiment can answer an important diagnostic question:
+Two mounting effects must be handled before comparing marker and plate pixel trajectories:
+
+- **depth/scale:** a marker on the sleeve end sits closer to the camera than the plate face, so the
+  same physical displacement spans more pixels at the marker. Estimate and report one fixed
+  marker-to-plate pixel-scale ratio per clip (for example from each target's apparent diameter
+  divided by its known physical diameter) and compare in a common scale; do not compare raw pixel
+  deltas. This is a comparison correction, not a new physical scale reference;
+- **sleeve rotation:** the sleeve, and anything mounted on it, rotates during the lift, most of all
+  in the snatch and clean turnover. A marker centred off the axis traces a small circle, which looks
+  like jitter that is not bar motion. Record the centring tolerance and treat rotation-synchronous
+  residuals as a mounting artefact.
+
+This experiment can answer three diagnostic questions:
 
 - if the marker trajectory is highly stable while natural plate estimates are noisy, localization
   remains the dominant problem;
-- if both produce similar downstream velocity error, sampling/exposure/calibration/filtering or the
-  independent physical-reference definition is probably limiting.
+- if marker- and plate-derived velocities agree closely with each other but both disagree with the
+  comparison reference (WL Analysis for development, the M0_REFERENCE_STUDY.md reference for
+  validation), the error is downstream of localization (sampling, exposure, calibration, filtering)
+  or in the reference definition;
+- because the marker is high-contrast but still blurred by the same motion, comparing marker,
+  plate estimate and manual labels can help show whether the motion-linked offset (§4.1) is
+  introduced by the labeller or by the estimators.
 
 The marker is not independent physical ground truth merely because it is easy to see. M0 gate
 validation still requires the independent-reference contract in M0_REFERENCE_STUDY.md.
