@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -65,46 +66,57 @@ def run(args) -> dict:
     if not prepared or len({a.fixture for a in prepared}) != len(prepared):
         raise ValueError('supply at least one snapshot with unique fixture IDs')
     prepared.sort(key=lambda a: a.fixture)
-    reports = {}
-    for options in prepared:
-        report = experiment.diagnose(options)
-        reports[options.fixture] = summarize(report)
-        if args.canonical:
-            for index, name in enumerate(('csrt', 'sam')):
-                subprocess.run(['cargo', 'run', '--locked', '-q', '-p', 'openbar-cli', '--', 'render',
-                                '--analysis', str(options.output_dir / f'canonical-{index}.analysis-v1.json'),
-                                '--output', str(options.output_dir / f'{name}.svg')], check=True, cwd=io.ROOT)
-    result = {'schema_version': 1, 'method_version': VERSION, 'kind': 'development_batch_report',
-              'evidence_class': 'existing_sparse_development_manual_labels', 'fixtures': reports,
-              'config': {'max_gap_s': args.max_gap_s, 'canonical': args.canonical, 'filter': 'raw'},
-              'manifest_sha256': io.digest(args.manifest),
-              'snapshots': {name: {'path': str(p.resolve()), 'sha256': io.digest(p)}
-                            for name, p in sorted(paths.items())},
-              'source_sha256': {name: io.digest(Path(__file__).with_name(name)) for name in
-                                ('batch_report.py', 'experiment.py', 'study_io.py', 'motion_metrics.py')},
-              'production_candidate': None,
-              'limitations': ['no new manual work or machine-generated annotations',
-                              'sparse labels do not establish dense accuracy or stationary jitter',
-                              'held-out selection and independent physical velocity remain unevaluated']}
-    io.write(args.output_dir / 'summary.json', result)
-    lines = ['# Automatic development report', '',
-             'Existing sparse manual labels; initialization seed excluded. No new annotation required.', '',
-             '| Clip | Tracker | Matched labels | Centre MAE px | Delta MAE px | Usable intervals | High-confidence errors >3 px |',
-             '| --- | --- | ---: | ---: | ---: | ---: | ---: |']
-    def display(value):
-        return 'unsupported' if value is None else f'{value:.3f}'
-    for fixture, candidates in reports.items():
-        for name, m in candidates.items():
-            lines.append(f"| {fixture} | {name} | {m['matched_tracked_samples']}/{m['labelled_samples']} | "
-                         f"{display(m['center_mae_px'])} | {display(m['delta_mae_px'])} | "
-                         f"{m['available_intervals']} | {m['high_confidence_error_gt_3_px']} |")
-    lines += ['', 'Per-clip motion-diagnostics.json contains paired common-support, loss and confidence diagnostics.',
-              'Canonical mode adds separate raw-filter Analysis files, authoritative benchmark results and csrt.svg/sam.svg.',
-              'Canonical benchmark results include initialization; the table above excludes the seed.',
-              'Rendered velocity is an experimental derivative, not validated physical accuracy.',
-              'No production candidate is selected. Held-out footage remains untouched.', '']
-    (args.output_dir / 'README.md').write_bytes('\n'.join(lines).encode())
-    return result
+
+    # Claim the destination only after every snapshot/input/media preflight succeeds. If any later
+    # diagnostic or delegated CLI step fails, remove only the directory this invocation created so a
+    # corrected rerun is not blocked by incomplete evidence.
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    complete = False
+    try:
+        reports = {}
+        for options in prepared:
+            report = experiment.diagnose(options)
+            reports[options.fixture] = summarize(report)
+            if args.canonical:
+                for index, name in enumerate(('csrt', 'sam')):
+                    subprocess.run(['cargo', 'run', '--locked', '-q', '-p', 'openbar-cli', '--', 'render',
+                                    '--analysis', str(options.output_dir / f'canonical-{index}.analysis-v1.json'),
+                                    '--output', str(options.output_dir / f'{name}.svg')], check=True, cwd=io.ROOT)
+        result = {'schema_version': 1, 'method_version': VERSION, 'kind': 'development_batch_report',
+                  'evidence_class': 'existing_sparse_development_manual_labels', 'fixtures': reports,
+                  'config': {'max_gap_s': args.max_gap_s, 'canonical': args.canonical, 'filter': 'raw'},
+                  'manifest_sha256': io.digest(args.manifest),
+                  'snapshots': {name: {'path': str(p.resolve()), 'sha256': io.digest(p)}
+                                for name, p in sorted(paths.items())},
+                  'source_sha256': {name: io.digest(Path(__file__).with_name(name)) for name in
+                                    ('batch_report.py', 'experiment.py', 'study_io.py', 'motion_metrics.py')},
+                  'production_candidate': None,
+                  'limitations': ['no new manual work or machine-generated annotations',
+                                  'sparse labels do not establish dense accuracy or stationary jitter',
+                                  'held-out selection and independent physical velocity remain unevaluated']}
+        io.write(args.output_dir / 'summary.json', result)
+        lines = ['# Automatic development report', '',
+                 'Existing sparse manual labels; initialization seed excluded. No new annotation required.', '',
+                 '| Clip | Tracker | Matched labels | Centre MAE px | Delta MAE px | Usable intervals | High-confidence errors >3 px |',
+                 '| --- | --- | ---: | ---: | ---: | ---: | ---: |']
+        def display(value):
+            return 'unsupported' if value is None else f'{value:.3f}'
+        for fixture, candidates in reports.items():
+            for name, m in candidates.items():
+                lines.append(f"| {fixture} | {name} | {m['matched_tracked_samples']}/{m['labelled_samples']} | "
+                             f"{display(m['center_mae_px'])} | {display(m['delta_mae_px'])} | "
+                             f"{m['available_intervals']} | {m['high_confidence_error_gt_3_px']} |")
+        lines += ['', 'Per-clip motion-diagnostics.json contains paired common-support, loss and confidence diagnostics.',
+                  'Canonical mode adds separate raw-filter Analysis files, authoritative benchmark results and csrt.svg/sam.svg.',
+                  'Canonical benchmark results include initialization; the table above excludes the seed.',
+                  'Rendered velocity is an experimental derivative, not validated physical accuracy.',
+                  'No production candidate is selected. Held-out footage remains untouched.', '']
+        (args.output_dir / 'README.md').write_bytes('\n'.join(lines).encode())
+        complete = True
+        return result
+    finally:
+        if not complete:
+            shutil.rmtree(args.output_dir, ignore_errors=True)
 
 
 def main(argv=None) -> int:
