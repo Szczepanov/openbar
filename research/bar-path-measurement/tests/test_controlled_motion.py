@@ -9,9 +9,36 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import controlled_motion as cm
+import background_motion as bg
 
 
 class ControlledMotionTests(unittest.TestCase):
+    def test_paired_background_foreground_identity_and_no_ghost(self):
+        source = np.full((300, 300, 3), 27, dtype=np.uint8)
+        source[140:161, 140:161] = 240
+        before = source.copy()
+        target = (150, 150, 12)
+        shifts = [(0, 0), (64, -32)]
+        initial, background, layer, mask = bg.background_layers(source, target, shifts)
+        np.testing.assert_array_equal(initial[mask], source[mask])
+        np.testing.assert_array_equal(bg.target_on_background(background, layer, mask, (0, 0), target), initial)
+        shift = shifts[1]
+        moving = cm.transform(initial, shift, target, 'translation', 1)
+        stationary = bg.target_on_background(background, layer, mask, shift, target)
+        shifted_mask = cm.transform(mask, shift, target, 'translation', 1)
+        np.testing.assert_array_equal(moving[shifted_mask], stationary[shifted_mask])
+        np.testing.assert_array_equal(stationary[~shifted_mask], background[~shifted_mask])
+        self.assertTrue((stationary[mask] == 128).all())
+        corridor = mask | shifted_mask
+        np.testing.assert_array_equal(background[~corridor], source[~corridor])
+        np.testing.assert_array_equal(source, before)
+        with self.assertRaises(ValueError):
+            bg.background_layers(source.astype(float), target, shifts)
+        with self.assertRaises(ValueError):
+            bg.background_layers(source, (float('nan'), 150, 12), shifts)
+        with self.assertRaises(ValueError):
+            bg.background_layers(source, target, [(200, 0)])
+
     def rows(self):
         return [{'timestamp_s': round(i/30, 6), 'state': 'tracked',
                  'center_px': {'x_px': 100+dx, 'y_px': 100+dy}, 'confidence': .9}
