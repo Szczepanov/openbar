@@ -10,7 +10,8 @@ DFT principle of Guizar-Sicairos, Thurman and Fienup (2008), Optics Letters 33,
 The phase estimate is refined deterministically against the real, non-wrapped
 pixel overlap. The model is translation only: overlap correlation rejects
 unsupported rotation, occlusion or changed texture, rather than attempting to
-measure their motion.
+measure their motion. A second real-overlap ambiguity check prevents a windowed
+phase peak from hiding another spatially distinct, equally supported translation.
 """
 from __future__ import annotations
 
@@ -44,6 +45,8 @@ REGISTRATION_CONFIG = {
     "window": True,
 }
 OVERLAP_REFINEMENT_STEPS_PX = (0.5, 0.2, 0.08, 0.03)
+PHASE_AMBIGUITY_CANDIDATE_COUNT = 32
+PHASE_MAIN_LOBE_RADIUS_PX = 2.0
 
 
 def _config(default: dict, supplied: dict | None) -> dict:
@@ -351,9 +354,29 @@ def _phase_translation(previous: np.ndarray, current: np.ndarray, cfg: dict):
     yy, xx = np.ogrid[:h, :w]
     dy = np.minimum(np.abs(yy - iy), h - np.abs(yy - iy))
     dx = np.minimum(np.abs(xx - ix), w - np.abs(xx - ix))
-    sidelobes = correlation[(dx > 2) | (dy > 2)]
+    sidelobes = correlation[(dx > PHASE_MAIN_LOBE_RADIUS_PX) | (dy > PHASE_MAIN_LOBE_RADIUS_PX)]
     ratio = float(correlation[iy, ix] / max(float(sidelobes.max()), 1e-12))
-    return shift, ratio
+
+    # Hann windowing is useful for finite-crop edge effects, but it can suppress
+    # otherwise meaningful repeated-texture peaks enough to make the scalar peak
+    # ratio look unique. Retain a bounded set of the strongest *integer* phase
+    # alternatives inside the configured motion gate. relative_shift validates
+    # them independently using real, non-wrapped overlap below.
+    shift_y = np.where(np.arange(h) <= h // 2, np.arange(h), np.arange(h) - h)[:, None]
+    shift_x = np.where(np.arange(w) <= w // 2, np.arange(w), np.arange(w) - w)[None, :]
+    candidate_mask = (((dx > PHASE_MAIN_LOBE_RADIUS_PX) | (dy > PHASE_MAIN_LOBE_RADIUS_PX))
+                      & (np.hypot(shift_x, shift_y) <= cfg["max_shift_px"]))
+    candidate_indices = np.flatnonzero(candidate_mask)
+    candidate_scores = correlation.ravel()[candidate_indices]
+    candidate_order = np.argsort(candidate_scores, kind="stable")[::-1][:PHASE_AMBIGUITY_CANDIDATE_COUNT]
+    alternatives = []
+    for order_index in candidate_order:
+        flat_index = int(candidate_indices[order_index])
+        candidate_y, candidate_x = np.unravel_index(flat_index, correlation.shape)
+        delta_x = int(candidate_x if candidate_x <= w // 2 else candidate_x - w)
+        delta_y = int(candidate_y if candidate_y <= h // 2 else candidate_y - h)
+        alternatives.append((delta_x, delta_y, float(candidate_scores[order_index])))
+    return shift, ratio, alternatives
 
 
 def _overlap_correlation(previous: np.ndarray, current: np.ndarray, shift: np.ndarray):
@@ -372,6 +395,41 @@ def _overlap_correlation(previous: np.ndarray, current: np.ndarray, shift: np.nd
     norm = float(np.linalg.norm(reference) * np.linalg.norm(observed))
     score = float(reference @ observed / norm) if norm > 1e-12 else 0.0
     return float(np.clip(score, -1, 1)), float(valid.mean())
+
+
+def _integer_overlap_correlation(previous: np.ndarray, current: np.ndarray, dx: int, dy: int):
+    """Fast real-overlap correlation for an integer displacement candidate."""
+    h, w = previous.shape
+    x0, x1 = max(0, dx), min(w, w + dx)
+    y0, y1 = max(0, dy), min(h, h + dy)
+    if x1 <= x0 or y1 <= y0:
+        return 0.0, 0.0
+    reference = previous[y0 - dy:y1 - dy, x0 - dx:x1 - dx]
+    observed = current[y0:y1, x0:x1]
+    if reference.size < 16:
+        return 0.0, float(reference.size / (h * w))
+    reference = reference - reference.mean()
+    observed = observed - observed.mean()
+    norm = float(np.linalg.norm(reference) * np.linalg.norm(observed))
+    score = float(np.sum(reference * observed) / norm) if norm > 1e-12 else 0.0
+    return float(np.clip(score, -1, 1)), float(reference.size / (h * w))
+
+
+def _best_real_overlap_competitor(previous: np.ndarray, current: np.ndarray,
+                                  candidates: list[tuple[int, int, float]], shift: np.ndarray):
+    """Return the strongest spatially distinct phase proposal on real overlap."""
+    best = None
+    for dx, dy, phase_score in candidates:
+        if np.linalg.norm(np.array([dx, dy], dtype=float) - shift) <= PHASE_MAIN_LOBE_RADIUS_PX:
+            continue
+        correlation, overlap = _integer_overlap_correlation(previous, current, dx, dy)
+        candidate = {"delta_px": {"x_px": float(dx), "y_px": float(dy)},
+                     "aligned_correlation": correlation, "overlap_fraction": overlap,
+                     "phase_correlation": phase_score}
+        if best is None or (correlation, overlap, phase_score) > (
+                best["aligned_correlation"], best["overlap_fraction"], best["phase_correlation"]):
+            best = candidate
+    return best
 
 
 def _refine_overlap_translation(previous: np.ndarray, current: np.ndarray, initial: np.ndarray):
@@ -402,7 +460,8 @@ def relative_shift(previous_gray_patch, current_gray_patch, config=None) -> dict
     forward/backward estimate is still only a consistency diagnostic, not
     independent correctness evidence. Rotation is flagged by poor aligned
     texture correlation; a visually invariant spinning rim has no observable
-    rotation.
+    rotation. Windowed phase uniqueness is also checked against spatially
+    distinct integer phase alternatives on real overlap.
     """
     cfg = _config(REGISTRATION_CONFIG, config)
     patches = (previous_gray_patch, current_gray_patch)
@@ -416,12 +475,18 @@ def relative_shift(previous_gray_patch, current_gray_patch, config=None) -> dict
     previous, current = (p.astype(np.float64) for p in patches)
     if min(float(previous.std()), float(current.std())) < cfg["min_std"]:
         return _lost("insufficient_texture", relative=True)
-    phase_shift, peak_ratio = _phase_translation(previous, current, cfg)
-    reverse_phase_shift, reverse_peak_ratio = _phase_translation(current, previous, cfg)
+    phase_forward = _phase_translation(previous, current, cfg)
+    phase_reverse = _phase_translation(current, previous, cfg)
+    # Some tests deliberately patch this private helper at the phase boundary;
+    # accepting its historical two-item shape keeps those gate tests focused.
+    phase_shift, peak_ratio = phase_forward[:2]
+    reverse_phase_shift, reverse_peak_ratio = phase_reverse[:2]
+    phase_candidates = phase_forward[2] if len(phase_forward) > 2 else []
     phase_fb_error = float(np.linalg.norm(phase_shift + reverse_phase_shift))
     shift, correlation, overlap = _refine_overlap_translation(previous, current, phase_shift)
     backward, _, _ = _refine_overlap_translation(current, previous, reverse_phase_shift)
     fb_error = float(np.linalg.norm(shift + backward))
+    competitor = _best_real_overlap_competitor(previous, current, phase_candidates, shift)
     diagnostics = {"peak_ratio": peak_ratio, "reverse_peak_ratio": reverse_peak_ratio,
                    "phase_forward_backward_px": phase_fb_error,
                    "forward_backward_px": fb_error, "aligned_correlation": correlation,
@@ -430,11 +495,17 @@ def relative_shift(previous_gray_patch, current_gray_patch, config=None) -> dict
                    "phase_delta_px": {"x_px": float(phase_shift[0]), "y_px": float(phase_shift[1])},
                    "spatial_refinement_px": float(np.linalg.norm(shift - phase_shift)),
                    "reverse_spatial_refinement_px": float(np.linalg.norm(backward - reverse_phase_shift)),
-                   "overlap_refinement_steps_px": list(OVERLAP_REFINEMENT_STEPS_PX)}
+                   "overlap_refinement_steps_px": list(OVERLAP_REFINEMENT_STEPS_PX),
+                   "ambiguity_candidate_limit": PHASE_AMBIGUITY_CANDIDATE_COUNT,
+                   "best_competing_real_overlap": competitor}
     if np.linalg.norm(shift) > cfg["max_shift_px"]:
         return _lost("shift_exceeds_gate", diagnostics, relative=True)
     if min(peak_ratio, reverse_peak_ratio) < cfg["min_peak_ratio"]:
         return _lost("ambiguous_correlation_peak", diagnostics, relative=True)
+    if (competitor is not None
+            and competitor["aligned_correlation"] >= cfg["min_correlation"]
+            and competitor["overlap_fraction"] >= cfg["min_overlap_fraction"]):
+        return _lost("ambiguous_real_overlap", diagnostics, relative=True)
     if max(phase_fb_error, fb_error) > cfg["max_forward_backward_px"]:
         return _lost("forward_backward_gate", diagnostics, relative=True)
     if overlap < cfg["min_overlap_fraction"]:
