@@ -12,7 +12,6 @@ import platform
 from pathlib import Path
 import subprocess
 import sys
-import time
 
 import motion_metrics as metrics
 import study_io as io
@@ -38,8 +37,6 @@ def source_hashes() -> dict:
                      "validation/tools/annotations.py", "validation/tools/schema_check.py"):
         own[relative] = io.digest(io.ROOT / relative)
     return own
-
-
 
 
 def seed_reference_timestamp(seed_doc: dict, reference: dict, annotation: dict) -> float:
@@ -68,7 +65,8 @@ def snapshot(args) -> dict:
     for name, path in paths.items():
         doc = io.load(path)
         if "fixture_id" in doc:
-            io.fixture(manifest, doc["fixture_id"])
+            item = io.fixture(manifest, doc["fixture_id"])
+            io.private_output(item, args.output)
         metadata[name] = {"path": str(path.resolve()), "sha256": io.digest(path)}
         if "implementation" in doc:
             metadata[name]["implementation"] = doc["implementation"]
@@ -122,9 +120,10 @@ def diagnose(args) -> dict:
                 sidecar.get("fixture_id") != args.fixture or sidecar.get("prediction_sha256") != io.digest(paths[name])):
             raise ValueError("relative sidecar version, identity or prediction hash mismatch")
         predicted = io.prediction(paths[name], item)["samples"]
-        all_relative = metrics.relative_diagnostics(annotation["samples"], predicted, sidecar["relative_samples"], max_gap_s=args.max_gap_s)
-        excluded = metrics.relative_diagnostics([r for r in annotation["samples"] if r["timestamp_s"] != seed_time],
-                                               predicted, sidecar["relative_samples"], max_gap_s=args.max_gap_s)
+        all_relative = metrics.relative_diagnostics(annotation["samples"], predicted, sidecar["relative_samples"],
+                                                    max_gap_s=args.max_gap_s)
+        excluded = metrics.relative_diagnostics(annotation["samples"], predicted, sidecar["relative_samples"],
+                                               max_gap_s=args.max_gap_s, seed_timestamp_s=seed_time)
         relative[name] = {"all": all_relative, "seed_excluded": excluded,
                           "paired_delta": {baseline_name: metrics.paired({"matched_errors": [], **excluded}, baseline_row["seed_excluded"])["delta"]
                                            for baseline_name, baseline_row in rows.items()}}
@@ -141,7 +140,7 @@ def diagnose(args) -> dict:
                         "Manual labels and same-video markers are not independent physical truth.",
                         "No canonical benchmark or kinematic gate is changed by these diagnostics."]}
     if args.canonical:
-        canonical_outputs(args, item, paths, annotation, seed_doc)
+        canonical_outputs(args, item, paths, annotation, seed_time)
     io.write(args.output_dir / "motion-diagnostics.json", result)
     lines = [f"# Development motion diagnostics: {args.fixture}", "",
              "Manual-label evidence; seed excluded. Delta errors use actual labelled intervals.", "",
@@ -159,9 +158,8 @@ def diagnose(args) -> dict:
     return result
 
 
-def canonical_outputs(args, item, paths, annotation, seed_doc):
+def canonical_outputs(args, item, paths, annotation, start_s):
     """Delegate existing measurement metrics to the authoritative CLI unchanged."""
-    start_s = seed_reference_timestamp(seed_doc, io.prediction(next(iter(paths.values())), item), annotation)
     end_s = annotation["samples"][-1]["timestamp_s"]
     cases = [{"id": f"{args.fixture}-{index}", "fixture_id": args.fixture,
               "fixture_manifest": str(args.manifest.resolve()), "annotations": str(args.annotation.resolve()),
@@ -186,8 +184,6 @@ def canonical_outputs(args, item, paths, annotation, seed_doc):
                         "--plate-diameter-m", str(item["load"]["plate_diameter_m"]), "--filter", "raw",
                         "--kinematics-max-gap-s", str(args.max_gap_s), "--kinematics-min-confidence", "0",
                         "--output", str(args.output_dir / f"canonical-{index}.analysis-v1.json")], check=True, cwd=io.ROOT)
-
-
 
 
 def parser() -> argparse.ArgumentParser:
