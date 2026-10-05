@@ -76,6 +76,25 @@ class BatchReportTests(unittest.TestCase):
                 batch.run(args)
             self.assertEqual(marker.read_text(), 'keep')
 
+    def test_failed_run_removes_only_its_partial_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, args = self.inputs(root)
+
+            def fail_after_partial_output(options):
+                options.output_dir.mkdir(parents=True, exist_ok=True)
+                (options.output_dir / 'partial.txt').write_text('incomplete')
+                raise RuntimeError('injected diagnostic failure')
+
+            with patch('batch_report.experiment.diagnose', side_effect=fail_after_partial_output):
+                with self.assertRaisesRegex(RuntimeError, 'injected diagnostic failure'):
+                    batch.run(args)
+            self.assertFalse(args.output_dir.exists())
+
+            # A failed invocation must not force manual cleanup before the same destination can be retried.
+            batch.run(args)
+            self.assertTrue((args.output_dir / 'summary.json').is_file())
+
     def test_held_out_refused_before_reading_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             snapshot, args = self.inputs(Path(tmp))
