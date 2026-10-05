@@ -39,12 +39,14 @@ an experimental derivative, not independently established physical accuracy.
 The local owner report is `validation/private/automatic-development-report-2026-10-05/README.md`
 in the main project folder, alongside six plots, canonical JSON and per-clip detailed diagnostics.
 The replay wrapper validates all consumed snapshot hashes and identities before report writes,
-rejects held-out fixtures/duplicate IDs and refuses an existing destination. Its default is stdlib
+rejects held-out fixtures/duplicate IDs and refuses an existing destination. After successful
+preflight it owns that new destination for the invocation; a later diagnostic/render failure removes
+only that incomplete destination so the corrected run can retry the same path. Its default is stdlib
 only; optional canonical mode delegates computation/rendering to the existing Rust CLI.
 
-The five focused tests and full 84-test bar-path research suite pass with warnings as errors;
-the committed schema check passes 12 documents. The real batch completes all three benchmarks,
-six analyses and six renders. Original raw observations, annotations and blind pages are preserved.
+The six focused batch tests and full bar-path research suite pass with warnings as errors; the
+committed schema check passes 12 documents. The real batch completes all three benchmarks, six
+analyses and six renders. Original raw observations, annotations and blind pages are preserved.
 Repeating the batch gives byte-identical 20 JSON/Markdown artifacts. Six renders repeated against
 the same analysis input paths are byte-identical; changing the input directory changes only the
 SVG's recorded `analysis_path` provenance. Nine canonical JSON files pass their existing schemas.
