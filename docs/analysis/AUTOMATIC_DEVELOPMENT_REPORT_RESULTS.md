@@ -55,3 +55,8 @@ This completes automation of the available development evidence. It does not com
 repeatability, independent physical-reference validation, #57 candidate freeze or M1 readiness.
 Keep this workflow usable without new annotation; expand conclusions only when additional independent
 evidence becomes available. Private images, trajectories and input paths remain outside Git.
+
+The subsequent [eight-clip VBT recording audit](EXISTING_VBT_RECORDING_AUDIT_RESULTS.md) extends
+automatic source/timestamp/retained-stream checks to the newer unlabelled development recordings.
+It finds substantial CSRT/SAM disagreement despite complete declared tracking coverage, without
+using either tracker as ground truth or requiring new annotation.
