@@ -60,6 +60,13 @@ See the [aggregate result](../../docs/analysis/CONTROLLED_MOTION_EXPERIMENT_RESU
 Injected displacement is not an annotation or independent physical reference. Whole-frame
 motion also moves the background; no production tracker/filter is selected by this experiment.
 
+The subsequent [CSRT trace and paired background result](../../docs/analysis/CSRT_BACKGROUND_MOTION_RESULTS.md)
+uses `box_diagnostics.py` to decompose returned-box residuals and `background_motion.py` to
+prepare a fixed pixel cutout/background pair. Both preserve the original producer and scorer.
+The cutout boundary and cleared corridor are artificial; the paired result is synthetic
+development evidence, not natural-scene or physical velocity validation. Plans, private
+orchestration and stop conditions are linked from the result.
+
 `snapshot` records the current commit and dirty state, implementation/helper hashes, manifest
 hash, development/held-out fixture IDs, supplied input hashes and candidate/annotation provenance.
 It refuses inputs that identify held-out fixtures and does not open held-out media. Supply repeatability
