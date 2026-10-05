@@ -30,11 +30,14 @@ The GitHub Actions job named **`CI Gate`** is the stable status-check contract f
 - currently aggregates:
   - `Rust / Linux`;
   - `Rust / Windows`;
+  - `Research / OpenCV`;
   - `Dependency Policy`;
   - `Validation Tooling`.
 
 Internal job names and composition may change without changing repository protection as long as the
-aggregate `CI Gate` contract remains stable and continues to depend on every required gate.
+aggregate `CI Gate` contract remains stable and continues to depend on every required gate. Research
+jobs become part of the required contract when their outputs can affect M0 evidence or mergeable
+research tooling; they should not be treated as advisory merely because they live under `research/`.
 
 ### Events
 
@@ -44,6 +47,11 @@ Required CI runs on:
 - pushes to `main`;
 - merge-queue groups through `merge_group: checks_requested`;
 - explicit `workflow_dispatch` runs for diagnostics.
+
+The workflow may additionally opt temporary stacked-development base branches into the
+`pull_request` trigger so dependent PRs receive the same checks before they are retargeted to
+`main`. Those additional triggers are an implementation convenience; they do not change the stable
+branch-protection contract, which remains `CI Gate` on `main`.
 
 Superseded pull-request runs may be cancelled. Push and merge-group runs are not cancelled merely
 because a newer run starts.
@@ -74,7 +82,10 @@ protected and that `CI Gate` is still required.
 - branch/ruleset configuration depends on one stable check name;
 - internal CI jobs can be reorganized without repeatedly editing protection settings;
 - failure, cancellation, or skipping of a required upstream job makes the aggregate gate fail;
-- merge-queue compatibility is explicit.
+- research checks that guard M0 evidence cannot fail while the aggregate gate still passes;
+- merge-queue compatibility is explicit;
+- stacked research PRs can be checked before final retargeting without changing the required-check
+  name.
 
 ### Limitations
 
@@ -82,12 +93,14 @@ protected and that `CI Gate` is still required.
   configured after merge;
 - a workflow-changing PR can change what `CI Gate` means, so workflow changes still require normal
   code review;
-- requiring only the aggregate gate makes its dependency list security- and governance-relevant.
+- requiring only the aggregate gate makes its dependency list security- and governance-relevant;
+- temporary stacked-branch trigger names can become stale and should be removed when no longer
+  needed.
 
 ## Validation
 
 Changes to the gate should be verified by an actual GitHub Actions pull-request run. The expected
-check name is exactly `CI Gate`, and the run should show all four required upstream jobs completing
+check name is exactly `CI Gate`, and the run should show all five required upstream jobs completing
 successfully before the aggregate job succeeds.
 
 Revisit this ADR if OpenBar adopts a merge queue, reusable required workflows, organization-level
