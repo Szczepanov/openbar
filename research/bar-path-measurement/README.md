@@ -2,7 +2,7 @@
 
 Implements the development portions of
 [the PR #97 experiment plan](../../docs/plans/M0_BAR_PATH_MEASUREMENT_EXPERIMENT_PLAN.md).
-This layer supplies diagnostics and baseline inventory. Image measurements and fusion follow in separate layers.
+This stacked directory supplies diagnostics, baseline inventory, and the image-measurement primitives below. Fusion follows in the next layer.
 
 ## Environment and boundaries
 
@@ -92,3 +92,64 @@ One-microsecond endpoint padding accommodates stored six-decimal timestamps.
 ```bash
 python -W error -m unittest discover -v -s research/bar-path-measurement/tests -p 'test_*.py'
 ```
+
+The registration tests cover both ideal Fourier/circular shifts and finite non-periodic crops whose
+newly exposed pixels come from outside the first crop. The latter is important because the local DFT
+is only the proposal step; real video ROIs do not wrap around at their borders. Default-window
+regressions also include repeated texture with multiple real-overlap translations inside the motion
+gate; that case must fail closed rather than emit the Hann-window-preferred peak.
+
+## Image measurement primitives
+
+The research-only `vision.py` exports `marker_center`, `radial_center`, and `relative_shift`.
+Absolute functions accept a BGR image, coarse display centre, seed radius and configuration.
+Relative registration accepts two same-size grayscale patches and configuration.
+Success returns `center_px` or `delta_px`, confidence and diagnostics; loss carries null coordinates and confidence.
+No coarse tracker state is updated. The final runner follows in the next layer.
+
+| Component | Defaults and units |
+| --- | --- |
+| Radial circle | 72 rays; radius band +/-30%; step 0.5 px; gradient >=8 intensity/px; contrast >=20 intensity; radius 0.8..1.2 of seed; centre offset <=0.25 seed radius; inlier tolerance 1.5 px; fit RMS <=0.9 px; inlier/ray support >=0.6; angular support >=0.65 |
+| Marker | OpenCV HSV [35,80,60]..[85,255,255]; ROI radius 2.0 seed radii; fitted radius 0.75..1.25 of seed; centre offset <=0.6 seed radius; area >=0.65 expected disk; circularity >=0.75; purity >=0.85; angular support >=0.8; contour inliers >=0.9; fit RMS <=1.2 px; inlier tolerance 1.5 px |
+| Registration | local DFT upsampling 50; deterministic real-overlap refinement at 0.5/0.2/0.08/0.03 px scales; shift norm <=12 px in crop coordinates; intensity SD >=2; forward/reverse phase peak ratio >=1.5; up to 32 strongest non-main-lobe integer phase proposals rescored on real overlap; aligned correlation >=0.9; overlap >=0.65; forward/backward inconsistency <=0.08 px; Hann window enabled |
+
+Radial rays sample raw luminance and refine gradient maxima to sub-pixel positions, followed by a
+deterministic robust circle fit. No ellipse or radial-symmetry alternative is included in this first
+experiment. A plausible circle does not establish physical plate identity among concentric rims.
+Registration independently implements the local inverse-DFT principle from Guizar-Sicairos et al.,
+2008, [DOI 10.1364/OL.33.000156](https://doi.org/10.1364/OL.33.000156); no reference code is copied.
+The phase/local-DFT estimate is then refined by maximizing normalized correlation only over real
+non-wrapped overlap. `overlap_fraction` counts valid pixel-centre samples, so an exact zero shift has
+full overlap (`1.0`). Diagnostics retain the pre-refinement phase delta and refinement magnitude.
+
+Hann windowing reduces finite-crop edge effects but can also suppress repeated-texture phase sidelobes,
+so the windowed phase peak ratio is not treated as sufficient uniqueness evidence. The 32 strongest
+integer phase alternatives outside the two-pixel main-lobe guard and inside the configured shift gate
+are rescored on real, non-wrapped overlap. If a spatially distinct alternative passes the same
+correlation and overlap thresholds as an accepted translation, the result is lost with
+`ambiguous_real_overlap`; the best competing proposal remains in diagnostics. This is a bounded
+ambiguity diagnostic, not proof that all aliasing is impossible, so quality must still be compared
+with measured development error before promotion.
+
+The final measurement uses a translation-only model and rejects unsupported rotation/appearance
+through overlap correlation. Forward/backward consistency is an internal check, not independent
+correctness evidence. Texture or background inside the ROI can still confound plate displacement;
+quality must be compared with error on development evidence before promotion.
+
+## Controlled-marker capture protocol
+
+The default targets a filled, high-contrast green circle; other colours require recorded HSV bounds
+(wrapping hue bounds are supported). Call `marker_center` with a human-confirmed marker centre and marker radius. Keep the natural plate visible in the same recording where possible.
+
+Before capture, record marker physical diameter/material/colour, its alignment and centring tolerance
+relative to the bar axis, camera/lens/exposure settings, natural plate visibility, and whether sleeve
+rotation can move the marker off axis. Record static and fast-motion windows, blur/lighting failures,
+and a fixed marker-to-plate pixel-scale ratio with uncertainty, since the planes can differ.
+
+Keep the marker trajectory separate. For same-video comparison, account explicitly for fixed mounting
+offset and the measured depth scale ratio; retain both original and aligned diagnostic trajectories.
+Do not use the marker diameter as plate calibration by default or optimize alignment against desired
+velocity agreement. Comparison/alignment cannot be validated until real marker clips exist.
+
+The marker is a development aid, not independent physical truth or an athlete-facing requirement.
+Current capture status: **pending**, because no such recordings were supplied.
