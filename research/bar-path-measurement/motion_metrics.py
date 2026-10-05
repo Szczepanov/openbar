@@ -59,9 +59,9 @@ def evaluate(labels: list[dict], predicted: list[dict], *, max_gap_s: float = .2
             raise ValueError("invalid non-labelled observation")
     by_time = {s["timestamp_s"]: s for s in predicted}
     times = list(by_time)
-    rows = [r for r in labels if r["timestamp_s"] != seed_timestamp_s]
+    scored_rows = [r for r in labels if r["timestamp_s"] != seed_timestamp_s]
     error_rows = []
-    for label in rows:
+    for label in scored_rows:
         actual = by_time.get(label["timestamp_s"])
         if label["annotation_state"] != "labelled" or not actual or actual["state"] != "tracked":
             continue
@@ -70,8 +70,10 @@ def evaluate(labels: list[dict], predicted: list[dict], *, max_gap_s: float = .2
                            "confidence": actual["confidence"]})
     offsets = {a: statistics.median(r["error_px"][a] for r in error_rows) if error_rows else None for a in AXES}
     intervals, unavailable = [], []
-    for left, right in zip(rows, rows[1:]):
+    for left, right in zip(labels, labels[1:]):
         t0, t1 = left["timestamp_s"], right["timestamp_s"]
+        if seed_timestamp_s is not None and seed_timestamp_s in (t0, t1):
+            continue
         reason = None
         if left["annotation_state"] != "labelled" or right["annotation_state"] != "labelled":
             reason = "unlabelled_endpoint"
@@ -101,7 +103,7 @@ def evaluate(labels: list[dict], predicted: list[dict], *, max_gap_s: float = .2
         if len(window) != 2 or number(window[1], "window end_s", 0) <= number(window[0], "window start_s", 0):
             raise ValueError("stationary windows must have increasing finite endpoints")
         selected = [s for s in predicted if window[0] <= s["timestamp_s"] <= window[1]]
-        dense = {s["timestamp_s"]: s for s in rows if s["annotation_state"] == "labelled"}
+        dense = {s["timestamp_s"]: s for s in scored_rows if s["annotation_state"] == "labelled"}
         reason = None
         if len(selected) < 3 or any(s["timestamp_s"] not in dense for s in selected):
             reason = "dense_labels_required"
@@ -130,7 +132,8 @@ def evaluate(labels: list[dict], predicted: list[dict], *, max_gap_s: float = .2
         norms = [math.hypot(*(r["error_px"][a] for a in AXES)) for r in bucket]
         confidence.append({"lower": lower, "upper": upper, "center_error_px": distribution(norms),
                            "error_gt_3_px": sum(v > 3 for v in norms)})
-    labelled_count = sum(r["annotation_state"] == "labelled" for r in rows)
+    labelled_count = sum(r["annotation_state"] == "labelled" for r in scored_rows)
+    interval_count = len(intervals) + len(unavailable)
     return {
         "labelled_samples": labelled_count, "matched_tracked_samples": len(error_rows),
         "availability": len(error_rows) / labelled_count if labelled_count else None,
@@ -145,7 +148,7 @@ def evaluate(labels: list[dict], predicted: list[dict], *, max_gap_s: float = .2
             a: correlation([r["mean_position_error_px"][a] for r in intervals],
                            [r["label_velocity_px_s"][a] for r in intervals]) for a in AXES},
         "available_intervals": len(intervals), "unavailable_intervals": unavailable,
-        "interval_availability": len(intervals) / (len(intervals) + len(unavailable)) if len(rows) > 1 else None,
+        "interval_availability": len(intervals) / interval_count if interval_count else None,
         "stationary_jitter": jitter, "confidence_vs_error": confidence,
         "matched_errors": error_rows, "intervals": intervals,
     }
@@ -166,13 +169,17 @@ def paired(candidate: dict, baseline: dict) -> dict:
     return result
 
 
-def relative_diagnostics(labels: list[dict], predicted: list[dict], edges: list[dict], *, max_gap_s=.2) -> dict:
+def relative_diagnostics(labels: list[dict], predicted: list[dict], edges: list[dict], *, max_gap_s=.2,
+                         seed_timestamp_s: float | None = None) -> dict:
     """Score measured edge sums on labelled intervals; integrate only unbroken chains."""
     samples(predicted)
     if number(max_gap_s, "max_gap_s", 0) == 0:
         raise ValueError("max_gap_s must be positive")
+    if seed_timestamp_s is not None:
+        number(seed_timestamp_s, "seed_timestamp_s", 0)
     times = [r["timestamp_s"] for r in predicted]
-    by_time = {r["timestamp_s"]: r for r in labels if r["annotation_state"] == "labelled"}
+    by_time = {r["timestamp_s"]: r for r in labels
+               if r["annotation_state"] == "labelled" and r["timestamp_s"] != seed_timestamp_s}
     by_edge = {}
     for edge in edges:
         t0 = number(edge.get("previous_timestamp_s"), "previous_timestamp_s", 0)
@@ -195,6 +202,8 @@ def relative_diagnostics(labels: list[dict], predicted: list[dict], edges: list[
     unavailable = 0
     for left, right in zip(labels, labels[1:]):
         t0, t1 = left["timestamp_s"], right["timestamp_s"]
+        if seed_timestamp_s is not None and seed_timestamp_s in (t0, t1):
+            continue
         start, end = bisect.bisect_left(times, t0), bisect.bisect_left(times, t1)
         if (left["annotation_state"] != "labelled" or right["annotation_state"] != "labelled" or
                 start >= len(times) or end >= len(times) or times[start] != t0 or times[end] != t1):
@@ -212,8 +221,11 @@ def relative_diagnostics(labels: list[dict], predicted: list[dict], edges: list[
     anchor, accumulated, drift = None, {a: 0. for a in AXES}, []
     for index, t in enumerate(times):
         edge = by_edge.get(t)
-        if index == 0 or edge is None or edge["delta_px"] is None or t - times[index - 1] > max_gap_s:
-            anchor = by_time.get(t)
+        previous_t = times[index - 1] if index else None
+        seed_boundary = seed_timestamp_s is not None and (t == seed_timestamp_s or previous_t == seed_timestamp_s)
+        if (index == 0 or seed_boundary or edge is None or edge["delta_px"] is None or
+                t - times[index - 1] > max_gap_s):
+            anchor = None if t == seed_timestamp_s else by_time.get(t)
             accumulated = {a: 0. for a in AXES}
             continue
         if anchor is None:
@@ -233,7 +245,7 @@ def relative_diagnostics(labels: list[dict], predicted: list[dict], edges: list[
         quality.append({"lower": lower, "upper": upper, "delta_error_px": distribution(errors),
                         "error_gt_3_px": sum(v > 3 for v in errors)})
     return {
-        "measured_edges": sum(e["delta_px"] is not None for e in edges), "total_edges": max(0, len(times) - 1),
+        "measured_edges": sum(e.get("delta_px") is not None for e in edges), "total_edges": max(0, len(times) - 1),
         "available_intervals": len(intervals), "unavailable_intervals": unavailable,
         "delta_axis_error_px": {a: distribution([r["delta_error_px"][a] for r in intervals]) for a in AXES},
         "delta_position_error_px": distribution([math.hypot(*(r["delta_error_px"][a] for a in AXES)) for r in intervals]),
