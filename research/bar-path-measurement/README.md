@@ -51,6 +51,15 @@ therefore has different label counts/averages. Use the seed-excluded diagnostics
 
 ## Baseline and motion diagnostics
 
+The bounded [controlled-motion experiment](../../docs/plans/CONTROLLED_MOTION_EXPERIMENT_PLAN.md)
+replays three existing confirmed development seed rasters with known whole-frame translations,
+fixed blur and brief occlusion. `controlled_motion.py` supplies the non-wrapped transform and
+seed-relative displacement/support/confidence/recovery diagnostics; its tests run in the same
+research suite below. The producer orchestration and all generated inputs remain private.
+See the [aggregate result](../../docs/analysis/CONTROLLED_MOTION_EXPERIMENT_RESULTS.md).
+Injected displacement is not an annotation or independent physical reference. Whole-frame
+motion also moves the background; no production tracker/filter is selected by this experiment.
+
 `snapshot` records the current commit and dirty state, implementation/helper hashes, manifest
 hash, development/held-out fixture IDs, supplied input hashes and candidate/annotation provenance.
 It refuses inputs that identify held-out fixtures and does not open held-out media. Supply repeatability
