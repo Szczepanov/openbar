@@ -92,7 +92,6 @@ class ExperimentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 experiment.named_paths(values)
 
-
     def test_canonical_metrics_delegate_to_cli(self):
         args = argparse.Namespace(manifest=PUBLIC / "manifest.json", annotation=ANNOTATION, seed=SEED,
                                   fixture=FIXTURE, max_gap_s=.2, repository_root=io.ROOT)
@@ -100,7 +99,7 @@ class ExperimentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             args.output_dir = Path(tmp)
             with patch("experiment.subprocess.run") as run:
-                experiment.canonical_outputs(args, item, {"perfect": PREDICTION}, io.load(ANNOTATION), io.load(SEED))
+                experiment.canonical_outputs(args, item, {"perfect": PREDICTION}, io.load(ANNOTATION), 0.)
             commands = [call.args[0] for call in run.call_args_list]
             self.assertEqual(len(commands), 2)
             self.assertIn("benchmark", commands[0])
@@ -134,7 +133,7 @@ class ExperimentTests(unittest.TestCase):
             args.output_dir = Path(tmp)
             with patch("experiment.subprocess.run") as run:
                 experiment.canonical_outputs(args, io.fixture(io.load(args.manifest), FIXTURE),
-                                             {"perfect": PREDICTION}, annotation, io.load(SEED))
+                                             {"perfect": PREDICTION}, annotation, 0.)
             analyze = run.call_args_list[-1].args[0]
             self.assertEqual(float(analyze[analyze.index("--end-s") + 1]), expected_end)
 
