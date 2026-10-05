@@ -26,6 +26,29 @@ a candidate freeze. Private fixture outputs must stay in this worktree's `valida
 `snapshot` enforces the same destination rule when a supplied input identifies a private fixture.
 Never commit private predictions, sidecars, labels, extracted frames or media.
 
+## Automatic replay without new manual work
+
+`batch_report.py` runs the existing diagnostics for several retained `baseline.json` snapshots:
+
+```powershell
+python research/bar-path-measurement/batch_report.py --manifest validation/private/manifest.json --snapshot CLIP=validation/private/bar-path-measurement/CLIP/baseline.json --repository-root . --output-dir validation/private/automatic-development-report --canonical
+```
+
+Repeat `--snapshot` for each development clip. The snapshots must retain valid manifest and
+annotation/seed/SAM/CSRT input hashes. All inputs are checked before reports are written; held-out
+fixtures, duplicate IDs and existing output directories are refused. No tracker or model is rerun.
+The stdlib-only default writes a batch README/summary and existing per-clip motion diagnostics.
+Optional `--canonical` runs the authoritative Rust benchmark/analyze commands and renders separate
+`csrt.svg`/`sam.svg` path/position/velocity/confidence diagnostics. It requires Cargo and FFmpeg.
+
+This reuses existing confirmed seeds and sparse labels; no new human annotation, pseudo-labels or
+consensus coordinates are generated. Results remain development evidence. Sparse labelled intervals
+do not establish adjacent-frame accuracy, stationary jitter or annotation repeatability, and rendered
+velocity is not independently validated physical accuracy. The raw filter and 0.2 s maximum gap
+are explicit experiment settings, not a selected production pipeline.
+The batch table excludes initialization; the existing canonical benchmark output includes it and
+therefore has different label counts/averages. Use the seed-excluded diagnostics for this comparison.
+
 ## Baseline and motion diagnostics
 
 `snapshot` records the current commit and dirty state, implementation/helper hashes, manifest
