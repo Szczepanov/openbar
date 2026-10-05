@@ -92,6 +92,67 @@ class ExperimentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 experiment.named_paths(values)
 
+    def test_decoder_failures_are_reframed_as_fail_closed_value_errors(self):
+        class FakeDecoder:
+            class SpikeError(RuntimeError):
+                pass
+
+            @staticmethod
+            def decode_frames(*_args):
+                raise FakeDecoder.SpikeError("frame count mismatch")
+
+        with self.assertRaisesRegex(ValueError, "decoder: frame count mismatch"):
+            list(experiment.validated_decode_frames(FakeDecoder, Path("fake.mp4"), 1, 1, 1))
+
+    def test_runner_maps_crop_translation_and_does_not_fill_loss(self):
+        import numpy as np
+        import vision
+        sys.path.insert(0, str(io.ROOT / "research" / "opencv-tracking"))
+        import track
+        manifest = io.load(PUBLIC / "manifest.json")
+        seed = io.load(SEED)
+        coarse = io.load(PREDICTION)
+        coarse["samples"] = coarse["samples"][:4]
+        centers = [100., 102., 104., 106.]
+        for row, x in zip(coarse["samples"], centers):
+            row["center_px"] = {"x_px": x, "y_px": 120.}
+        seed["seed"]["target"]["center"] = {"x_px": 100., "y_px": 120.}
+        seed["seed"]["target"]["radius_px"] = 10
+        seed["seed"]["selection_confidence"] = 0.0
+        radial_results = [dict(center_px={"x_px": x, "y_px": 120.}, confidence=.7, diagnostics={}) for x in centers]
+        radial_results[2] = dict(center_px=None, confidence=None, diagnostics={"loss_reason": "synthetic_occlusion"})
+        frames = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in centers]
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            seed_path, coarse_path = folder / "seed.json", folder / "coarse.json"
+            io.write(seed_path, seed)
+            io.write(coarse_path, coarse)
+            args = argparse.Namespace(manifest=PUBLIC / "manifest.json", fixture=FIXTURE, seed=seed_path,
+                                      coarse=coarse_path, method="radial", config=None, repository_root=io.ROOT,
+                                      output_dir=folder / "out")
+            with patch("study_io.media_path", return_value=Path("fake.mp4")), \
+                 patch("experiment.decoder_environment", return_value={"ffmpeg": "synthetic-test", "ffprobe": "synthetic-test"}), \
+                 patch("experiment.repository_state", return_value={"commit": "test", "working_tree_dirty": False}), \
+                 patch("label_package.probe", return_value={"timestamps_s": [r["timestamp_s"] for r in coarse["samples"]]}), \
+                 patch("label_package.require_fixture_probe_match"), \
+                 patch.object(track, "decode_frames", return_value=iter(frames)), \
+                 patch.object(vision, "radial_center", side_effect=radial_results), \
+                 patch.object(vision, "relative_shift", return_value=dict(delta_px={"x_px": 0., "y_px": 0.}, confidence=.8, diagnostics={})):
+                result = experiment.run(args)
+            self.assertEqual(result["absolute_tracked"], 3)
+            absolute = io.prediction(folder / "out/radial.prediction-v1.json", manifest["fixtures"][0])
+            fused = io.prediction(folder / "out/radial-fused.prediction-v1.json", manifest["fixtures"][0])
+            self.assertEqual(absolute["samples"][0]["confidence"], 1.0)
+            self.assertEqual(fused["samples"][0]["confidence"], 1.0)
+            self.assertEqual(absolute["samples"][2], {"timestamp_s": coarse["samples"][2]["timestamp_s"], "state": "lost"})
+            self.assertEqual(fused["samples"][2], absolute["samples"][2])
+            sidecar = io.load(folder / "out/radial.sidecar.json")
+            self.assertEqual(sidecar["relative_samples"][0]["delta_px"], {"x_px": 2., "y_px": 0.})
+            self.assertEqual(sidecar["provenance"]["seed_selection_confidence"], 0.0)
+            self.assertEqual(sidecar["provenance"]["fusion_seed_anchor_weight"], 0.0)
+            self.assertEqual(sidecar["absolute_diagnostics"][0]["manual_seed_selection_confidence"], 0.0)
+            self.assertNotIn("runtime", fused)
+
     def test_canonical_metrics_delegate_to_cli(self):
         args = argparse.Namespace(manifest=PUBLIC / "manifest.json", annotation=ANNOTATION, seed=SEED,
                                   fixture=FIXTURE, max_gap_s=.2, repository_root=io.ROOT)

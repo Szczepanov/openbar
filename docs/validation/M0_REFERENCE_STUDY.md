@@ -17,6 +17,11 @@ This is validation tooling, not validation evidence by itself. The repository do
 contain a qualifying independent physical/reference dataset, so #58 remains incomplete until such a
 study is captured/imported and its result/report are reviewed.
 
+GitHub currently marks #58 closed; that issue state must not be interpreted as physical-validation
+completion. The 2026-10-05 bar-path experiment confirms that no independent reference measurements
+were supplied for its development runs. Tooling delivery and a reviewed physical study remain
+separate milestones; the kinematic gates are not moved to PASS by software completion.
+
 Synthetic analytic fixtures remain useful for implementation semantics and regression testing. They
 must not be labelled as independent physical evidence or used to move these gates to PASS.
 

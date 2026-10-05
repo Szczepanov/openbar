@@ -2,21 +2,22 @@
 
 Implements the development portions of
 [the PR #97 experiment plan](../../docs/plans/M0_BAR_PATH_MEASUREMENT_EXPERIMENT_PLAN.md).
-This stacked directory supplies diagnostics, baseline inventory, and the image-measurement primitives below. Fusion follows in the next layer.
+This is an isolated experiment, not a production tracker. See
+[the development decision](../../docs/analysis/M0_BAR_PATH_MEASUREMENT_DEVELOPMENT_RESULTS.md).
 
 ## Environment and boundaries
 
-The `snapshot` and `diagnose` commands in this layer use the standard library only. The surrounding
-bar-path research stack reuses the existing pinned OpenCV environment from
+The `snapshot` and `diagnose` commands use the standard library only. The surrounding bar-path
+research stack reuses the existing pinned OpenCV environment from
 `research/opencv-tracking/requirements.txt` rather than introducing a second dependency file. It pins
 OpenCV 4.12.0 and NumPy 2.2.6. OpenCV packaging is MIT, bundled OpenCV is Apache-2.0, NumPy is
 BSD-3-Clause; wheel notices remain applicable. Sources: [OpenCV packaging](https://github.com/opencv/opencv-python),
 [NumPy](https://numpy.org/). No new dependency enters the Rust workspace or stdlib validation tools.
 
 For repeatability, set `OPENBLAS_NUM_THREADS=1`, `OMP_NUM_THREADS=1`, and `MKL_NUM_THREADS=1`
-before starting the interpreter when using the OpenCV environment. The image-measurement runners set
-OpenCV threads to one. FFmpeg/ffprobe must be on PATH for canonical media analysis; the diagnostics and
-baseline inventory commands themselves do not decode media.
+before starting the interpreter when using the OpenCV environment. The image-measurement runner sets
+OpenCV threads to one. FFmpeg/ffprobe must be on PATH for canonical media analysis and `run`; the
+diagnostics and baseline inventory commands themselves do not decode media.
 
 Every command accepts only development fixtures. There is deliberately no `--allow-held-out`:
 candidate freeze and final selection remain governed by #57. This runner does not select candidates,
@@ -87,11 +88,28 @@ that verified media as an explicit `--video` override and selects from the resol
 of the last label and that candidate's last observation, preserving unlabelled prediction tails.
 One-microsecond endpoint padding accommodates stored six-decimal timestamps.
 
-## Verification
+## Image experiments
+
+The coarse prediction is a read-only input. Use an existing CSRT or SAM output, with its full
+implementation/configuration provenance. Refined positions are never fed back to the coarse tracker.
+The seed radius remains fixed. Frames are decoded through the existing OpenCV research decoder;
+timestamps and display rotation come from `label_package.probe`, not nominal FPS or VideoCapture.
+Decoded/probed counts and the FFmpeg exit status are checked even after the selected range ends;
+decoder contract failures are surfaced as a normal fail-closed command error rather than leaking a
+research helper traceback.
 
 ```bash
-python -W error -m unittest discover -v -s research/bar-path-measurement/tests -p 'test_*.py'
+python research/bar-path-measurement/experiment.py run \
+  --manifest validation/private/manifest.json --fixture dev \
+  --seed validation/private/seeds/dev.manual-target-seed-v1.json \
+  --coarse validation/private/study/csrt.prediction-v1.json \
+  --method radial --output-dir validation/private/study/radial
 ```
+
+`--repository-root` optionally points at an existing owner checkout containing manifest-relative
+media. Media hashes and raster/rotation metadata must match. This does not copy private data into
+the repository. Coarse timestamps must exactly identify probed frames rounded to six decimal places;
+timestamp collisions are refused. Seed frame index, when present, must agree with its decoded time.
 
 The registration tests cover both ideal Fourier/circular shifts and finite non-periodic crops whose
 newly exposed pixels come from outside the first crop. The latter is important because the local DFT
@@ -99,19 +117,29 @@ is only the proposal step; real video ROIs do not wrap around at their borders. 
 regressions also include repeated texture with multiple real-overlap translations inside the motion
 gate; that case must fail closed rather than emit the Hann-window-preferred peak.
 
-## Image measurement primitives
+The output contains absolute and fused `tracker-prediction-v1` streams, separate raw/diagnostic
+sidecars, and separate desktop timing. Prediction/sidecar bytes exclude runtime. Provenance retains
+git commit/dirty state, source/helper/input hashes, full configurations, dependency and decoder
+versions, and thread settings. Timing includes selected measurement computation and full decoder
+drain, but excludes the already computed coarse producer. It cannot satisfy the Pixel 8 full-path
+runtime gate.
 
-The research-only `vision.py` exports `marker_center`, `radial_center`, and `relative_shift`.
-Absolute functions accept a BGR image, coarse display centre, seed radius and configuration.
-Relative registration accepts two same-size grayscale patches and configuration.
-Success returns `center_px` or `delta_px`, confidence and diagnostics; loss carries null coordinates and confidence.
-No coarse tracker state is updated. The final runner follows in the next layer.
+The manual seed is emitted with tracker confidence `1.0`, matching its role as the deterministic
+initialization observation. Optional `selection_confidence` is human/annotation confidence, not
+tracker confidence: it is retained separately in diagnostics/provenance and is used only as the
+optional fusion seed-anchor weight. This preserves the two confidence domains explicitly.
+
+`--config FILE` accepts only `absolute`, `registration`, `fusion` and `patch_radius_factor`. Each
+subobject can override known settings below. Unknown, non-finite or out-of-range settings fail closed.
+Do not change configurations after examining held-out evidence.
 
 | Component | Defaults and units |
 | --- | --- |
 | Radial circle | 72 rays; radius band +/-30%; step 0.5 px; gradient >=8 intensity/px; contrast >=20 intensity; radius 0.8..1.2 of seed; centre offset <=0.25 seed radius; inlier tolerance 1.5 px; fit RMS <=0.9 px; inlier/ray support >=0.6; angular support >=0.65 |
 | Marker | OpenCV HSV [35,80,60]..[85,255,255]; ROI radius 2.0 seed radii; fitted radius 0.75..1.25 of seed; centre offset <=0.6 seed radius; area >=0.65 expected disk; circularity >=0.75; purity >=0.85; angular support >=0.8; contour inliers >=0.9; fit RMS <=1.2 px; inlier tolerance 1.5 px |
 | Registration | local DFT upsampling 50; deterministic real-overlap refinement at 0.5/0.2/0.08/0.03 px scales; shift norm <=12 px in crop coordinates; intensity SD >=2; forward/reverse phase peak ratio >=1.5; up to 32 strongest non-main-lobe integer phase proposals rescored on real overlap; aligned correlation >=0.9; overlap >=0.65; forward/backward inconsistency <=0.08 px; Hann window enabled |
+| Fusion | absolute/relative base weight 1 each; Huber distance 2 px; eight fixed IRLS iterations; max gap 0.2 s; absolute confidence floor 0.000001 for numerical anchoring only; relative confidence is used directly, so zero-confidence relative evidence has zero solve weight |
+| Runner patch | half-width = ceil(1.5 seed radii), resulting odd side length; allowed factor 1.25..3; integer crop origins added back to local relative shifts; incomplete patches rejected |
 
 Radial rays sample raw luminance and refine gradient maxima to sub-pixel positions, followed by a
 deterministic robust circle fit. No ellipse or radial-symmetry alternative is included in this first
@@ -136,10 +164,20 @@ through overlap correlation. Forward/backward consistency is an internal check, 
 correctness evidence. Texture or background inside the ROI can still confound plate displacement;
 quality must be compared with error on development evidence before promotion.
 
+Fusion minimizes robust absolute residuals and measured relative displacement residuals with no
+smoothness prior. This conservative version requires valid absolute evidence at every emitted frame.
+Absolute loss, missing relative edges and excessive gaps split solves. Relative-only chains never
+fill lost positions. Confidence is capped by absolute evidence; absolute disagreement reduces it
+directly, while relative-disagreement penalties are scaled by the corresponding registration
+confidence. A zero-confidence relative edge therefore neither moves the solution nor vetoes fused
+confidence. The absolute numerical floor does not promote certainty. Raw absolute/relative
+observations remain intact.
+
 ## Controlled-marker capture protocol
 
 The default targets a filled, high-contrast green circle; other colours require recorded HSV bounds
-(wrapping hue bounds are supported). Call `marker_center` with a human-confirmed marker centre and marker radius. Keep the natural plate visible in the same recording where possible.
+(wrapping hue bounds are supported). Use `--method marker` with a human-confirmed marker centre and
+marker radius seed. Keep the natural plate visible in the same recording where possible.
 
 Before capture, record marker physical diameter/material/colour, its alignment and centring tolerance
 relative to the bar axis, camera/lens/exposure settings, natural plate visibility, and whether sleeve
@@ -153,3 +191,40 @@ velocity agreement. Comparison/alignment cannot be validated until real marker c
 
 The marker is a development aid, not independent physical truth or an athlete-facing requirement.
 Current capture status: **pending**, because no such recordings were supplied.
+
+## Remaining evidence and stop conditions
+
+Do not freeze a candidate that achieves lower error by losing difficult frames. Examine represented
+lifts, availability, false tracks, paired support, drift, confidence and downstream physical results.
+Only useful development evidence justifies extending the existing
+[tracker/filter selection](../../docs/validation/TRACKER_FILTER_SELECTION.md) freeze mechanism to this
+research producer. Preserve its manifest/commit/configuration checks, repeatability prerequisites and
+one-shot held-out rule. This runner's development refusal is intentional until those prerequisites pass.
+
+YOLO26 remains conditional on measured coarse-localizer failure, with separate licensing review.
+No learned detector/model/dependency was added. Current geometry failures do not demonstrate that need.
+
+Independent synchronized reference capture remains pending. Use the existing
+[reference-study protocol and command](../../docs/validation/M0_REFERENCE_STUDY.md) when data exists.
+Freeze axes, intervals, calibration, filtering, definitions, synchronization and uncertainties before
+comparison. WL Analysis or same-video marker agreement cannot close the physical accuracy gates.
+
+Pixel 8 measurement remains pending. Use the existing
+[phone runtime protocol](../../docs/validation/PHONE_RUNTIME_BENCHMARK.md) after candidate/envelope freeze.
+Any future research pipeline must time its complete producer path, not just `analyze --observations`.
+Current desktop sidecars do not prove deployability or speed on the phone.
+
+## Verification
+
+```bash
+python -W error -m unittest discover -v -s research/bar-path-measurement/tests -p 'test_*.py'
+```
+
+Use the pinned research interpreter. Tests cover numerical geometry/registration, loss, drift,
+deterministic fusion, zero-confidence relative evidence, exact matching, dense-label jitter,
+seed-confidence domain separation, accepted seed-frame mapping, decoder failure propagation, strict
+existing contracts, private/development boundaries, crop-origin mapping and canonical CLI delegation.
+The registration tests cover both ideal Fourier/circular shifts and finite non-periodic crops whose
+newly exposed pixels come from outside the first crop; the local DFT is only the proposal step for
+real video ROIs and must not rely on wrap-around. Synthetic tests establish implementation behavior,
+not real-video accuracy.
