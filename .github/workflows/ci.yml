@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, research/bar-path-diagnostics, research/bar-path-vision]
   merge_group:
     types: [checks_requested]
   push:
@@ -341,6 +341,12 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r research/opencv-tracking/requirements.txt
       - name: OpenCV tracker research tests
         run: python -m unittest discover -v -s research/opencv-tracking/tests -p 'test_*.py'
+      - name: Bar-path measurement research tests
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: python -W error -m unittest discover -v -s research/bar-path-measurement/tests -p 'test_*.py'
       - name: GPU centre pure-function research tests
         run: python -m unittest discover -v -s research/gpu-tracking/tests -p 'test_centres.py'
       - name: GPU runner output-writing research tests (torch stubbed when absent)
@@ -381,7 +387,7 @@ jobs:
       - name: Python syntax
         run: python -m compileall -q validation/tools validation/tests
       - name: Research Python syntax
-        run: python -m compileall -q research/opencv-tracking research/gpu-tracking research/vbt-workflow
+        run: python -m compileall -q research/opencv-tracking research/gpu-tracking research/vbt-workflow research/bar-path-measurement
       - name: Validation tooling tests
         run: python -m unittest discover -v -s validation/tests -p 'test_*.py'
       - name: Committed fixtures match their schemas
