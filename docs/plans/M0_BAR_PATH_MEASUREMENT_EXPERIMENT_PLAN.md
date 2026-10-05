@@ -843,3 +843,17 @@ A production promotion requires:
 - schema/version review if persisted semantics change.
 
 Until then, the current authoritative M0 contracts and scope remain unchanged.
+
+## 21. First implementation and development decision (2026-10-05)
+
+The research implementation and commands are in
+[`research/bar-path-measurement/`](../../research/bar-path-measurement/README.md).
+The [first development report](../analysis/M0_BAR_PATH_MEASUREMENT_DEVELOPMENT_RESULTS.md) records
+the three-clip baseline comparisons, bounded circle grid, relative-registration and fusion evidence,
+and phase-specific pending inputs.
+
+The current complete candidates are not eligible for freeze: geometry loses too much squat/clean
+evidence, despite useful partial snatch and relative-displacement results. Marker capture, dense
+development repeatability, independent reference and Pixel 8 measurements remain pending. No
+held-out fixture was processed and no production default, schema or gate changed. The learned
+localizer trigger was not established, so that conditional phase did not start.
