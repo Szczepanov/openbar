@@ -173,6 +173,14 @@ sampling and labelling problems. Investigate the recorded rim failures before ad
 Future geometry/registration work must improve the represented clean and squat coverage, not just
 the snatch average. Do not tune using error-versus-labelled-velocity correlation.
 
+While new capture is unavailable, the
+[radial geometry failure analysis](M0_RADIAL_GEOMETRY_FAILURE_ANALYSIS.md) replays the existing three
+development clips without changing the estimator. It identifies weak/inconsistent selected rim
+evidence. The subsequent [mask-guided comparison](MASK_GUIDED_RIM_EXPERIMENT_RESULTS.md) is rejected
+for insufficient coverage and displacement evidence; six dense annotation pages are ready in the
+owner's main project folder. Human annotation passes, marker capture and physical-reference evidence
+remain pending.
+
 GitHub's closed #58 state is not independent-reference evidence. The physical-reference study remains
 pending according to its [validation contract](../validation/M0_REFERENCE_STUDY.md); production
 kinematic accuracy and Pixel 8 runtime are not established by this software work.
