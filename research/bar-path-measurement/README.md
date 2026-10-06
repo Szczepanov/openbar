@@ -57,6 +57,8 @@ fixed blur and brief occlusion. `controlled_motion.py` supplies the non-wrapped 
 seed-relative displacement/support/confidence/recovery diagnostics; its tests run in the same
 research suite below. The producer orchestration and all generated inputs remain private.
 See the [aggregate result](../../docs/analysis/CONTROLLED_MOTION_EXPERIMENT_RESULTS.md).
+An [exact replication on current main](../../docs/analysis/CONTROLLED_MOTION_REPLICATION_RESULTS.md)
+retains the same failure evidence without introducing another configuration.
 Injected displacement is not an annotation or independent physical reference. Whole-frame
 motion also moves the background; no production tracker/filter is selected by this experiment.
 
