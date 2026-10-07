@@ -255,6 +255,29 @@ Pixel 8 measurement remains pending. Use the existing
 Any future research pipeline must time its complete producer path, not just `analyze --observations`.
 Current desktop sidecars do not prove deployability or speed on the phone.
 
+## Frozen plate-scale diagnostic (#88)
+
+`plate_scale_study.py` is a stdlib-only diagnostic using retained SAM bplus-circle geometry
+and existing confirmed stick references. The [frozen plan](../../docs/plans/PLATE_SCALE_STUDY_PLAN.md)
+defines the eight development cases, eligibility, median-radius estimator, reciprocal empirical
+p10–p90 band and decision rule. Initialization, rejected fits and loss cannot supply radius evidence.
+Insufficient support emits no recommended scale or band. The band describes apparent-size spread;
+it is not calibrated physical-scale uncertainty and must not be attached to velocity as such.
+
+Run `freeze` before scoring (paths below refer to the owner's existing checkout and this worktree):
+
+```powershell
+python research/bar-path-measurement/plate_scale_study.py freeze --repository-root C:/Users/mdszc/Downloads/projekty/openbar --manifest C:/Users/mdszc/Downloads/projekty/openbar/validation/private/vbt/manifest.json --session C:/Users/mdszc/Downloads/projekty/openbar/validation/private/vbt/sessions/2026-10-03/session-record.json --cli target/debug/openbar-cli.exe --output validation/private/plate-scale-study-2026-10-06/frozen-inputs.json
+python research/bar-path-measurement/plate_scale_study.py score --bundle validation/private/plate-scale-study-2026-10-06/frozen-inputs.json --output validation/private/plate-scale-study-2026-10-06/report-a.json
+```
+
+The output parent must exist; existing outputs are refused. Freeze verifies original media hashes,
+confirmed inputs, display geometry, source PTS, sidecar provenance and canonical analyses through
+the Rust `render` consumer. It records input/source/plan hashes before any estimator scoring.
+`score` replays the validated frozen evidence without a decoder, tracker or GPU run. Comparing two
+reports establishes frozen-input CPU reproducibility; it says nothing about GPU repeatability.
+Private outputs remain under git-ignored `validation/private`. Canonical calibration stays unchanged.
+
 ## Verification
 
 ```bash

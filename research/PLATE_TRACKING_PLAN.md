@@ -690,7 +690,17 @@ dependency, larger mobile binaries, licence record per `docs/architecture/ARCHIT
 policy") and a clean-room Rust re-implementation from the published algorithm (CSRT: Lukežič et al., 2017),
 with an ADR. A neural-network model would cross into production as ONNX (ADR-0001).
 
+## Plate-scale diagnostic decision (#88, 2026-10-07)
+
+**REJECT the tested median-radius / empirical p10–p90 band configuration.** The
+[frozen eight-reference development study](../docs/analysis/PLATE_SCALE_STUDY_RESULTS.md)
+had full eligible support but increased mean absolute relative scale error from 1.886% to 1.953%.
+Five of eight improved; only three bands contained the full stick click-precision interval.
+Retain `PlateDiameterCalibration@1`. Frame-to-frame size spread is not calibrated physical-scale
+or velocity uncertainty. No production tracker/filter or M0 evidence gate is selected by this result.
+
 ## 7. Command cheat sheet
+
 
 ```bash
 # OpenCV venv
