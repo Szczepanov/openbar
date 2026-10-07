@@ -177,6 +177,12 @@ class PlateScaleStudyTests(unittest.TestCase):
         modified[5]['timestamps_s'][4] += .001
         with self.assertRaises(ValueError):
             study.bind(*modified)
+        # Decoder trims against source PTS, before prediction serialization rounds to 6 decimals.
+        modified = copy.deepcopy(args)
+        modified[5]['timestamps_s'][-1] = .9999997
+        modified[1]['implementation']['config']['end_s'] = .9999997
+        modified[2]['implementation']['config']['end_s'] = .9999997
+        study.bind(*modified)
 
     def test_frozen_report_determinism_preservation_and_failed_case_set(self):
         rows, geometry = observations()

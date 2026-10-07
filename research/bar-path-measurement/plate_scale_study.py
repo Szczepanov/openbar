@@ -193,7 +193,9 @@ def bind(item, prediction, geometry, analysis, confirmed_seed, probed, click, pr
             'seed PTS mismatch')
     end = implementation['config']['end_s']
     require(implementation['config']['seed_timestamp_s'] == seed['timestamp_s'], 'producer seed mismatch')
-    expected_times = [t for t in times if seed['timestamp_s'] <= t <= end]
+    # Trim source PTS first, then match the producer's six-decimal serialization.
+    expected_times = [times[index] for index in range(seed['frame_index'], len(times))
+                      if probed['timestamps_s'][index] <= end]
     require([r['timestamp_s'] for r in prediction['samples']] == expected_times, 'prediction PTS mismatch')
     require(len(analysis['raw_observations']) == len(expected_times), 'canonical sample count mismatch')
     for predicted, raw in zip(prediction['samples'], analysis['raw_observations']):
