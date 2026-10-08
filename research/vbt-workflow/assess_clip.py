@@ -41,6 +41,19 @@ def validate(cli: Path, analysis: Path, video: Path | None, seed: Path | None = 
     return check("unknown", "source_probe_unavailable" if video else "validator_unavailable")
 
 
+def recorded_repo_path(value: object) -> Path:
+    """Recognize only the canonical repository-relative path spelling emitted by workflow-v3."""
+    if not isinstance(value, str) or not value or "\0" in value:
+        raise ValueError("recorded input path must be text")
+    relative = Path(value)
+    if relative.is_absolute():
+        raise ValueError("recorded input path must be repository-relative")
+    resolved = workflow.safe_resolve(ROOT / relative)
+    if not workflow.is_within(resolved, ROOT) or workflow.display_path(resolved) != value:
+        raise ValueError("recorded input path must be canonical and stay inside the repository")
+    return resolved
+
+
 def assess(run_path: Path, fixture_id: str, cli: Path,
            validator: Callable[..., dict] | None = None) -> dict:
     validator = validator or validate
@@ -48,6 +61,7 @@ def assess(run_path: Path, fixture_id: str, cli: Path,
         raise workflow.WorkflowError("invalid fixture id")
     sources: dict[str, dict] = {}
     paths: dict[str, Path] = {}
+    recorded_inputs: dict[str, Path] = {}
 
     def source(name: str, path: Path) -> str | None:
         path = path.resolve()
@@ -87,15 +101,12 @@ def assess(run_path: Path, fixture_id: str, cli: Path,
                 require_digest(item["sha256"])
             for name in ("video", "seed"):
                 require_digest(record["inputs"][name]["sha256"])
-                if (not isinstance(record["inputs"][name]["path"], str)
-                        or not record["inputs"][name]["path"] or "\0" in record["inputs"][name]["path"]):
-                    raise ValueError("input path must be text")
+                recorded_inputs[name] = recorded_repo_path(record["inputs"][name]["path"])
             require_digest(record["inputs"]["manifest_entry"]["sha256"])
-            if (not isinstance(record["inputs"]["manifest"]["path"], str)
-                    or not record["inputs"]["manifest"]["path"] or "\0" in record["inputs"]["manifest"]["path"]):
-                raise ValueError("manifest path must be text")
+            recorded_inputs["manifest"] = recorded_repo_path(record["inputs"]["manifest"]["path"])
         except (KeyError, TypeError, ValueError, workflow.schema_check.DocumentError):
             record = None
+            recorded_inputs.clear()
             processing = check("unknown", "run_record_invalid")
             checks = {name: check("unknown", "run_record_invalid") for name in checks}
             checks["run_binding"] = check("invalid", "run_record_invalid")
@@ -114,11 +125,11 @@ def assess(run_path: Path, fixture_id: str, cli: Path,
         binding_reasons = []
         binding_missing = False
         for name in ("video", "seed"):
-            actual = source(name, ROOT / record["inputs"][name]["path"])
+            actual = source(name, recorded_inputs[name])
             binding_missing |= actual is None
             if actual is not None and actual != record["inputs"][name]["sha256"].lower():
                 binding_reasons.append("source_hash_mismatch")
-        manifest = ROOT / record["inputs"]["manifest"]["path"]
+        manifest = recorded_inputs["manifest"]
         source("manifest", manifest)
         binding_missing |= sources["manifest"]["sha256"] is None
         if not binding_missing:
