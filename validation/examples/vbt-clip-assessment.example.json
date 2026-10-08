@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "implementation": "openbar-vbt-clip-assessment",
+  "implementation_version": 1,
+  "fixture_id": "vbt-example",
+  "sources": {
+    "run_record": {"path": "target/example.run-record.json", "sha256": null},
+    "validator": {"path": "target/debug/openbar-cli", "sha256": null}
+  },
+  "processing": {"status": "incomplete", "reasons": ["run_record_missing"]},
+  "mechanical": {
+    "status": "unknown",
+    "checks": {
+      "run_binding": {"status": "unknown", "reasons": ["run_record_missing"]},
+      "source_binding": {"status": "unknown", "reasons": ["run_record_missing"]},
+      "canonical_analysis": {"status": "unknown", "reasons": ["run_record_missing"]},
+      "decoded_pts": {"status": "unknown", "reasons": ["run_record_missing"]}
+    }
+  },
+  "experiment_suitability": {"status": "unknown", "reasons": ["experiment_criteria_not_predeclared", "recording_support_not_established"]},
+  "accuracy": {"status": "not_established", "reasons": ["independent_accuracy_evidence_missing"]}
+}

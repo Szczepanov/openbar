@@ -10,6 +10,7 @@ mod render;
 mod sha256;
 mod tracker_experiment;
 mod tracker_run;
+mod validate_analysis;
 
 use cli_error::{CliError, CliResult};
 
@@ -18,6 +19,7 @@ Usage: openbar-cli <command> [options]\n\
 \n\
 Commands:\n\
   analyze             Decode, track, calibrate, filter and derive canonical analysis JSON\n\
+  validate-analysis   Validate canonical semantics and optional source PTS\n\
   benchmark           Run the common benchmark harness\n\
   render              Render deterministic diagnostic SVG from canonical analysis\n\
   tracker-run         Decode a fixture and emit tracker prediction artifacts\n\
@@ -56,6 +58,7 @@ fn dispatch() -> CliResult<()> {
         Some("analyze") => analyze::run_cli(),
         Some("benchmark") => benchmark::run_cli(),
         Some("render") => render::run_cli(),
+        Some("validate-analysis") => validate_analysis::run_cli(),
         None | Some("--help") | Some("-h") => {
             println!("{USAGE}");
             Ok(())

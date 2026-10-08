@@ -241,21 +241,12 @@ fn validate_and_adapt(
         }
         previous_timestamp_s = Some(sample.timestamp_s);
 
-        let matched_frame = decoded_timeline
-            .iter()
-            .min_by(|left, right| {
-                (left.timestamp_s - sample.timestamp_s)
-                    .abs()
-                    .total_cmp(&(right.timestamp_s - sample.timestamp_s).abs())
-            })
-            .expect("decoded timeline was checked non-empty");
-        let gap_s = (matched_frame.timestamp_s - sample.timestamp_s).abs();
-        if gap_s > timestamp_tolerance_s {
-            return Err(CliError::invalid_input(format!(
-                "external observation {index} timestamp_s {} has no decoded frame within {timestamp_tolerance_s} s (nearest is {gap_s:.6} s away)",
-                sample.timestamp_s
-            )));
-        }
+        let matched_frame = match_timeline_frame(
+            decoded_timeline,
+            sample.timestamp_s,
+            timestamp_tolerance_s,
+            index,
+        )?;
         match previous_frame_index {
             Some(previous) if matched_frame.frame_index <= previous => {
                 return Err(CliError::invalid_input(format!(
@@ -392,6 +383,29 @@ fn parameter_value(value: serde_json::Value) -> CliResult<ParameterValue> {
                 ))
             }),
     }
+}
+
+pub(crate) fn match_timeline_frame(
+    timeline: &[DecodedTimelineFrame],
+    timestamp_s: f64,
+    tolerance_s: f64,
+    index: usize,
+) -> CliResult<&DecodedTimelineFrame> {
+    let frame = timeline
+        .iter()
+        .min_by(|left, right| {
+            (left.timestamp_s - timestamp_s)
+                .abs()
+                .total_cmp(&(right.timestamp_s - timestamp_s).abs())
+        })
+        .ok_or_else(|| CliError::invalid_input("decoded timeline is empty"))?;
+    let gap_s = (frame.timestamp_s - timestamp_s).abs();
+    if gap_s > tolerance_s {
+        return Err(CliError::invalid_input(format!(
+            "external observation {index} timestamp_s {timestamp_s} has no decoded frame within {tolerance_s} s (nearest is {gap_s:.6} s away)"
+        )));
+    }
+    Ok(frame)
 }
 
 fn is_valid_identifier(value: &str) -> bool {

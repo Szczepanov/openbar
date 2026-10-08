@@ -4,6 +4,21 @@ Status: proposed (owner-requested, 2026-10-02)
 Related: #78, #79, #80, #57, #58, #59, #77; Szczepanov/adaptive-training-recommender#981, #982
 Governing: ADR-0001, ADR-0003, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009
 
+## Current evidence qualification (#110 / #111)
+
+The earlier tracker-accuracy conclusion in section 2 is a historical workflow hypothesis,
+not an accuracy verdict or authorization to replace WL Analysis. Controlled-motion and CSRT
+scale-ablation evidence demonstrates that high confidence/coverage can coexist with wrong
+tracking. Study harness delivery under #53/#58/#59 does not establish per-clip accuracy.
+
+#111 adds the separate [per-clip assessment contract](../validation/VBT_CLIP_ASSESSMENT.md):
+processing completion, mechanical validity, experimental suitability and independently validated
+accuracy are distinct. Its first slice only checks retained run binding and existing canonical
+invariants; suitability remains unknown unless mechanically rejected, and accuracy remains
+not established. #112 evaluates retained confirmed development inputs; its reviewed evidence and
+a recorded proceed/stop decision gate #113. #114 depends on #111 alone; #79 remains parallel.
+Human confirmation and the existing M0 scope fence remain in force.
+
 ## 1. Context
 
 The owner wants to use OpenBar for velocity-based training (VBT): per-rep velocities for their own

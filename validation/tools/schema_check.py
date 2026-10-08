@@ -54,6 +54,7 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "tracker-prediction-v1.schema.json": ("validation/fixtures/public/predictions/*.prediction-v1.json",),
     "benchmark-suite-v1.schema.json": ("validation/benchmarks/*.benchmark-v1.json",),
     "analysis-v1.schema.json": ("crates/openbar-core/tests/fixtures/analysis-v1.golden.json",),
+    "vbt-clip-assessment-v1.schema.json": ("validation/examples/vbt-clip-assessment.example.json",),
     "recording-support-v1.schema.json": ("validation/examples/recording-support.example.json",),
     "recording-envelope-study-v1.schema.json": ("validation/recording-envelope/m0-study-v1.json",),
 }

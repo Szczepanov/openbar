@@ -6,6 +6,18 @@ in `openbar-core`.
 
 ## Commands
 
+### `validate-analysis`
+
+`openbar-cli validate-analysis --analysis <analysis.json> [--video <source-video>] [--seed <seed.json>]` is a
+read-only validation gate. It uses the authoritative `Analysis::from_json` reader and can compare
+a retained seed through the canonical seed type (including confidence precision); with a
+video it additionally probes source identity/geometry and checks the seed and all raw samples
+against PTS with the existing external-ingestion 0.5 ms tolerance and advancing frame identity.
+It produces no measurement output and does not rerun tracking or decode pixels. Exit 0 means
+these mechanical checks passed, not that accuracy or experiment eligibility is established.
+See [VBT_CLIP_ASSESSMENT.md](VBT_CLIP_ASSESSMENT.md) for the separate research consumer,
+evidence binding, reason codes and unknown states.
+
 ### `analyze`
 
 `analyze` executes:
