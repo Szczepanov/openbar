@@ -18,7 +18,7 @@ class EvaluationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.sessions = self.root / 'validation/private/vbt/sessions'
         self.directory = self.sessions / 'retained'
         self.directory.mkdir(parents=True)
