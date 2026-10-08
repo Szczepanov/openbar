@@ -4,7 +4,7 @@ Status: proposed (owner-requested, 2026-10-02)
 Related: #78, #79, #80, #57, #58, #59, #77; Szczepanov/adaptive-training-recommender#981, #982
 Governing: ADR-0001, ADR-0003, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009
 
-## Current evidence qualification (#110 / #111)
+## Current evidence qualification (#110 / #111 / #112)
 
 The earlier tracker-accuracy conclusion in section 2 is a historical workflow hypothesis,
 not an accuracy verdict or authorization to replace WL Analysis. Controlled-motion and CSRT
@@ -15,7 +15,9 @@ tracking. Study harness delivery under #53/#58/#59 does not establish per-clip a
 processing completion, mechanical validity, experimental suitability and independently validated
 accuracy are distinct. Its first slice only checks retained run binding and existing canonical
 invariants; suitability remains unknown unless mechanically rejected, and accuracy remains
-not established. #112 evaluates retained confirmed development inputs; its reviewed evidence and
+not established. [#112's retained-input batch](../analysis/VBT_SUGGESTION_EVALUATION_RESULTS.md)
+compares eight owner-confirmed clips under frozen rules; identity/rejection labels are not derivable
+and no retained mechanical assessments establish eligibility. Its reviewed evidence and
 a recorded proceed/stop decision gate #113. #114 depends on #111 alone; #79 remains parallel.
 Human confirmation and the existing M0 scope fence remain in force.
 
