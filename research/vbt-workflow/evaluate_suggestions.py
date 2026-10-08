@@ -39,7 +39,6 @@ def statistics(values: list[float]) -> dict:
 def personal_path(root: Path, recorded: str) -> Path:
     if not isinstance(recorded, str):
         raise ValueError('invalid recorded path')
-    root = root.resolve()
     path = (root / recorded).resolve()
     if not path.is_relative_to(root / 'validation/private/vbt') or path.relative_to(root).as_posix() != recorded:
         raise ValueError('non-canonical personal input path')
@@ -73,9 +72,6 @@ def suggestion_provenance(proposal: dict, kind: str) -> tuple[dict, bool]:
 
 
 def evaluate_session(root: Path, directory: Path, assessments: Path | None = None) -> dict:
-    root = root.resolve()
-    directory = directory.resolve()
-    assessments = assessments.resolve() if assessments is not None else None
     observed: dict[Path, str] = {}
     sources: dict[str, str] = {}
 
@@ -93,7 +89,7 @@ def evaluate_session(root: Path, directory: Path, assessments: Path | None = Non
               'confirmation_provenance': 'retained #95 session CSV, bound to completed session record',
               'inventory_status': 'unknown', 'exclusions': [], 'clips': []}
     try:
-        if not directory.is_relative_to(root / 'validation/private/vbt'):
+        if not directory.resolve().is_relative_to(root / 'validation/private/vbt'):
             raise ValueError('session outside personal inputs')
         state = document(directory / 'session.json', 'session_state')
         result['page_id'] = state['page_id']
@@ -317,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         if not directory.is_relative_to(root / 'validation/private/vbt') or not directory.is_dir():
             raise ValueError('--sessions-root must be a retained personal VBT directory')
         output = args.output.resolve()
-        if not output.is_relative_to(workflow.ROOT.resolve() / 'target'):
+        if not output.is_relative_to(workflow.ROOT / 'target'):
             raise ValueError('--output must be under this checkout target/ (private evidence)')
         sessions = [evaluate_session(root, path.parent, args.assessments_dir) for path in sorted(directory.glob('*/session.json'))]
         if not sessions:
