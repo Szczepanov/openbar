@@ -517,6 +517,8 @@ Tests: `research/vbt-workflow/tests/test_vbt_session.py`, `test_session_review_f
 run with fakes; `OPENBAR_VBT_E2E=1` adds `test_vbt_session_e2e.py`, which runs ingest, a CSV written by
 the test, `run` and a byte-identical `--force` re-run on the public synthetic fixture.
 
+Research-only machine initialization (#113) is specified in [VBT_RESEARCH_INITIALIZATION.md](../validation/VBT_RESEARCH_INITIALIZATION.md), bounded by the [proceed decision](../analysis/VBT_INITIALIZATION_DECISION.md). `vbt_session.py init-research --session <id> --profile <profile.json>` is a separate, opt-in command. It turns an ingested session's seed-frame suggestions into `machine-init.json` for clips whose suggestions pass the reason checks, and sends every other clip to this page. The record is never human-confirmed, is research-only and is not consumer-eligible. Consuming it in `run` is a later slice. The human-confirmation path above is unchanged.
+
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
 
 - **One analysis per lift.** Import exactly one `analysis-v1` per lift into the recommender (3a). An
