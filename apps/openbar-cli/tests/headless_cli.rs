@@ -87,6 +87,61 @@ fn assert_exit(output: &Output, code: i32, label: &str) {
 }
 
 #[test]
+fn validation_process_checks_canonical_semantics_source_and_all_frame_identities() {
+    let golden = repo_path("crates/openbar-core/tests/fixtures/analysis-v1.golden.json");
+    let valid = Command::new(binary())
+        .args(["validate-analysis", "--analysis"])
+        .arg(&golden)
+        .output()
+        .unwrap();
+    assert!(valid.status.success());
+    let invalid = scratch("invalid-assessment-analysis.json");
+    let mut document: Value = serde_json::from_slice(&fs::read(&golden).unwrap()).unwrap();
+    document["schema_version"] = Value::from(2);
+    fs::write(&invalid, serde_json::to_vec(&document).unwrap()).unwrap();
+    let rejected = Command::new(binary())
+        .args(["validate-analysis", "--analysis"])
+        .arg(&invalid)
+        .output()
+        .unwrap();
+    assert_exit(&rejected, 2, "invalid canonical analysis");
+    fs::remove_file(&invalid).unwrap();
+    if !ffmpeg_available() {
+        return;
+    }
+    let analysis = scratch("assessment-analysis.json");
+    let _ = fs::remove_file(&analysis);
+    assert!(analyze_fixture(&analysis)
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let before = fs::read(&analysis).unwrap();
+    let video = repo_path("validation/fixtures/public/synthetic-clean-side-12.mp4");
+    let verify = || {
+        Command::new(binary())
+            .args(["validate-analysis", "--analysis"])
+            .arg(&analysis)
+            .arg("--video")
+            .arg(&video)
+            .output()
+            .unwrap()
+    };
+    assert!(verify().status.success());
+    assert_eq!(before, fs::read(&analysis).unwrap());
+    let mut document: Value = serde_json::from_slice(&before).unwrap();
+    let samples = document["raw_observations"].as_array_mut().unwrap();
+    let last = samples.last_mut().unwrap();
+    last["frame_index"] = Value::from(last["frame_index"].as_u64().unwrap() + 1);
+    fs::write(&analysis, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_exit(&verify(), 2, "inconsistent source frame identity");
+    document["identity"]["source_sha256"] = Value::from("a".repeat(64));
+    fs::write(&analysis, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_exit(&verify(), 2, "source hash does not match");
+    fs::remove_file(analysis).unwrap();
+}
+
+#[test]
 fn analyze_process_is_deterministic_round_trips_and_refuses_overwrite() {
     if !ffmpeg_available() {
         return;

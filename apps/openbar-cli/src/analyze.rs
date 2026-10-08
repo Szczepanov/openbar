@@ -46,7 +46,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MAX_FRAME_MEMORY_MIB: u64 = 2048;
-const SEED_TIMESTAMP_TOLERANCE_S: f64 = 0.0005;
+pub(crate) const SEED_TIMESTAMP_TOLERANCE_S: f64 = 0.0005;
 
 const USAGE: &str = "Usage: openbar-cli analyze (--video <path> | --manifest <path> --fixture <id> [--video <override>]) --seed <path>\n\
      \x20      --plate-diameter-m <m> (--tracker <template|contrast> | --observations <tracker-prediction-v1.json>)\n\

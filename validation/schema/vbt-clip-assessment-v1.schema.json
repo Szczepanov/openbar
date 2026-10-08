@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.dev/schema/vbt-clip-assessment-v1.schema.json",
+  "title": "Research VBT clip assessment v1 (separate from Analysis)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "implementation", "implementation_version", "fixture_id", "sources", "processing", "mechanical", "experiment_suitability", "accuracy"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "implementation": {"const": "openbar-vbt-clip-assessment"},
+    "implementation_version": {"const": 1},
+    "fixture_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "sources": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_record", "validator"],
+      "properties": {
+        "run_record": {"$ref": "#/$defs/source"}, "validator": {"$ref": "#/$defs/source"},
+        "video": {"$ref": "#/$defs/source"}, "seed": {"$ref": "#/$defs/source"},
+        "manifest": {"$ref": "#/$defs/source"}, "prediction": {"$ref": "#/$defs/source"},
+        "analysis": {"$ref": "#/$defs/source"}, "geometry": {"$ref": "#/$defs/source"}
+      }
+    },
+    "processing": {
+      "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"enum": ["complete", "incomplete", "unknown"]}}}]
+    },
+    "mechanical": {
+      "type": "object", "additionalProperties": false, "required": ["status", "checks"],
+      "properties": {
+        "status": {"enum": ["valid", "invalid", "unknown"]},
+        "checks": {
+          "type": "object", "additionalProperties": false,
+          "required": ["run_binding", "source_binding", "canonical_analysis", "decoded_pts"],
+          "properties": {
+            "run_binding": {"$ref": "#/$defs/mechanical_check"}, "source_binding": {"$ref": "#/$defs/mechanical_check"},
+            "canonical_analysis": {"$ref": "#/$defs/mechanical_check"}, "decoded_pts": {"$ref": "#/$defs/mechanical_check"}
+          }
+        }
+      }
+    },
+    "experiment_suitability": {
+      "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"enum": ["unknown", "rejected"]}}}]
+    },
+    "accuracy": {
+      "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"const": "not_established"}}}]
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{64}$"}]}
+      }
+    },
+    "conclusion": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reasons"],
+      "properties": {
+        "status": {"type": "string"},
+        "reasons": {"type": "array", "uniqueItems": true, "items": {"enum": [
+          "run_record_missing", "run_record_invalid", "run_output_missing", "run_output_hash_mismatch",
+          "source_hash_mismatch", "manifest_entry_hash_mismatch", "source_binding_invalid", "source_missing",
+          "analysis_run_binding_mismatch", "analysis_seed_mismatch", "source_binding_not_verified",
+          "canonical_analysis_not_verified", "canonical_analysis_invalid", "validator_unavailable",
+          "source_pts_invalid", "source_unsupported", "source_probe_unavailable", "evidence_changed_during_assessment",
+          "mechanical_invalid", "experiment_criteria_not_predeclared", "recording_support_not_established",
+          "independent_accuracy_evidence_missing"
+        ]}}
+      }
+    },
+    "mechanical_check": {
+      "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"enum": ["valid", "invalid", "unknown"]}}}]
+    }
+  }
+}

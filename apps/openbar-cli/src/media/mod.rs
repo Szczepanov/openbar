@@ -147,6 +147,11 @@ impl ProbedVideo {
         &self.source_sha256
     }
 
+    /// The authoritative, validated PTS timeline; no pixel decode or FPS reconstruction.
+    pub fn timestamps_s(&self) -> &[f64] {
+        &self.timestamps_s
+    }
+
     pub fn stream(&self) -> StreamProvenance {
         let (display_width_px, display_height_px) = self.probe.display_dimensions();
         stream_provenance(&self.probe, display_width_px, display_height_px)
