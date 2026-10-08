@@ -29,6 +29,7 @@ from typing import Callable
 
 import analyze_lift
 import session_ingest
+import session_machine_init
 import session_run
 from vbt_process import Runner, WorkflowError
 
@@ -127,6 +128,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="rebuild the page of a session that was already run; its session record is removed "
                              "first, so that run is marked incomplete until `run --force`")
 
+    init = sub.add_parser("init-research", help="research only: machine-initialize clips from a validated profile; "
+                                                "never human-confirmed")
+    add_session(init)
+    init.add_argument("--profile", type=Path, required=True,
+                      help="init profile JSON (openbar-research-vbt-init-profile v1: exercise, plate and "
+                           "stick lengths)")
+    init.add_argument("--force", action="store_true",
+                      help="replace an existing machine-init.json whose content differs")
+
     run = sub.add_parser("run", help="validate the session CSV, then seed, track, analyze and report")
     add_session(run)
     source = run.add_mutually_exclusive_group(required=True)
@@ -177,6 +187,8 @@ def main(argv: list[str] | None = None, runner: Runner | None = None,
         if args.command == "ingest":
             analyze_lift.require_tools(runner, ("ffmpeg", "ffprobe"))
             return session_ingest.command_ingest(args, suggester)
+        if args.command == "init-research":
+            return session_machine_init.command_init_research(args)
         if args.csv is not None:
             try:
                 data = args.csv.read_bytes()
