@@ -21,7 +21,13 @@
       }
     },
     "processing": {
-      "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"enum": ["complete", "incomplete", "unknown"]}}}]
+      "allOf": [
+        {"$ref": "#/$defs/conclusion"},
+        {"oneOf": [
+          {"properties": {"status": {"const": "complete"}, "reasons": {"const": []}}},
+          {"properties": {"status": {"enum": ["incomplete", "unknown"]}, "reasons": {"minItems": 1}}}
+        ]}
+      ]
     },
     "mechanical": {
       "type": "object", "additionalProperties": false, "required": ["status", "checks"],
@@ -35,7 +41,17 @@
             "canonical_analysis": {"$ref": "#/$defs/mechanical_check"}, "decoded_pts": {"$ref": "#/$defs/mechanical_check"}
           }
         }
-      }
+      },
+      "allOf": [
+        {"oneOf": [
+          {"properties": {"status": {"const": "valid"}, "checks": {"$ref": "#/$defs/all_checks_valid"}}},
+          {"properties": {"status": {"const": "invalid"}, "checks": {"$ref": "#/$defs/any_check_invalid"}}},
+          {"properties": {"status": {"const": "unknown"}, "checks": {"allOf": [
+            {"not": {"$ref": "#/$defs/any_check_invalid"}},
+            {"$ref": "#/$defs/any_check_unknown"}
+          ]}}}
+        ]}
+      ]
     },
     "experiment_suitability": {
       "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"enum": ["unknown", "rejected"]}}}]
@@ -68,7 +84,37 @@
       }
     },
     "mechanical_check": {
-      "allOf": [{"$ref": "#/$defs/conclusion"}, {"properties": {"status": {"enum": ["valid", "invalid", "unknown"]}}}]
+      "allOf": [
+        {"$ref": "#/$defs/conclusion"},
+        {"oneOf": [
+          {"properties": {"status": {"const": "valid"}, "reasons": {"const": []}}},
+          {"properties": {"status": {"enum": ["invalid", "unknown"]}, "reasons": {"minItems": 1}}}
+        ]}
+      ]
+    },
+    "all_checks_valid": {
+      "properties": {
+        "run_binding": {"properties": {"status": {"const": "valid"}}},
+        "source_binding": {"properties": {"status": {"const": "valid"}}},
+        "canonical_analysis": {"properties": {"status": {"const": "valid"}}},
+        "decoded_pts": {"properties": {"status": {"const": "valid"}}}
+      }
+    },
+    "any_check_invalid": {
+      "anyOf": [
+        {"properties": {"run_binding": {"properties": {"status": {"const": "invalid"}}}}},
+        {"properties": {"source_binding": {"properties": {"status": {"const": "invalid"}}}}},
+        {"properties": {"canonical_analysis": {"properties": {"status": {"const": "invalid"}}}}},
+        {"properties": {"decoded_pts": {"properties": {"status": {"const": "invalid"}}}}}
+      ]
+    },
+    "any_check_unknown": {
+      "anyOf": [
+        {"properties": {"run_binding": {"properties": {"status": {"const": "unknown"}}}}},
+        {"properties": {"source_binding": {"properties": {"status": {"const": "unknown"}}}}},
+        {"properties": {"canonical_analysis": {"properties": {"status": {"const": "unknown"}}}}},
+        {"properties": {"decoded_pts": {"properties": {"status": {"const": "unknown"}}}}}
+      ]
     }
   }
 }
