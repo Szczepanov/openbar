@@ -17,8 +17,9 @@ accuracy are distinct. Its first slice only checks retained run binding and exis
 invariants; suitability remains unknown unless mechanically rejected, and accuracy remains
 not established. [#112's retained-input batch](../analysis/VBT_SUGGESTION_EVALUATION_RESULTS.md)
 compares eight owner-confirmed clips under frozen rules; identity/rejection labels are not derivable
-and no retained mechanical assessments establish eligibility. Its reviewed evidence and
-a recorded proceed/stop decision gate #113. #114 depends on #111 alone; #79 remains parallel.
+and no retained mechanical assessments establish eligibility. The owner's
+[recorded decision](../analysis/VBT_INITIALIZATION_DECISION.md) is to proceed with #113 within its
+bounded research scope. #114 depends on #111 alone; #79 remains parallel.
 Human confirmation and the existing M0 scope fence remain in force.
 
 ## 1. Context
