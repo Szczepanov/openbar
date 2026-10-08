@@ -15,10 +15,12 @@ python research/vbt-workflow/assess_clip.py --fixture-id vbt-<hash-prefix> `
 ```
 
 Use the run record for the selected tracker. The explicit fixture id allows an incomplete
-assessment even when its run record is absent. Recorded input paths resolve from the repository
-root; recorded outputs must be sibling filenames. The output must be a new file; existing
-files are refused. Exit 0 means an assessment was written, including rejected/unknown results.
-It does not mean the clip passed. No automatic session integration or consumer writes occur.
+assessment even when its run record is absent. Recorded input paths must use the exact canonical,
+repository-relative spelling emitted by workflow-v3; absolute, escaping or normalized-equivalent
+spellings are not recognized as that run-record contract. Recorded outputs must be sibling
+filenames. The output must be a new file; existing files are refused. Exit 0 means an assessment
+was written, including rejected/unknown results. It does not mean the clip passed. No automatic
+session integration or consumer writes occur.
 
 ## Four independent conclusions
 
@@ -29,6 +31,12 @@ It does not mean the clip passed. No automatic session integration or consumer w
 | `experiment_suitability` | `unknown`, `rejected` | Mechanical invalidity rejects the clip. Otherwise suitability stays unknown: this first slice has no predeclared experiment criteria or support-evidence ingestion. |
 | `accuracy` | `not_established` | This first slice accepts no accuracy verdict. No reviewed independent physical evidence is supplied. |
 
+The wire schema enforces the mechanical aggregate above rather than trusting a writer-supplied
+summary: `valid` requires every mechanical check to be valid, `invalid` requires at least one
+invalid check, and `unknown` requires no invalid check plus at least one unknown check. Successful
+processing/check states carry no failure reason; incomplete, invalid or unknown states carry an
+explicit reason.
+
 The tool intentionally has no eligibility or accuracy promotion switch. #112 must supply
 predeclared experiment-specific criteria and review their evidence before any later version can
 emit suitability. A later accuracy verdict requires a cited, reviewed, independently obtained
@@ -38,8 +46,9 @@ Unknown support remains unknown. A mechanically valid clip may track the wrong o
 
 ## Mechanical checks and binding
 
-- `run_binding`: known record/workflow versions, expected fixture and tracker, required output
-  set, and hashes of the exact retained output bytes (including circle geometry when declared).
+- `run_binding`: known record/workflow versions, expected fixture and tracker, canonical
+  repository-relative input paths, required output set, and hashes of the exact retained output
+  bytes (including circle geometry when declared).
 - `source_binding`: video and seed hashes, the manifest entry's canonical JSON hash, fixture
   binding, the canonical source hash, retained prediction hash in tracker provenance, and
   canonical manual seed matching the supplied seed through the Rust CLI's `--seed` reader,
@@ -69,7 +78,7 @@ validator/path arguments produces identical JSON. No clock time or random id is 
 | Reason codes | Resolution |
 |---|---|
 | `run_record_missing`, `run_output_missing`, `source_missing` | Restore the retained run/output/source inputs, or complete a human-confirmed run. Missing evidence never passes. |
-| `run_record_invalid` | Supply a recognized, correctly bound workflow-v3/run-record-v2. Other formats and future versions require explicit ingestion support. |
+| `run_record_invalid` | Supply a recognized, correctly bound workflow-v3/run-record-v2, including its canonical repository-relative input-path spellings. Other formats and future versions require explicit ingestion support. |
 | `run_output_hash_mismatch`, `source_hash_mismatch`, `manifest_entry_hash_mismatch` | Recover the original exact files/entry or deliberately rerun from the correct inputs; never relabel a changed input as unchanged. |
 | `source_binding_invalid`, `analysis_run_binding_mismatch`, `analysis_seed_mismatch` | Supply the fixture, seed, manifest, prediction and analysis from the same confirmed run. |
 | `canonical_analysis_invalid` | Fix the producing pipeline/input against the authoritative canonical contract and regenerate; do not patch retained raw data to pass. |
@@ -87,6 +96,7 @@ dependency, evidence registry, canonical Analysis field, production default, or 
 decision. The #112 evaluation, recorded proceed/stop decision before #113, #114 local handoff,
 and #79 agreement decision remain distinct work.
 
-Tests: `test_assess_clip.py`, `validate_analysis::tests`, and the headless CLI validation process
-test cover complete/incomplete/invalid/unsupported/unknown cases, binding, PTS, no promotion,
-unchanged source bytes, overwrite refusal, and determinism.
+Tests: `test_assess_clip.py`, `test_assess_clip_contract.py`, `validate_analysis::tests`, and the
+headless CLI validation process test cover complete/incomplete/invalid/unsupported/unknown cases,
+binding, PTS, no promotion, contract-state consistency, unchanged source bytes, overwrite refusal,
+and determinism.
