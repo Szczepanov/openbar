@@ -445,6 +445,26 @@ def session_record(plan_set: dict[str, Any], configuration: dict[str, Any], reco
 
 def command_run(args: argparse.Namespace, runner: Runner, csv_bytes: bytes,
                 cropper: session_report.Cropper | None = None) -> int:
+    if getattr(args, "resume", False):
+        import session_handoff
+        directory = session_ingest.session_dir(args.sessions_root, args.session)
+        if (directory / session_ingest.RECORD_NAME).exists():
+            completed = session_handoff.completed_session(directory)
+            config = completed["record"]["configuration"]
+            expected = {"plate_diameter_m": analyze_lift.parse_plate_diameter(args.plate_diameter_m),
+                        "stick_length_m": positive_number(args.stick_length_m, "--stick-length-m"),
+                        "tracker_policy": args.tracker_policy, "preset": args.preset,
+                        "analyze_options": analyze_lift.analysis_options(args),
+                        "gpu_python": None if args.gpu_python is None else analyze_lift.resolve_gpu_python(args.gpu_python),
+                        "openbar_cli": None if args.openbar_cli is None else rel(analyze_lift.resolve_openbar_cli(args.openbar_cli))}
+            if (any(config.get(name) != value for name, value in expected.items())
+                    or csv_bytes != session_handoff.bound_bytes(completed["paths"]["input_csv"], completed["observed"])
+                    or rel(analyze_lift.require_personal_manifest(args.manifest)) != completed["record"]["inputs"]["manifest"]["path"]):
+                raise WorkflowError("resume configuration/CSV differs from completed session; use --force deliberately")
+            session_handoff.unchanged(completed["observed"])
+            print(f"session complete (hash verified): {args.session}\nreport: {rel(completed['paths']['report'])}")
+            return 0
+        args.force = True
     plan_set = prepare(args, runner, csv_bytes)
     write_inputs(plan_set, csv_bytes)
     records = run_clips(plan_set, args, runner)

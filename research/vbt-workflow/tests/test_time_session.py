@@ -98,6 +98,23 @@ class TimeSessionTests(SessionTestCase):
         self.assertIn("already holds videos", stderr)
         self.assertEqual(self.sleeps, 0)
 
+    def test_two_arriving_videos_are_ambiguous(self):
+        def arrive(seconds):
+            self.add_video("one.mp4", b"one")
+            self.add_video("two.mp4", b"two")
+        with self.assertRaisesRegex(session_ingest.WorkflowError, "ambiguous"):
+            time_session.wait_for_video(self.inbox, 5, 1, counting_clock(), arrive)
+
+    def test_equal_size_rewrite_waits_for_stable_bytes(self):
+        polls = []
+        def arrive(seconds):
+            polls.append(seconds)
+            if len(polls) <= 2:
+                self.add_video("one.mp4", b"old" if len(polls) == 1 else b"new")
+        result = time_session.wait_for_video(self.inbox, 10, 1, counting_clock(), arrive)
+        self.assertEqual(result["path"].read_bytes(), b"new")
+        self.assertGreaterEqual(len(polls), 3)
+
     def test_session_must_be_new(self) -> None:
         self.session_dir.mkdir(parents=True)
         (self.session_dir / session_ingest.STATE_NAME).write_text("{}", encoding="utf-8")

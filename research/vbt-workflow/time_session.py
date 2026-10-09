@@ -110,33 +110,27 @@ def parse_utc(text: str | None) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def videos_with_stamps(inbox: Path) -> dict[Path, tuple[int, int]]:
-    found = {}
-    for path in session_ingest.list_inbox(inbox):
-        try:
-            info = path.stat()
-        except OSError:
-            continue
-        found[path] = (info.st_mtime_ns, info.st_size)
-    return found
-
-
 def wait_for_video(inbox: Path, timeout_s: float, poll_s: float, clock: Clock,
                    sleep: Callable[[float], None]) -> dict[str, Any]:
-    """First new video in the inbox, once its size is unchanged across two polls (the transfer finished)."""
+    """One unambiguous video, once its bytes and file metadata match across two polls."""
     deadline = clock() + timeout_s
     first_seen: float | None = None
-    last: tuple[Path, int] | None = None
+    last = None
     while True:
-        videos = videos_with_stamps(inbox)
+        videos = session_ingest.inbox_snapshot(inbox)
+        if len(videos) > 1:
+            raise WorkflowError("ambiguous video arrivals; use batch ingest explicitly: "
+                                + ", ".join(path.name for path in sorted(videos)))
         if videos:
             path = sorted(videos)[0]
             size = videos[path][1]
             first_seen = clock() if first_seen is None else first_seen
-            if size > 0 and last == (path, size):
+            if size > 0 and videos[path][2] is not None and last == (path, videos[path]):
                 return {"path": path, "first_seen": first_seen, "complete": clock(), "bytes": size,
                         "videos": sorted(p.name for p in videos)}
-            last = (path, size)
+            last = (path, videos[path])
+        else:
+            last = None
         if clock() >= deadline:
             raise WorkflowError(f"no video arrived in {inbox} within {timeout_s:g} s")
         sleep(poll_s)
