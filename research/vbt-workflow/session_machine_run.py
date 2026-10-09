@@ -29,6 +29,8 @@ RUN_DIR_NAME = "machine-run"
 RUN_RECORD_NAME = "machine-run-record.json"
 RUN_RECORD_FORMAT = "openbar-research-vbt-machine-run-record"
 RUN_RECORD_VERSION = 1
+IMPLEMENTATION = "session_machine_run"
+IMPLEMENTATION_VERSION = 1
 SEED_SUFFIX = ".machine-origin-seed.json"
 SCALE_REPORT_NAMES = ("scale-reference-v1.json", "SCALE_REFERENCE_REPORT.md")
 
@@ -226,23 +228,15 @@ def planned_outputs(plans: list[dict[str, Any]], paths: dict[str, Path]) -> list
     return outputs
 
 
-def known_clip_outputs(state: dict[str, Any], paths: dict[str, Path]) -> list[Path]:
-    """Every per-clip file name this command writes, for every clip of the session and every tracker."""
-    outputs = []
-    for clip in state["clips"]:
-        fixture_id = clip["fixture_id"]
-        package = paths["packages"] / fixture_id
-        outputs += [package / "metadata.json", package / scale_reference.REFERENCE_CONFIG_NAME,
-                    paths["seeds"] / f"{fixture_id}{SEED_SUFFIX}", paths["scale"] / f"{fixture_id}.scale-reference.csv"]
-        for tracker in sorted(TRACKERS):
-            outputs += analyze_lift.output_paths(paths["analyses"], fixture_id, tracker).values()
-    return outputs
+def stale_outputs(plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
+    """Every existing file under machine-run/ this run will not rewrite (a dropped clip, another tracker).
 
-
-def stale_outputs(state: dict[str, Any], plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
-    """Existing machine-run outputs this run will not rewrite (a clip now rejected, another tracker)."""
+    The command owns the whole folder, so a clip a re-ingest dropped is covered too.
+    """
     planned = set(planned_outputs(plans, paths))
-    return [path for path in known_clip_outputs(state, paths) if path.exists() and path not in planned]
+    if not paths["root"].is_dir():
+        return []
+    return sorted(path for path in paths["root"].rglob("*") if path.is_file() and path not in planned)
 
 
 def prepare(args: argparse.Namespace, runner: Runner) -> dict[str, Any]:
@@ -257,7 +251,7 @@ def prepare(args: argparse.Namespace, runner: Runner) -> dict[str, Any]:
     paths = run_paths(inputs["directory"])
     plans = [plan_clip(clip, init_clip, tracker, paths, profile, inputs["hashes"]) for clip, init_clip in chosen]
     check_media(plans, profile)
-    stale = stale_outputs(inputs["state"], plans, paths)
+    stale = stale_outputs(plans, paths)
     existing = [path for path in planned_outputs(plans, paths) if path.exists()] + stale
     if existing and not args.force:
         raise WorkflowError("machine-run outputs already exist (pass --force to replace them; outputs of clips this "
@@ -277,6 +271,11 @@ def write_inputs(plan_set: dict[str, Any]) -> None:
     for path in plan_set["stale"]:
         path.unlink(missing_ok=True)
         print(f"removed stale output {rel(path)}")
+    if paths["root"].is_dir():
+        for directory in sorted((d for d in paths["root"].rglob("*") if d.is_dir()),
+                                key=lambda d: len(d.parts), reverse=True):
+            if not any(directory.iterdir()):
+                directory.rmdir()
     # Rebuilt from the profile on every run, so a changed profile or a now-rejected clip leaves no entry behind.
     # It is never the personal manifest: a machine run registers nothing there.
     paths["manifest"].unlink(missing_ok=True)
@@ -356,6 +355,8 @@ def run_record(plan_set: dict[str, Any], args: argparse.Namespace, entries: list
     return {
         "format": RUN_RECORD_FORMAT, "format_version": RUN_RECORD_VERSION,
         "origin": smi.ORIGIN, "human_confirmed": False, "research_only": True, "consumer_eligible": False,
+        "implementation": {"name": IMPLEMENTATION, "version": IMPLEMENTATION_VERSION,
+                           "source_sha256": smi.sha256_hex(Path(__file__).read_bytes())},
         "workflow_version": analyze_lift.WORKFLOW_VERSION, "session_id": state["session_id"],
         "page_id": state["page_id"], "inputs": plan_set["hashes"], "profile": plan_set["profile"],
         "configuration": {

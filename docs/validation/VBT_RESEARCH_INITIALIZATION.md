@@ -205,6 +205,8 @@ research/opencv-tracking/.venv/Scripts/python.exe research/vbt-workflow/vbt_sess
 - **Scale clicks** carry the recorded stick values in `repr` form, not the 2-decimal #95 form.
 - **Record** (`openbar-research-vbt-machine-run-record` v1, sorted keys, written last):
   - `origin: machine`, `human_confirmed: false`, `research_only: true`, `consumer_eligible: false`;
+  - an `implementation` block (`name`, `version`, `source_sha256` of the module's bytes);
+    `IMPLEMENTATION_VERSION` must be bumped when the seed, click CSV or record rules change;
   - `inputs` with the SHA-256 of `session.json`, the profile and `machine-init.json`;
   - the profile, the tracker configuration and the per-clip seed, click, analysis and run-record
     hashes, with each clip's `origin: machine`;
@@ -219,13 +221,17 @@ research/opencv-tracking/.venv/Scripts/python.exe research/vbt-workflow/vbt_sess
   check and the input-change guard run last and only prevent the record from being written. Then:
   - The record is deleted first and written last, so a folder without it is incomplete.
   - Existing outputs are refused without `--force`.
-  - `--force` removes this command's outputs for clips that are no longer initialized, and rebuilds
-    the research manifest.
+  - `--force` removes every file under `machine-run/` that this run does not rewrite (this command owns
+    the whole folder, including outputs of clips a re-ingest dropped), prunes the emptied directories,
+    and rebuilds the research manifest.
   - A same-input `--force` rerun is byte-identical once no stale outputs remain (the run that removes
-    stale outputs lists them in `removed_stale_outputs`).
+    stale outputs lists them in `removed_stale_outputs`). If that run is interrupted, the files are already gone and
+    the completing rerun records `removed_stale_outputs: []`; the list is informational, not an audit log.
   - An interrupted run leaves no record, and its `--force` rerun reproduces a clean run.
   - If `session.json`, `machine-init.json` or the profile changes during the run, no record is written.
-  - A re-ingest makes `machine-init.json` stale until `init-research` runs again.
+  - A re-ingest makes `machine-init.json` stale until `init-research` runs again. Re-ingesting does not
+    touch `machine-run/`: an earlier `machine-run-record.json` stays until `run-research --force` and
+    belongs to the `session.json` whose SHA-256 is its `inputs.session_state_sha256`.
 
 ## Limits
 

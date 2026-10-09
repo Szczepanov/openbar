@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import sys
@@ -331,8 +332,11 @@ class ResearchRunTests(MachineRunTestCase):
             "profile": {"profile_id": "lab-profile-1", "exercise": "snatch", "plate_diameter_m": 0.45,
                         "stick_length_m": 1.3},
             "rejected": [], "removed_stale_outputs": []})
-        self.assertEqual(sorted(record), sorted([*HEAD_KEYS, "configuration", "clips", "scale_report",
-                                                 "commands_note", "openbar"]))
+        self.assertEqual(sorted(record), sorted([*HEAD_KEYS, "implementation", "configuration", "clips",
+                                                 "scale_report", "commands_note", "openbar"]))
+        self.assertEqual(record["implementation"], {
+            "name": "session_machine_run", "version": 1,
+            "source_sha256": hashlib.sha256(Path(smr.__file__).read_bytes()).hexdigest()})
         self.assertEqual((record["configuration"]["tracker_policy"], record["configuration"]["preset"]),
                          ("csrt-all-v1", PRESET))
         self.assertEqual([entry["fixture_id"] for entry in record["clips"]], [clip["fixture_id"] for clip in clips])
@@ -440,6 +444,37 @@ class RestartTests(MachineRunTestCase):
         self.assertIn("removed stale output", out)
         self.assertIn("not run, rejected by init-research", out)
 
+    def test_a_file_of_a_clip_dropped_by_reingest_is_stale_and_removed_with_force(self) -> None:
+        self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        stray = self.run_dir / "seeds" / "vbt-0000000000000000.machine-origin-seed.json"
+        stray.write_text("{}", encoding="utf-8")
+        code, _, err = self.run_research()
+        self.assertEqual(code, 1)
+        self.assertIn("already exist", err)
+        self.assertTrue(stray.exists())
+        code, _, err = self.run_research("--force")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(stray.exists())
+        self.assertEqual(self.run_record()["removed_stale_outputs"], [analyze_lift.display_path(stray)])
+
+    def test_empty_directories_of_removed_outputs_are_pruned_but_not_the_root(self) -> None:
+        self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        stray = self.run_dir / "scale-packages" / "vbt-0000000000000000" / "metadata.json"
+        stray.parent.mkdir(parents=True)
+        stray.write_text("{}", encoding="utf-8")
+        self.assertEqual(self.run_research("--force")[0], 0)
+        self.assertFalse(stray.parent.exists())
+        self.assertTrue(self.run_dir.is_dir())
+
+
+class StatusKeyGuardTests(unittest.TestCase):
+    def test_status_key_is_refused_at_depth_and_machine_origin_is_accepted(self) -> None:
+        with self.assertRaisesRegex(WorkflowError, "must not carry a status key"):
+            smr.require_no_status_keys({"clips": [{"items": {"plate_center": {"status": "accepted"}}}]})
+        smr.require_no_status_keys({"clips": [{"origin": "machine"}]})
+
 
 class ConfirmedPathTests(MachineRunTestCase):
     def confirmed_rows(self) -> list[dict[str, str]]:
@@ -462,8 +497,10 @@ class ConfirmedPathTests(MachineRunTestCase):
         self.prepare_session()
         self.assertEqual(self.run_session(self.confirmed_rows())[0], 0)
         confirmed = self.outside_run_dir()
+        manifest = self.manifest.read_bytes()
         self.assertEqual(self.run_research()[0], 0)
         self.assertEqual(self.outside_run_dir(), confirmed)
+        self.assertEqual(self.manifest.read_bytes(), manifest)
 
 
 if __name__ == "__main__":
