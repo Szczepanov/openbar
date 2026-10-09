@@ -279,4 +279,62 @@ mod tests {
             "a175d350c96db3df1771c1eb141a017eaed012ae6bbd6cda739510b244113096"
         );
     }
+
+    #[test]
+    fn file_sha256_hex_with_temp_file_matches_digest() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!(
+            "openbar-sha256-test-{}-{}.tmp",
+            std::process::id(),
+            "small"
+        ));
+        std::fs::write(&path, b"abc").expect("write temp file");
+
+        let result = file_sha256_hex(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            result.expect("hashes temp file successfully"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn file_sha256_hex_large_file_spanning_multiple_chunks() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!(
+            "openbar-sha256-test-{}-{}.tmp",
+            std::process::id(),
+            "large"
+        ));
+        // Buffer size in file_sha256_hex is 1MB (1 << 20 bytes).
+        // Create 2.5MB payload to force multiple buffer reads.
+        let large_payload = vec![0x42u8; (2.5 * 1024.0 * 1024.0) as usize];
+        let expected = digest(&large_payload);
+
+        std::fs::write(&path, &large_payload).expect("write temp large file");
+
+        let result = file_sha256_hex(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(
+            result.expect("hashes large temp file successfully"),
+            expected
+        );
+    }
+
+    #[test]
+    fn file_sha256_hex_nonexistent_file_returns_error() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!(
+            "openbar-sha256-nonexistent-{}-{}.tmp",
+            std::process::id(),
+            "none"
+        ));
+        let _ = std::fs::remove_file(&path); // Ensure it doesn't exist
+
+        let result = file_sha256_hex(&path);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
 }

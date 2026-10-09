@@ -48,30 +48,24 @@ jobs:
           rustup --version
           rustc --version --verbose
           cargo --version
-      # The Ubuntu mirror can serve the ~66 MB of FFmpeg packages at <100 kB/s, so the
-      # .deb files are cached. The key hashes the exact package set apt would fetch, so
-      # a package bump in the archive gets a fresh cache entry instead of a stale one.
-      - name: Resolve FFmpeg packages (external decode prerequisite, ADR-0006)
-        id: ffmpeg-debs
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends --print-uris -qq ffmpeg \
-            | grep "^'" | sort > "$RUNNER_TEMP/ffmpeg-debs.txt"
-          echo "$(wc -l < "$RUNNER_TEMP/ffmpeg-debs.txt") packages to fetch"
-          echo "key=ffmpeg-debs-${{ runner.os }}-$(sha256sum "$RUNNER_TEMP/ffmpeg-debs.txt" | cut -c1-16)" >> "$GITHUB_OUTPUT"
-      - name: Cache FFmpeg packages
+      # External decode prerequisite (ADR-0006). Pre-built static binaries are cached
+      # in the runner tool cache to avoid apt-get update overhead and mirror throttling.
+      - name: Cache FFmpeg
+        id: cache-ffmpeg
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/ffmpeg-debs
-          key: ${{ steps.ffmpeg-debs.outputs.key }}
-      - name: Install FFmpeg
+          path: ${{ runner.tool_cache }}/ffmpeg
+          key: ffmpeg-cache-${{ runner.os }}-v1
+      - name: Setup FFmpeg (external decode prerequisite, ADR-0006)
+        uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
+        with:
+          github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+      - name: Verify FFmpeg
         run: |
-          mkdir -p ~/.cache/ffmpeg-debs/partial
-          sudo apt-get install --yes --no-install-recommends \
-            -o Dir::Cache::Archives="$HOME/.cache/ffmpeg-debs" ffmpeg
-          # apt leaves root/_apt-owned files; the cache post-step runs as the runner user.
-          sudo chown -R "$(id -u):$(id -g)" ~/.cache/ffmpeg-debs
           ffmpeg -hide_banner -version | head -n 1
+          ffprobe -hide_banner -version | head -n 1
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Verify dependency lock
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format
@@ -241,10 +235,24 @@ jobs:
           rustup --version
           rustc --version --verbose
           cargo --version
-      - name: Install FFmpeg (external decode prerequisite, ADR-0006)
+      # External decode prerequisite (ADR-0006). Pre-built static binaries are cached
+      # in the runner tool cache to avoid Chocolatey network and install overhead.
+      - name: Cache FFmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/ffmpeg
+          key: ffmpeg-cache-${{ runner.os }}-v1
+      - name: Setup FFmpeg (external decode prerequisite, ADR-0006)
+        uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
+        with:
+          github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+      - name: Verify FFmpeg
         run: |
-          choco install ffmpeg --yes --no-progress
           ffmpeg -hide_banner -version
+          ffprobe -hide_banner -version
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: VBT workflow orchestration tests
         run: python -m unittest discover -v -s research/vbt-workflow/tests -p 'test_*.py'
       - name: Verify dependency lock

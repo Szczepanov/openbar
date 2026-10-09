@@ -128,7 +128,7 @@ impl ProbedVideo {
         let prober_version = ffmpeg::tool_version(ffmpeg::FFPROBE)?;
         let decoder_version = ffmpeg::tool_version(ffmpeg::FFMPEG)?;
         let source_sha256 = file_sha256_hex(path).map_err(|error| MediaError::Io {
-            context: format!("failed to read '{}'", path.display()),
+            context: format!("failed to read '{}'", path.display()).into(),
             detail: error.to_string(),
         })?;
         let probe = ffmpeg::probe(path)?;
@@ -479,11 +479,15 @@ mod tests {
         let source = &reference.frames[3];
         let (width, height) = (source.image.width_px(), source.image.height_px());
 
-        for rotation in [90u16, 180, 270] {
-            let rotated_path = scratch_file(&format!("rot{rotation}.mp4"));
+        for (rotation, rotation_str, filename) in [
+            (90u16, "90", "rot90.mp4"),
+            (180, "180", "rot180.mp4"),
+            (270, "270", "rot270.mp4"),
+        ] {
+            let rotated_path = scratch_file(filename);
             let status = Command::new("ffmpeg")
                 .args(["-nostdin", "-v", "error", "-y", "-display_rotation"])
-                .arg(rotation.to_string())
+                .arg(rotation_str)
                 .arg("-i")
                 .arg(synthetic_clip())
                 .args(["-c", "copy"])

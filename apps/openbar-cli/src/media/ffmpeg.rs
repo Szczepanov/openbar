@@ -148,7 +148,7 @@ pub fn decode(
     ) && child.kill().is_ok();
 
     let status = child.wait().map_err(|error| MediaError::Io {
-        context: "failed to wait for ffmpeg".to_owned(),
+        context: "failed to wait for ffmpeg".into(),
         detail: error.to_string(),
     })?;
     let stderr_text = stderr_reader.join().unwrap_or_default();
