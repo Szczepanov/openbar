@@ -1639,7 +1639,7 @@ mod tests {
             let error =
                 parse_args(smoothing_args(filter, &["--filter-window-s", "0.25"])).unwrap_err();
             assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-            assert!(error.to_string().contains("--filter-window-s is not valid"));
+            assert!(error.message().contains("--filter-window-s is not valid"));
         }
     }
 
