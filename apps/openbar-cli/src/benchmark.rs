@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -845,18 +846,26 @@ fn push_aggregate_group<'a>(
 }
 
 fn render_summary(artifact: &BenchmarkArtifact) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!(
+    let estimated_capacity = 256 + artifact.cases.len() * 256 + artifact.aggregates.len() * 128;
+    let mut out = String::with_capacity(estimated_capacity);
+
+    let _ = writeln!(
+        out,
         "OpenBar benchmark {} | pipeline {}",
         artifact.benchmark_metric_version, artifact.pipeline_version
-    ));
-    lines.push(
+    );
+    let _ = writeln!(
+        out,
         "case | implementation | fixture | samples | availability | MAE px | RMSE px | max loss"
-            .to_owned(),
     );
 
     for case in &artifact.cases {
-        lines.push(format!(
+        let max_loss = case
+            .metrics
+            .max_consecutive_tracking_loss_samples
+            .map_or_else(|| "n/a".to_owned(), |value| value.to_string());
+        let _ = writeln!(
+            out,
             "{} | {}@{} | {} | {}/{} | {} | {} | {} | {} samples / {} s",
             case.case_id,
             case.implementation.name,
@@ -867,23 +876,26 @@ fn render_summary(artifact: &BenchmarkArtifact) -> String {
             format_percent(case.metrics.tracking_availability),
             format_optional(case.metrics.plate_center_mae_px),
             format_optional(case.metrics.plate_center_rmse_px),
-            case.metrics
-                .max_consecutive_tracking_loss_samples
-                .map_or_else(|| "n/a".to_owned(), |value| value.to_string()),
+            max_loss,
             format_optional(case.metrics.max_consecutive_tracking_loss_duration_s),
-        ));
+        );
         for warning in &case.warnings {
-            lines.push(format!("  warning: {warning}"));
+            let _ = writeln!(out, "  warning: {warning}");
         }
     }
 
-    lines.push("aggregates:".to_owned());
+    let _ = writeln!(out, "aggregates:");
     for aggregate in artifact
         .aggregates
         .iter()
         .filter(|aggregate| aggregate.group == "overall")
     {
-        lines.push(format!(
+        let loss = aggregate
+            .metrics
+            .lost_frame_percentage
+            .map_or_else(|| "n/a".to_owned(), |value| format!("{value:.3}"));
+        let _ = writeln!(
+            out,
             "  {}@{} | cases={} | availability={} | MAE={} px | RMSE={} px | loss={}%",
             aggregate.implementation.name,
             aggregate.implementation.version,
@@ -891,25 +903,45 @@ fn render_summary(artifact: &BenchmarkArtifact) -> String {
             format_percent(aggregate.metrics.tracking_availability),
             format_optional(aggregate.metrics.plate_center_mae_px),
             format_optional(aggregate.metrics.plate_center_rmse_px),
-            aggregate
-                .metrics
-                .lost_frame_percentage
-                .map_or_else(|| "n/a".to_owned(), |value| format!("{value:.3}")),
-        ));
+            loss,
+        );
     }
 
-    lines.join("\n")
+    if out.ends_with('\n') {
+        out.pop();
+    }
+
+    out
 }
 
-fn format_optional(value: Option<f64>) -> String {
-    value.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.6}"))
+struct FormatOptional(Option<f64>);
+
+impl std::fmt::Display for FormatOptional {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{value:.6}"),
+            None => f.write_str("n/a"),
+        }
+    }
 }
 
-fn format_percent(value: Option<f64>) -> String {
-    value.map_or_else(
-        || "n/a".to_owned(),
-        |value| format!("{:.3}%", value * 100.0),
-    )
+fn format_optional(value: Option<f64>) -> FormatOptional {
+    FormatOptional(value)
+}
+
+struct FormatPercent(Option<f64>);
+
+impl std::fmt::Display for FormatPercent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{:.3}%", value * 100.0),
+            None => f.write_str("n/a"),
+        }
+    }
+}
+
+fn format_percent(value: Option<f64>) -> FormatPercent {
+    FormatPercent(value)
 }
 
 fn resolve_path(base: &Path, value: &str) -> PathBuf {
@@ -1168,6 +1200,34 @@ mod tests {
         println!(
             "build_aggregates for {} cases took {:?}",
             cases.len(),
+            duration
+        );
+    }
+
+    #[test]
+    fn benchmark_render_summary_performance() {
+        let mut artifact = run_suite(&synthetic_suite_path()).unwrap();
+        let base_cases = artifact.cases.clone();
+        for i in 0..5000 {
+            let mut case = base_cases[i % base_cases.len()].clone();
+            case.case_id = format!("case_{i}");
+            case.warnings.push("sample warning".to_string());
+            artifact.cases.push(case);
+        }
+
+        let start = std::time::Instant::now();
+        let iters = 20;
+        let mut total_len = 0;
+        for _ in 0..iters {
+            let rendered = render_summary(&artifact);
+            total_len += rendered.len();
+        }
+        let duration = start.elapsed();
+
+        assert!(total_len > 0);
+        println!(
+            "render_summary for {} cases x {iters} iters took {:?}",
+            artifact.cases.len(),
             duration
         );
     }
