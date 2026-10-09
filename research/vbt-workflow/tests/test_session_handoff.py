@@ -176,7 +176,8 @@ class HandoffTests(SessionTestCase):
         now = iter(range(20))
         code, _, err = self.main(["ingest", *self.common(), "--inbox", str(self.inbox),
                                  "--media-dir", str(self.media), "--inbox-timeout-s", "3"],
-                                clock=lambda: next(now), sleep=lambda _: None)
+                                clock=lambda: next(now), sleep=lambda _: None,
+                                suggester=lambda frame: fakes.suggestions())
         self.assertEqual(code, 1)
         self.assertIn("stable", err)
         self.assertFalse((self.media / "incomplete.mp4").exists())
@@ -227,7 +228,7 @@ class HandoffTests(SessionTestCase):
         with mock.patch.object(analyze_lift, "file_sha256", side_effect=hash_file):
             code, _, err = self.main(["ingest", *self.common(), "--inbox", str(self.inbox),
                                      "--media-dir", str(self.media), "--inbox-timeout-s", "3"],
-                                    clock=lambda: next(now))
+                                    clock=lambda: next(now), suggester=lambda frame: fakes.suggestions())
         self.assertEqual(code, 1)
         self.assertIn("stable", err)
         self.assertFalse((self.media / "partial.mp4").exists())
