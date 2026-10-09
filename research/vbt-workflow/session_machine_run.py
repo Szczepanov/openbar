@@ -275,7 +275,7 @@ def write_inputs(plan_set: dict[str, Any]) -> None:
     paths, profile = plan_set["paths"], plan_set["profile"]
     paths["record"].unlink(missing_ok=True)
     for path in plan_set["stale"]:
-        path.unlink()
+        path.unlink(missing_ok=True)
         print(f"removed stale output {rel(path)}")
     # Rebuilt from the profile on every run, so a changed profile or a now-rejected clip leaves no entry behind.
     # It is never the personal manifest: a machine run registers nothing there.
@@ -288,3 +288,123 @@ def write_inputs(plan_set: dict[str, Any]) -> None:
         print(f"{clip['fixture_id']}: research manifest entry {action} ({profile['exercise']})")
         for path, text in plan["texts"].items():
             session_ingest.write_text(path, text)
+
+
+# --- analyze_lift, the scale report and the record -----------------------------------------------
+
+def analyze_arguments(plan: dict[str, Any], plan_set: dict[str, Any], args: argparse.Namespace,
+                      show: Any) -> list[str]:
+    profile, paths = plan_set["profile"], plan_set["paths"]
+    argv = ["run", "--video", show(plan["media"]), "--seed", show(plan["seed"]),
+            "--plate-diameter-m", repr(profile["plate_diameter_m"]), "--exercise", profile["exercise"],
+            "--manifest", show(paths["manifest"]), "--output-dir", show(paths["analyses"]), "--tracker", plan["tracker"]]
+    if TRACKERS[plan["tracker"]].needs_gpu_python:
+        argv += ["--gpu-python", plan_set["gpu_python"]]
+    argv += ["--preset", args.preset] if args.preset else analyze_lift.analysis_options(args)
+    if plan_set["openbar_cli"] is not None:
+        argv += ["--openbar-cli", show(plan_set["openbar_cli"])]
+    return argv
+
+
+def clip_entry(plan: dict[str, Any], argv: list[str]) -> dict[str, Any]:
+    clip, items, outputs = plan["clip"], plan["init"]["items"], plan["outputs"]
+    return {
+        "fixture_id": clip["fixture_id"], "origin": smi.ORIGIN, "tracker": plan["tracker"],
+        "suggestion_ids": {"plate": items["plate_center"]["suggestion"]["id"],
+                           "stick": items["stick_low"]["suggestion"]["id"]},
+        "video": {"path": clip["media_path"], "sha256": clip["sha256"]},
+        "seed": {"path": rel(plan["seed"]), "sha256": sha(plan["seed"])},
+        "scale_click_csv": {"path": rel(plan["click_csv"]), "sha256": sha(plan["click_csv"])},
+        "analysis": {"path": rel(outputs["analysis"]), "sha256": sha(outputs["analysis"])},
+        "analyze_lift": {"argv": ["python", "research/vbt-workflow/analyze_lift.py", *argv],
+                         "run_record": {"path": rel(outputs["run_record"]), "sha256": sha(outputs["run_record"])}},
+    }
+
+
+def run_clips(plan_set: dict[str, Any], args: argparse.Namespace, runner: Runner) -> list[dict[str, Any]]:
+    entries = []
+    for plan in plan_set["plans"]:
+        # Executed with absolute paths (and --force when asked); recorded repository-relative without --force,
+        # so a forced re-run on the same inputs writes the same record.
+        argv = analyze_arguments(plan, plan_set, args, lambda path: str(path.resolve()))
+        argv += ["--force"] if args.force else []
+        print(f"[analyze_lift] {plan['clip']['fixture_id']} (machine-origin, {plan_set['profile']['exercise']}, "
+              f"{plan['tracker']})", flush=True)
+        if analyze_lift.main(argv, runner=runner) != 0:
+            raise WorkflowError(f"analyze_lift.py run failed for {plan['clip']['fixture_id']}; see the error above. "
+                                f"{RUN_RECORD_NAME} was not written; run again with --force")
+        entries.append(clip_entry(plan, analyze_arguments(plan, plan_set, args, rel)))
+    return entries
+
+
+def require_no_status_keys(value: Any, where: str = RUN_RECORD_NAME) -> None:
+    """Machine values have no status at any depth, the same rule as machine-init.json."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in smi.FORBIDDEN_KEYS:
+                raise WorkflowError(f"{RUN_RECORD_NAME} must not carry a status key (found at {where}.{key})")
+            require_no_status_keys(item, f"{where}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            require_no_status_keys(item, f"{where}[{index}]")
+
+
+def run_record(plan_set: dict[str, Any], args: argparse.Namespace, entries: list[dict[str, Any]],
+               namespace: argparse.Namespace) -> dict[str, Any]:
+    paths, state = plan_set["paths"], plan_set["state"]
+    policy = session_run.TRACKER_POLICIES[args.tracker_policy]
+    return {
+        "format": RUN_RECORD_FORMAT, "format_version": RUN_RECORD_VERSION,
+        "origin": smi.ORIGIN, "human_confirmed": False, "research_only": True, "consumer_eligible": False,
+        "workflow_version": analyze_lift.WORKFLOW_VERSION, "session_id": state["session_id"],
+        "page_id": state["page_id"], "inputs": plan_set["hashes"], "profile": plan_set["profile"],
+        "configuration": {
+            "stick_markers": "lowest and highest marker", "tracker_policy": args.tracker_policy,
+            "tracker_policy_description": policy["description"], "tracker_policy_trackers": policy["trackers"],
+            "gpu_python": plan_set["gpu_python"],
+            "openbar_cli": None if plan_set["openbar_cli"] is None else rel(plan_set["openbar_cli"]),
+            "preset": args.preset, "analyze_options": plan_set["options"],
+        },
+        "clips": entries,
+        "rejected": plan_set["rejected"],
+        "removed_stale_outputs": [rel(path) for path in plan_set["stale"]],
+        "scale_report": {"argv": session_run.scale_report_argv(namespace),
+                         "outputs": {name: sha(paths["scale_report"] / name) for name in SCALE_REPORT_NAMES}},
+        "commands_note": "Run from the repository root with the research venv's python. Each analyze_lift run record "
+                         "lists its own track and analyze commands. Machine-origin research evidence: never "
+                         "human-confirmed and not for the recommender import.",
+        "openbar": plan_set["git"],
+    }
+
+
+def require_inputs_unchanged(plan_set: dict[str, Any]) -> None:
+    """The record is written only if session.json, machine-init.json and the profile are the bytes planned from."""
+    if input_hashes(plan_set["directory"], plan_set["profile_path"]) != plan_set["hashes"]:
+        raise WorkflowError(f"{session_ingest.STATE_NAME}, {smi.RECORD_NAME} or the profile changed during the "
+                            f"research run; {RUN_RECORD_NAME} was not written. Re-run init-research if needed, then "
+                            "run-research --force")
+
+
+# --- Command -------------------------------------------------------------------------------------
+
+def command_run_research(args: argparse.Namespace, runner: Runner) -> int:
+    plan_set = prepare(args, runner)
+    write_inputs(plan_set)
+    entries = run_clips(plan_set, args, runner)
+    paths = plan_set["paths"]
+    namespace = session_run.scale_report_namespace(plan_set["plans"], paths["manifest"], paths)
+    try:
+        scale_reference.write_report(namespace)
+    except (scale_reference.ScaleReferenceError, OSError, KeyError, ValueError) as error:
+        raise WorkflowError(f"scale_reference.py report failed: {error}") from error
+    record = run_record(plan_set, args, entries, namespace)
+    require_no_status_keys(record)
+    require_inputs_unchanged(plan_set)
+    session_ingest.write_json(paths["record"], record)
+    for item in plan_set["rejected"]:
+        print(f"{item['fixture_id']}: not run, rejected by init-research ({', '.join(item['reasons'])}); "
+              "use the #95 confirmation page")
+    print(f"machine-run record: {rel(paths['record'])}")
+    print("research only: machine-initialized, never human-confirmed, not consumer-eligible. Do not import "
+          f"{rel(paths['analyses'])} into the recommender.")
+    return 0

@@ -267,5 +267,204 @@ class PlanAndInputsTests(MachineRunTestCase):
         self.assertEqual(self.prepared("--force")["stale"], [])
 
 
+HEAD_KEYS = ("format", "format_version", "origin", "human_confirmed", "research_only", "consumer_eligible",
+             "workflow_version", "session_id", "page_id", "inputs", "profile", "rejected", "removed_stale_outputs")
+
+
+class FailOnFixtureRunner(SessionRunner):
+    """Stops the run when the given clip is tracked, as an interrupted session would."""
+
+    def __init__(self, fixture_id: str) -> None:
+        super().__init__()
+        self.fixture_id = fixture_id
+
+    def execute(self, argv: list[str]) -> None:
+        if "--fixture" in argv and argv[argv.index("--fixture") + 1] == self.fixture_id:
+            raise WorkflowError("simulated interruption")
+        super().execute(argv)
+
+
+class EditOnceRunner(SessionRunner):
+    """Appends a space to one input file after the first external step, as a concurrent edit would."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self.path = path
+        self.edited = False
+
+    def execute(self, argv: list[str]) -> None:
+        super().execute(argv)
+        if not self.edited:
+            self.path.write_bytes(self.path.read_bytes() + b" ")
+            self.edited = True
+
+
+class ResearchRunTests(MachineRunTestCase):
+    def test_run_tracks_each_initialized_clip_and_writes_the_record(self) -> None:
+        clips = self.prepare_session()
+        runner = SessionRunner()
+        code, out, err = self.run_research(runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len([argv for argv in runner.executed if "--fixture" in argv]), 4,
+                         "one track and one analyze step per clip")
+        for clip in clips:
+            for path in analyze_lift.output_paths(self.run_dir / "analyses", clip["fixture_id"], "csrt").values():
+                self.assertTrue(path.is_file(), path)
+        for name in smr.SCALE_REPORT_NAMES:
+            self.assertTrue((self.run_dir / "scale-report" / name).is_file(), name)
+        self.assertTrue((self.run_dir / smr.RUN_RECORD_NAME).is_file())
+        self.assertIn("research only", out)
+        self.assertIn("not consumer-eligible", out)
+
+    def test_record_contract(self) -> None:
+        clips = self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        record = self.run_record()
+        self.assertEqual({key: record[key] for key in HEAD_KEYS}, {
+            "format": "openbar-research-vbt-machine-run-record", "format_version": 1, "origin": "machine",
+            "human_confirmed": False, "research_only": True, "consumer_eligible": False,
+            "workflow_version": analyze_lift.WORKFLOW_VERSION, "session_id": self.session_id,
+            "page_id": self.state_document()["page_id"],
+            "inputs": {"session_state_sha256": analyze_lift.file_sha256(self.session_dir / session_ingest.STATE_NAME),
+                       "profile_sha256": analyze_lift.file_sha256(self.profile_file),
+                       "machine_init_sha256": analyze_lift.file_sha256(self.record_path)},
+            "profile": {"profile_id": "lab-profile-1", "exercise": "snatch", "plate_diameter_m": 0.45,
+                        "stick_length_m": 1.3},
+            "rejected": [], "removed_stale_outputs": []})
+        self.assertEqual(sorted(record), sorted([*HEAD_KEYS, "configuration", "clips", "scale_report",
+                                                 "commands_note", "openbar"]))
+        self.assertEqual((record["configuration"]["tracker_policy"], record["configuration"]["preset"]),
+                         ("csrt-all-v1", PRESET))
+        self.assertEqual([entry["fixture_id"] for entry in record["clips"]], [clip["fixture_id"] for clip in clips])
+        for entry, clip in zip(record["clips"], clips):
+            self.assertEqual((entry["origin"], entry["tracker"]), ("machine", "csrt"))
+            self.assertEqual(entry["suggestion_ids"], {"plate": fakes.PLATE["id"], "stick": fakes.STICK["id"]})
+            self.assertEqual(entry["video"], {"path": clip["media_path"], "sha256": clip["sha256"]})
+            for name in ("seed", "scale_click_csv", "analysis"):
+                self.assertEqual(entry[name]["sha256"], analyze_lift.file_sha256(ROOT / entry[name]["path"]), name)
+            self.assertTrue(entry["analysis"]["path"].endswith(
+                f"machine-run/analyses/{clip['fixture_id']}.opencv-csrt.analysis-v1.json"))
+            argv = entry["analyze_lift"]["argv"]
+            self.assertEqual(argv[:3], ["python", "research/vbt-workflow/analyze_lift.py", "run"])
+            self.assertNotIn("--force", argv)
+            self.assertEqual(argv[argv.index("--manifest") + 1], analyze_lift.display_path(self.run_dir / "manifest.json"))
+            self.assertEqual(argv[argv.index("--plate-diameter-m") + 1], "0.45")
+            self.assertEqual(argv[argv.index("--exercise") + 1], "snatch")
+        text = (self.run_dir / smr.RUN_RECORD_NAME).read_text(encoding="utf-8")
+        for needle in ('"status"', '"statuses"', '"accepted"', '"adjusted"', json.dumps(str(ROOT))[1:-1],
+                       ROOT.as_posix()):
+            self.assertNotIn(needle, text)
+        self.assertFalse((self.session_dir / session_ingest.RECORD_NAME).exists(), "no #95 session record")
+
+    def test_writes_only_under_machine_run(self) -> None:
+        self.prepare_session()
+        before = self.outside_run_dir()
+        self.assertEqual(self.run_research()[0], 0)
+        self.assertEqual(self.outside_run_dir(), before)
+        self.assertFalse(self.manifest.exists(), "a machine run never registers in the personal manifest")
+
+    def test_force_rerun_is_byte_identical_and_existing_outputs_refuse(self) -> None:
+        self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        first = self.snapshot()
+        code, _, err = self.run_research()
+        self.assertEqual(code, 1)
+        self.assertIn("already exist", err)
+        self.assertEqual(self.snapshot(), first)
+        self.assertEqual(self.run_research("--force")[0], 0)
+        self.assertEqual(self.snapshot(), first)
+
+
+class RestartTests(MachineRunTestCase):
+    def manifest_ids(self) -> list[str]:
+        manifest = json.loads((self.run_dir / "manifest.json").read_text(encoding="utf-8"))
+        return [entry["id"] for entry in manifest["fixtures"]]
+
+    def test_interrupted_run_writes_no_record_and_force_rerun_matches_a_clean_run(self) -> None:
+        clips = self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        clean = self.run_dir_snapshot()
+        code, _, err = self.run_research("--force", runner=FailOnFixtureRunner(clips[1]["fixture_id"]))
+        self.assertEqual(code, 1)
+        self.assertIn("was not written", err)
+        self.assertFalse((self.run_dir / smr.RUN_RECORD_NAME).exists())
+        code, _, err = self.run_research()
+        self.assertEqual(code, 1)
+        self.assertIn("already exist", err)
+        self.assertEqual(self.run_research("--force")[0], 0)
+        self.assertEqual(self.run_dir_snapshot(), clean)
+        self.assertEqual(self.manifest_ids(), [clip["fixture_id"] for clip in clips])
+
+    def test_inputs_changed_during_the_run_write_no_record(self) -> None:
+        self.prepare_session()
+        for path in (self.record_path, self.profile_file):
+            with self.subTest(path=path.name):
+                original = path.read_bytes()
+                code, _, err = self.run_research("--force", runner=EditOnceRunner(path))
+                self.assertEqual(code, 1)
+                self.assertIn("changed during the research run", err)
+                self.assertFalse((self.run_dir / smr.RUN_RECORD_NAME).exists())
+                path.write_bytes(original)
+
+    def test_promoted_record_after_a_run_is_refused_and_outputs_are_left_alone(self) -> None:
+        self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        self.write_record_document({**self.record(), "human_confirmed": True})
+        before = self.snapshot()
+        code, _, err = self.run_research("--force")
+        self.assertEqual(code, 1)
+        self.assertIn("must be machine origin", err)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_clip_rejected_after_reingest_has_its_outputs_removed_as_stale(self) -> None:
+        clips = self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        dropped = clips[1]["fixture_id"]
+        self.assertEqual(self.ingest_clips(pair(), pair(fakes.FAILED_PLATE))[0], 0)
+        code, _, err = self.run_research("--force")
+        self.assertEqual(code, 1, "machine-init.json is stale until init-research runs again")
+        self.assertIn("is stale", err)  # new suggestions change the page id, which the reader checks first
+        self.assertEqual(self.init(self.profile_file, "--force")[0], 0)
+        code, _, err = self.run_research()
+        self.assertEqual(code, 1)
+        self.assertIn("already exist", err)
+        code, out, err = self.run_research("--force")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([path for path in self.run_dir.rglob("*") if path.is_file() and dropped in path.as_posix()],
+                         [])
+        record = self.run_record()
+        self.assertEqual(record["rejected"], [{"fixture_id": dropped, "reasons": ["plate_suggestion_missing"]}])
+        self.assertTrue(record["removed_stale_outputs"])
+        self.assertTrue(all(dropped in path for path in record["removed_stale_outputs"]))
+        self.assertEqual(self.manifest_ids(), [clips[0]["fixture_id"]])
+        self.assertIn("removed stale output", out)
+        self.assertIn("not run, rejected by init-research", out)
+
+
+class ConfirmedPathTests(MachineRunTestCase):
+    def confirmed_rows(self) -> list[dict[str, str]]:
+        state = self.state_document()
+        return [fakes.accepted_row(clip, state, "snatch") for clip in state["clips"]]
+
+    def test_confirmed_run_after_a_research_run_works_and_leaves_machine_run_alone(self) -> None:
+        self.prepare_session()
+        self.assertEqual(self.run_research()[0], 0)
+        self.assertFalse(self.manifest.exists(), "the research run registered nothing in the personal manifest")
+        machine = self.run_dir_snapshot()
+        code, _, err = self.run_session(self.confirmed_rows())
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.run_dir_snapshot(), machine)
+        record = json.loads((self.session_dir / session_ingest.RECORD_NAME).read_text(encoding="utf-8"))
+        self.assertEqual({clip["item_statuses"]["plate_center"] for clip in record["clips"]}, {"accepted"})
+        self.assertNotIn(smr.RUN_DIR_NAME, json.dumps(record))
+
+    def test_research_run_after_a_confirmed_run_leaves_its_outputs_alone(self) -> None:
+        self.prepare_session()
+        self.assertEqual(self.run_session(self.confirmed_rows())[0], 0)
+        confirmed = self.outside_run_dir()
+        self.assertEqual(self.run_research()[0], 0)
+        self.assertEqual(self.outside_run_dir(), confirmed)
+
+
 if __name__ == "__main__":
     unittest.main()

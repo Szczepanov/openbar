@@ -18,7 +18,7 @@
           analyze them with every output under <session>/machine-run/; never human-confirmed and
           not consumer-eligible. See docs/validation/VBT_RESEARCH_INITIALIZATION.md.
 
-Suggestions are proposals only: nothing is used until the clip is confirmed on the page, and the
+For the #95 run, suggestions are proposals only: nothing is used until the clip is confirmed on the page, and the
 CSV records per item whether a suggestion was accepted unchanged, adjusted, or placed by hand.
 Research orchestration: no measurement logic, no calibration change. Run it with the research venv
 interpreter (research/opencv-tracking/.venv). See docs/plans/VBT_WORKFLOW_PLAN.md (step 2).
@@ -211,6 +211,8 @@ def main(argv: list[str] | None = None, runner: Runner | None = None,
             return session_ingest.command_ingest(args, suggester)
         if args.command == "init-research":
             return session_machine_init.command_init_research(args)
+        if args.command == "run-research":
+            return session_machine_run.command_run_research(args, runner)
         if args.csv is not None:
             try:
                 data = args.csv.read_bytes()
