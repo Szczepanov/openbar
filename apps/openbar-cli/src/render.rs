@@ -119,7 +119,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         let value = args
             .get(index + 1)
             .ok_or_else(|| CliError::invalid_input(format!("{flag} requires a value")))?;
-        if values.insert(flag.to_owned(), value.clone()).is_some() {
+        if values.insert(flag, value.as_str()).is_some() {
             return Err(CliError::invalid_input(format!(
                 "{flag} was given more than once"
             )));
@@ -487,6 +487,39 @@ mod tests {
             .expect("hashless analysis");
         let error = source_hash_for_overlay(&analysis).expect_err("source hash must be required");
         assert!(error.to_string().contains("identity.source_sha256"));
+    }
+
+    #[test]
+    fn bench_parse_args_performance() {
+        let sample_args = strings(&[
+            "--analysis",
+            "a.json",
+            "--video",
+            "video.mp4",
+            "--frame-timestamp-s",
+            "12.34",
+            "--output",
+            "report.svg",
+            "--force",
+        ]);
+
+        // Warm up
+        for _ in 0..1_000 {
+            let _ = parse_args(sample_args.clone());
+        }
+
+        let start = std::time::Instant::now();
+        let iterations = 200_000;
+        for _ in 0..iterations {
+            let _ = parse_args(sample_args.clone());
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "BENCHMARK_PARSE_ARGS: {:?} total for {} iterations ({:.2?} / iter)",
+            elapsed,
+            iterations,
+            elapsed / iterations
+        );
     }
 
     #[test]

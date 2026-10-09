@@ -10,6 +10,7 @@ use openbar_tracking::{
     TemplateMatchTracker, TrackerObservationState, TrackerRun,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
@@ -278,8 +279,13 @@ fn collect_flag_values(args: &[String]) -> AnyResult<Option<BTreeMap<&'static st
         let value = args
             .get(index + 1)
             .ok_or_else(|| data_error(format!("{key} requires a value")))?;
-        if values.insert(key, value.clone()).is_some() {
-            return Err(data_error(format!("{key} was given more than once")));
+        match values.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(value.clone());
+            }
+            Entry::Occupied(_) => {
+                return Err(data_error(format!("{key} was given more than once")));
+            }
         }
         index += 2;
     }
@@ -886,13 +892,21 @@ mod tests {
         );
         run(&args).expect("synthetic fixture runs end to end");
 
-        for tracker in ["template-sad-v1", "local-contrast-centroid-v1"] {
-            let path = output_dir.join(format!(
-                "synthetic-clean-side-12.{tracker}.prediction-v1.json"
-            ));
-            let document: serde_json::Value =
-                serde_json::from_str(&fs::read_to_string(&path).expect("prediction written"))
-                    .expect("prediction is JSON");
+        let trackers = ["template-sad-v1", "local-contrast-centroid-v1"];
+        let documents: Vec<(&str, serde_json::Value)> = trackers
+            .iter()
+            .map(|&tracker| {
+                let path = output_dir.join(format!(
+                    "synthetic-clean-side-12.{tracker}.prediction-v1.json"
+                ));
+                let content = fs::read_to_string(&path).expect("prediction written");
+                let document: serde_json::Value =
+                    serde_json::from_str(&content).expect("prediction is JSON");
+                (tracker, document)
+            })
+            .collect();
+
+        for (tracker, document) in documents {
             assert_eq!(document["source_video_sha256"], SYNTHETIC_SHA256);
             assert_eq!(document["implementation"]["name"], tracker);
             assert_eq!(document["samples"].as_array().map(Vec::len), Some(12));
