@@ -814,8 +814,8 @@ fn measurement_observations(
     let tracker_run = tracker
         .track(&clip.frame_samples(), seed.seed())
         .map_err(|error| CliError::tracking(format!("selected tracker failed: {error}")))?;
-    let tracker_provenance = canonical_tracker_provenance(&tracker_run.tracker);
     let raw_observations = canonical_raw_observations(&tracker_run)?;
+    let tracker_provenance = canonical_tracker_provenance(tracker_run.tracker);
     Ok((raw_observations, tracker_provenance))
 }
 
@@ -1106,20 +1106,20 @@ fn video_metadata(
     }
 }
 
-fn canonical_tracker_provenance(tracker: &TrackerIdentity) -> TrackerProvenance {
+fn canonical_tracker_provenance(tracker: TrackerIdentity) -> TrackerProvenance {
     let mut parameters = Configuration::new();
-    for (key, value) in &tracker.config {
-        parameters.insert(key.clone(), parameter_value(value));
+    for (key, value) in tracker.config {
+        parameters.insert(key, parameter_value(&value));
     }
     parameters.insert(
         "confidence_semantics".to_owned(),
-        ParameterValue::Text(tracker.confidence_semantics.clone()),
+        ParameterValue::Text(tracker.confidence_semantics),
     );
     TrackerProvenance {
-        id: tracker.id.clone(),
+        id: tracker.id,
         implementation: ImplementationProvenance {
-            implementation: tracker.implementation.clone(),
-            version: tracker.version.clone(),
+            implementation: tracker.implementation,
+            version: tracker.version,
             parameters,
         },
     }
@@ -2251,6 +2251,113 @@ mod tests {
 
     fn scratch_file(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("openbar-analyze-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    #[ignore]
+    fn benchmark_canonical_tracker_provenance() {
+        use std::time::Instant;
+
+        let mut config = BTreeMap::new();
+        for i in 0..20 {
+            config.insert(
+                format!("parameter_key_{i}"),
+                format!("parameter_value_{i}_longer_string_for_heap_alloc"),
+            );
+        }
+        let tracker = TrackerIdentity {
+            id: "template-match".to_owned(),
+            implementation: "openbar-tracking-template".to_owned(),
+            version: "0.1.0".to_owned(),
+            config,
+            confidence_semantics: "nmad_normalized_mean_absolute_difference".to_owned(),
+        };
+
+        fn old_canonical_tracker_provenance(tracker: &TrackerIdentity) -> TrackerProvenance {
+            let mut parameters = Configuration::new();
+            for (key, value) in &tracker.config {
+                parameters.insert(key.clone(), parameter_value(value));
+            }
+            parameters.insert(
+                "confidence_semantics".to_owned(),
+                ParameterValue::Text(tracker.confidence_semantics.clone()),
+            );
+            TrackerProvenance {
+                id: tracker.id.clone(),
+                implementation: ImplementationProvenance {
+                    implementation: tracker.implementation.clone(),
+                    version: tracker.version.clone(),
+                    parameters,
+                },
+            }
+        }
+
+        let iterations = 100_000;
+
+        let start_old = Instant::now();
+        for _ in 0..iterations {
+            let provenance = old_canonical_tracker_provenance(&tracker);
+            std::hint::black_box(provenance);
+        }
+        let elapsed_old = start_old.elapsed();
+
+        let start_new = Instant::now();
+        for _ in 0..iterations {
+            let mut config = BTreeMap::new();
+            for i in 0..20 {
+                config.insert(
+                    format!("parameter_key_{i}"),
+                    format!("parameter_value_{i}_longer_string_for_heap_alloc"),
+                );
+            }
+            let tracker_owned = TrackerIdentity {
+                id: "template-match".to_owned(),
+                implementation: "openbar-tracking-template".to_owned(),
+                version: "0.1.0".to_owned(),
+                config,
+                confidence_semantics: "nmad_normalized_mean_absolute_difference".to_owned(),
+            };
+            let provenance = canonical_tracker_provenance(tracker_owned);
+            std::hint::black_box(provenance);
+        }
+        let elapsed_new = start_new.elapsed();
+
+        let start_old_with_construct = Instant::now();
+        for _ in 0..iterations {
+            let mut config = BTreeMap::new();
+            for i in 0..20 {
+                config.insert(
+                    format!("parameter_key_{i}"),
+                    format!("parameter_value_{i}_longer_string_for_heap_alloc"),
+                );
+            }
+            let tracker_owned = TrackerIdentity {
+                id: "template-match".to_owned(),
+                implementation: "openbar-tracking-template".to_owned(),
+                version: "0.1.0".to_owned(),
+                config,
+                confidence_semantics: "nmad_normalized_mean_absolute_difference".to_owned(),
+            };
+            let provenance = old_canonical_tracker_provenance(&tracker_owned);
+            std::hint::black_box(provenance);
+        }
+        let elapsed_old_with_construct = start_old_with_construct.elapsed();
+
+        println!(
+            "BENCHMARK OLD (&tracker): {:?} total ({:.2} ns/op)",
+            elapsed_old,
+            elapsed_old.as_nanos() as f64 / iterations as f64
+        );
+        println!(
+            "BENCHMARK OLD (construct + &tracker): {:?} total ({:.2} ns/op)",
+            elapsed_old_with_construct,
+            elapsed_old_with_construct.as_nanos() as f64 / iterations as f64
+        );
+        println!(
+            "BENCHMARK NEW (construct + move into provenance): {:?} total ({:.2} ns/op)",
+            elapsed_new,
+            elapsed_new.as_nanos() as f64 / iterations as f64
+        );
     }
 
     fn ffmpeg_available() -> bool {
