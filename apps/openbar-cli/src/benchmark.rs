@@ -1154,10 +1154,10 @@ mod tests {
     #[test]
     fn benchmark_build_aggregates_performance() {
         let suite = run_suite(&synthetic_suite_path()).unwrap();
-        let mut cases = Vec::new();
+        let mut cases = Vec::with_capacity(suite.cases.len() * 5000);
         // Repeat cases to create a non-trivial dataset for aggregation
         for _ in 0..5000 {
-            cases.extend(suite.cases.clone());
+            cases.extend(suite.cases.iter().cloned());
         }
 
         let start = std::time::Instant::now();
