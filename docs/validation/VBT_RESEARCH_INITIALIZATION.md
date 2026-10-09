@@ -212,13 +212,17 @@ research/opencv-tracking/.venv/Scripts/python.exe research/vbt-workflow/vbt_sess
     state.
 
   It has no `status` or `statuses` key at any depth (checked before writing), no timestamp, no
-  absolute path and no original file name.
-- **Restart and idempotence.** All validation runs before the first write. Then:
+  absolute path and no `original_name` field. Each video is identified by its repository media path and
+  SHA-256; the media path keeps the imported file's name and stays under the git-ignored
+  `validation/private/`.
+- **Restart and idempotence.** All input, profile, media and output-existence checks run before the first write; the status-key
+  check and the input-change guard run last and only prevent the record from being written. Then:
   - The record is deleted first and written last, so a folder without it is incomplete.
   - Existing outputs are refused without `--force`.
   - `--force` removes this command's outputs for clips that are no longer initialized, and rebuilds
     the research manifest.
-  - A same-input `--force` rerun is byte-identical.
+  - A same-input `--force` rerun is byte-identical once no stale outputs remain (the run that removes
+    stale outputs lists them in `removed_stale_outputs`).
   - An interrupted run leaves no record, and its `--force` rerun reproduces a clean run.
   - If `session.json`, `machine-init.json` or the profile changes during the run, no record is written.
   - A re-ingest makes `machine-init.json` stale until `init-research` runs again.

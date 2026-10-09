@@ -397,7 +397,7 @@ class RestartTests(MachineRunTestCase):
 
     def test_inputs_changed_during_the_run_write_no_record(self) -> None:
         self.prepare_session()
-        for path in (self.record_path, self.profile_file):
+        for path in (self.record_path, self.profile_file, self.session_dir / session_ingest.STATE_NAME):
             with self.subTest(path=path.name):
                 original = path.read_bytes()
                 code, _, err = self.run_research("--force", runner=EditOnceRunner(path))

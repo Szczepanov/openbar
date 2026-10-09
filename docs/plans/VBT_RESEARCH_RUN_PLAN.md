@@ -88,8 +88,8 @@ extends [`docs/validation/VBT_RESEARCH_INITIALIZATION.md`](../validation/VBT_RES
   `statuses` key at any depth. No confidence threshold of any kind.
 - Plate diameter, stick length and exercise come only from the profile. `run-research` refuses
   `--plate-diameter-m`, `--stick-length-m`, `--manifest`, `--csv` and `--watch`.
-- Records are deterministic. They contain no timestamps, no absolute paths, no original file names
-  and no random ids. A same-input `--force` rerun is byte-identical.
+- Records are deterministic. They contain no timestamps, no absolute paths, no `original_name` field
+  (videos are identified by repository media path and SHA-256) and no random ids. A same-input `--force` rerun is byte-identical.
 - The flags `origin: "machine"`, `human_confirmed: false`, `research_only: true` and
   `consumer_eligible: false` are on every record.
 - No #57 held-out data, no tracker/default selection, no consumer or live-trial write.
