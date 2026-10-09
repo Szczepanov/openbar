@@ -20,7 +20,7 @@ inspection is `ea5e020792551e6c4f5f748cdee92fe50e5d677c`.
 Technical delivery does not establish evidence eligibility. Inspected consumer main's
 `parseOpenBarAnalysis` rejects nonempty tracker parameters; its agreement CLI also
 includes per-video prediction hashes and tracking time bounds in a cohort method
-fingerprint. The separate consumer compatibility change fixes these seams while
+fingerprint. The separate [consumer compatibility PR #1032](https://github.com/Szczepanov/adaptive-training-recommender/pull/1032) fixes these seams while
 retaining full provenance and using the existing parser and segmenter. The study
 pins consumer commit **`a74cb9dca24864af9f348bf9853fb6fe4f475521`**, based on
 the main commit above. It preserves full scalar tracker signatures and separates

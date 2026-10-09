@@ -128,7 +128,7 @@ available pre-#79 validation fallback and does not claim consumer acceptance.
 
 The #79 readiness follow-up rechecked consumer main
 `ea5e020792551e6c4f5f748cdee92fe50e5d677c` and confirmed the same blocker.
-Its separate consumer compatibility change extends the existing parser for
+Its separate [consumer compatibility PR #1032](https://github.com/Szczepanov/adaptive-training-recommender/pull/1032) extends the existing parser for
 parameterized tracker provenance and separates per-clip prediction hashes/time
 bounds from method identity, including the persisted import identity checks.
 The [prospective agreement preregistration](../plans/VBT_AGREEMENT_PREREGISTRATION.md)
