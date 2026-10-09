@@ -58,7 +58,12 @@ fn run(args: &Args) -> CliResult<()> {
         .as_deref()
         .map(|video| load_source_frame(&analysis, video, args.frame_timestamp_s))
         .transpose()?;
-    let report = render_svg(&analysis, &args.analysis, source_frame.as_ref());
+    let report = render_svg(&analysis, &args.analysis, source_frame.as_ref()).map_err(|error| {
+        CliError::invalid_input(format!(
+            "failed to render diagnostic SVG for '{}': {error}",
+            args.analysis.display()
+        ))
+    })?;
     write_report(&args.output, &report, args.force)?;
 
     let lost = analysis
