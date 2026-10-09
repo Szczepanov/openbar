@@ -126,6 +126,16 @@ of retained provenance requires a reviewed consumer change; then reuse its exist
 parser/segmenter and browser preview. Local outgoing-package dry run is the
 available pre-#79 validation fallback and does not claim consumer acceptance.
 
+The #79 readiness follow-up rechecked consumer main
+`ea5e020792551e6c4f5f748cdee92fe50e5d677c` and confirmed the same blocker.
+Its separate consumer compatibility change extends the existing parser for
+parameterized tracker provenance and separates per-clip prediction hashes/time
+bounds from method identity, including the persisted import identity checks.
+The [prospective agreement preregistration](../plans/VBT_AGREEMENT_PREREGISTRATION.md)
+records the tested consumer pin and execution gates. Main/browser acceptance
+depends on integrating that consumer change; the OpenBar outgoing package and
+assessment statuses remain research-only throughout.
+
 Tests: `test_session_handoff.py`, `test_session_watch.py`, `test_time_session.py`
 and the existing workflow suite. Canonical measurement, schema versions and golden
 bytes are unchanged; no new dependencies, external implementation or media are copied.

@@ -549,6 +549,16 @@ acceptance or authorization to switch sources/write eligible live trials before 
 
 ### Step 4 — agreement study (#79)
 
+The prospective owner study is specified in
+[VBT_AGREEMENT_PREREGISTRATION.md](VBT_AGREEMENT_PREREGISTRATION.md).
+It separates technical readiness from evidence eligibility, retains failed slots,
+and freezes the owner-delegated threshold and protocol before formal pairing.
+The tested consumer compatibility commit is pinned there. Execution waits for the
+newly recorded, human-confirmed cohort and its input lock; earlier trial/development
+videos are excluded.
+Step 4 remains pending. A study PASS still requires a reviewed consumer policy
+before any source switch or eligible live-trial write.
+
 1. **Pre-register before pairing any results:**
    - the videos;
    - the tracker, filter and kinematics parameters;
