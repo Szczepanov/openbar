@@ -92,6 +92,10 @@ impl CliError {
         self.kind
     }
 
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub const fn exit_code(&self) -> i32 {
         self.kind.exit_code()
     }
@@ -99,7 +103,7 @@ impl CliError {
 
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(self.message())
     }
 }
 

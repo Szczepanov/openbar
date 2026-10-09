@@ -612,7 +612,7 @@ fn cross(out: &mut String, x: f64, y: f64) -> std::fmt::Result {
         x - 5.0,
         y + 5.0,
         x + 5.0,
-        y - 5.0
+        y + 5.0
     )
 }
 

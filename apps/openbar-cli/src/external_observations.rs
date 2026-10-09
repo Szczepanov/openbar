@@ -672,4 +672,147 @@ mod tests {
         let error = validate(document).expect_err("blank config key must fail");
         assert!(error.to_string().contains("config keys must not be blank"));
     }
+
+    #[test]
+    fn load_external_observations_success_from_file() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openbar-ext-obs-test-success-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("observations.json");
+        let json_content = serde_json::json!({
+            "schema_version": 1,
+            "fixture_id": "fixture-1",
+            "source_video_sha256": SOURCE_SHA256,
+            "coordinate_space": "decoded_display_pixels",
+            "implementation": {
+                "name": "external-tracker",
+                "version": "1",
+                "config": {
+                    "threads": 1,
+                    "refinement": {
+                        "method": "circle",
+                        "radius": [0.8, 1.2]
+                    }
+                }
+            },
+            "runtime": {
+                "processing_wall_s": 0.1
+            },
+            "samples": [
+                {
+                    "timestamp_s": 0.0,
+                    "state": "tracked",
+                    "center_px": { "x_px": 10.0, "y_px": 20.0 },
+                    "confidence": 0.9
+                },
+                {
+                    "timestamp_s": 0.1,
+                    "state": "lost"
+                },
+                {
+                    "timestamp_s": 0.2,
+                    "state": "tracked",
+                    "center_px": { "x_px": 12.0, "y_px": 18.0 },
+                    "confidence": 0.8
+                }
+            ]
+        });
+        let json_bytes = serde_json::to_vec(&json_content).unwrap();
+        fs::write(&file_path, &json_bytes).unwrap();
+
+        let mut hasher = Sha256::new();
+        hasher.update(&json_bytes);
+        let expected_sha256 = hasher.finalize_hex();
+
+        let imported = load_external_observations(
+            &file_path,
+            Some("fixture-1"),
+            SOURCE_SHA256,
+            100,
+            80,
+            &timeline(),
+            0.0,
+            0.0005,
+        )
+        .expect("should successfully load external observations from file");
+
+        assert_eq!(imported.raw_observations.len(), 3);
+        assert_eq!(imported.tracker_provenance.id, "external-tracker");
+        assert_eq!(
+            imported
+                .tracker_provenance
+                .implementation
+                .parameters
+                .get(PREDICTION_SHA256_PARAMETER),
+            Some(&ParameterValue::Text(expected_sha256))
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn load_external_observations_nonexistent_file_error() {
+        let non_existent_path = std::env::temp_dir().join(format!(
+            "openbar-ext-obs-nonexistent-{}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&non_existent_path);
+
+        let error = load_external_observations(
+            &non_existent_path,
+            Some("fixture-1"),
+            SOURCE_SHA256,
+            100,
+            80,
+            &timeline(),
+            0.0,
+            0.0005,
+        )
+        .expect_err("nonexistent file should return an error");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to read external observations"),
+            "Error string was: {error}"
+        );
+    }
+
+    #[test]
+    fn load_external_observations_invalid_json_error() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openbar-ext-obs-test-invalid-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("invalid.json");
+        fs::write(&file_path, b"{ invalid json content }").unwrap();
+
+        let error = load_external_observations(
+            &file_path,
+            Some("fixture-1"),
+            SOURCE_SHA256,
+            100,
+            80,
+            &timeline(),
+            0.0,
+            0.0005,
+        )
+        .expect_err("invalid json file should return an error");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to parse external observations"),
+            "Error string was: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }
