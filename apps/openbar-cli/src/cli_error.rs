@@ -95,6 +95,11 @@ impl CliError {
     pub const fn exit_code(&self) -> i32 {
         self.kind.exit_code()
     }
+
+    #[allow(dead_code)]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl fmt::Display for CliError {

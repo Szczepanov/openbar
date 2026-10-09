@@ -1624,11 +1624,11 @@ mod tests {
                     &["--filter-window-s", value, "--filter-max-gap-s", "0.2"],
                 );
                 if filter == "savitzky-golay" {
-                    args.extend(strings(&["--filter-polynomial-order", "2"]));
+                    args.extend(["--filter-polynomial-order", "2"].map(String::from));
                 }
                 let error = parse_args(args).unwrap_err();
                 assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-                assert!(error.to_string().contains("--filter-window-s"));
+                assert!(error.message().contains("--filter-window-s"));
             }
         }
     }
