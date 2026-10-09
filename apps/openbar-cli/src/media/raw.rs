@@ -2,6 +2,7 @@
 
 use super::{DecodedFrame, MediaError, TimeRange};
 use openbar_tracking::GrayFrame;
+use std::borrow::Cow;
 use std::io::{ErrorKind, Read};
 
 pub struct RawFrameLayout {
@@ -45,7 +46,7 @@ pub fn read_gray_frames<R: Read>(
                 let image = GrayFrame::try_new(layout.width_px, layout.height_px, buffer.clone())
                     .map_err(|error| MediaError::InvalidFrame {
                     index: decoded,
-                    detail: error.to_string(),
+                    detail: error,
                 })?;
                 frames.push(DecodedFrame {
                     timestamp_s,
@@ -76,7 +77,7 @@ fn read_up_to<R: Read>(reader: &mut R, buffer: &mut [u8]) -> Result<usize, Media
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
             Err(error) => {
                 return Err(MediaError::Io {
-                    context: "failed to read decoded frames from ffmpeg".to_owned(),
+                    context: Cow::Borrowed("failed to read decoded frames from ffmpeg"),
                     detail: error.to_string(),
                 })
             }

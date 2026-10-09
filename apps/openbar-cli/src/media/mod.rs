@@ -128,7 +128,7 @@ impl ProbedVideo {
         let prober_version = ffmpeg::tool_version(ffmpeg::FFPROBE)?;
         let decoder_version = ffmpeg::tool_version(ffmpeg::FFMPEG)?;
         let source_sha256 = file_sha256_hex(path).map_err(|error| MediaError::Io {
-            context: format!("failed to read '{}'", path.display()),
+            context: format!("failed to read '{}'", path.display()).into(),
             detail: error.to_string(),
         })?;
         let probe = ffmpeg::probe(path)?;
