@@ -930,11 +930,11 @@ pub enum FilterBenchmarkError {
     },
     InvalidReferenceSample {
         index: usize,
-        reason: String,
+        reason: crate::trajectory::TrajectoryValidationError,
     },
     InvalidFilteredSample {
         index: usize,
-        reason: String,
+        reason: crate::trajectory::TrajectoryValidationError,
     },
     TimestampMismatch {
         index: usize,
@@ -1042,16 +1042,10 @@ pub fn evaluate_filter_case(
     for (index, (truth, actual)) in reference.iter().zip(filtered).enumerate() {
         truth
             .validate()
-            .map_err(|error| FilterBenchmarkError::InvalidReferenceSample {
-                index,
-                reason: error.to_string(),
-            })?;
+            .map_err(|reason| FilterBenchmarkError::InvalidReferenceSample { index, reason })?;
         actual
             .validate()
-            .map_err(|error| FilterBenchmarkError::InvalidFilteredSample {
-                index,
-                reason: error.to_string(),
-            })?;
+            .map_err(|reason| FilterBenchmarkError::InvalidFilteredSample { index, reason })?;
 
         if truth.timestamp_s != actual.timestamp_s {
             return Err(FilterBenchmarkError::TimestampMismatch {
