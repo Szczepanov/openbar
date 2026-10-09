@@ -10,6 +10,7 @@ use openbar_tracking::{
     TemplateMatchTracker, TrackerObservationState, TrackerRun,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
@@ -278,8 +279,13 @@ fn collect_flag_values(args: &[String]) -> AnyResult<Option<BTreeMap<&'static st
         let value = args
             .get(index + 1)
             .ok_or_else(|| data_error(format!("{key} requires a value")))?;
-        if values.insert(key, value.clone()).is_some() {
-            return Err(data_error(format!("{key} was given more than once")));
+        match values.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(value.clone());
+            }
+            Entry::Occupied(_) => {
+                return Err(data_error(format!("{key} was given more than once")));
+            }
         }
         index += 2;
     }
