@@ -629,11 +629,29 @@ mod tests {
     }
 
     #[test]
-    fn converts_standard_plate_scale() {
+    fn plate_calibration_try_new_valid_inputs_and_getters() {
         let calibration = PlateCalibration::try_new(0.45, 244.0).unwrap();
 
+        assert_eq!(calibration.diameter_m(), 0.45);
+        assert_eq!(calibration.diameter_px(), 244.0);
+        assert_eq!(calibration.metres_per_pixel(), 0.45 / 244.0);
         assert!((calibration.metres_per_pixel() - 0.001_844_262_295).abs() < 1e-12);
         assert!((calibration.pixels_to_metres(110.0).unwrap() - 0.202_868_852_459).abs() < 1e-12);
+    }
+
+    #[test]
+    fn plate_calibration_try_new_derived_scale_error_conditions() {
+        // Overflow to infinity produces NonFiniteDerivedScale
+        assert_eq!(
+            PlateCalibration::try_new(f64::MAX, 1.0e-300),
+            Err(CalibrationError::NonFiniteDerivedScale)
+        );
+
+        // Underflow to 0.0 produces NonPositiveDerivedScale
+        assert_eq!(
+            PlateCalibration::try_new(1.0e-300, f64::MAX),
+            Err(CalibrationError::NonPositiveDerivedScale)
+        );
     }
 
     #[test]
