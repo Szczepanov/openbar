@@ -84,10 +84,40 @@ fn persisted_confidence(value: f32) -> f64 {
     value.to_string().parse().unwrap_or(f64::from(value))
 }
 
+struct StackBuf<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+}
+
+impl fmt::Write for StackBuf<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        if self.len + bytes.len() > self.buf.len() {
+            return Err(fmt::Error);
+        }
+        self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+        self.len += bytes.len();
+        Ok(())
+    }
+}
+
 /// Restores the `f32` threshold that was applied. Narrowing through the shortest decimal is a
-/// single correctly rounded step, so it is exact for every value `persisted_confidence` writes.
+/// single correctly rounded step, using a stack buffer to avoid heap allocation.
 fn narrow_confidence(value: f64) -> f32 {
-    value.to_string().parse().unwrap_or(value as f32)
+    use fmt::Write;
+    let mut arr = [0u8; 64];
+    let mut buf = StackBuf {
+        buf: &mut arr,
+        len: 0,
+    };
+    if write!(buf, "{value}").is_ok() {
+        if let Ok(s) = std::str::from_utf8(&buf.buf[..buf.len]) {
+            if let Ok(parsed) = s.parse::<f32>() {
+                return parsed;
+            }
+        }
+    }
+    value as f32
 }
 
 fn numeric_parameter(
