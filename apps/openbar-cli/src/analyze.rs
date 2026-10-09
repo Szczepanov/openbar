@@ -544,11 +544,12 @@ fn collect_flag_values(args: &[String]) -> CliResult<(BTreeMap<String, String>, 
         let value = args
             .get(index + 1)
             .ok_or_else(|| CliError::invalid_input(format!("{flag} requires a value")))?;
-        if values.insert(flag.to_owned(), value.clone()).is_some() {
+        if values.contains_key(flag) {
             return Err(CliError::invalid_input(format!(
                 "{flag} was given more than once"
             )));
         }
+        values.insert(flag.to_owned(), value.clone());
         index += 2;
     }
     Ok((values, force))
@@ -1609,7 +1610,7 @@ mod tests {
                 let error = parse_args(args).unwrap_err();
                 assert_eq!(error.kind(), CliErrorKind::InvalidInput);
                 assert!(error
-                    .to_string()
+                    .message()
                     .contains("exactly one of --filter-window and --filter-window-s"));
             }
         }
@@ -1628,7 +1629,7 @@ mod tests {
                 }
                 let error = parse_args(args).unwrap_err();
                 assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-                assert!(error.to_string().contains("--filter-window-s"));
+                assert!(error.message().contains("--filter-window-s"));
             }
         }
     }
@@ -1639,7 +1640,7 @@ mod tests {
             let error =
                 parse_args(smoothing_args(filter, &["--filter-window-s", "0.25"])).unwrap_err();
             assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-            assert!(error.to_string().contains("--filter-window-s is not valid"));
+            assert!(error.message().contains("--filter-window-s is not valid"));
         }
     }
 
@@ -1664,7 +1665,7 @@ mod tests {
             ))
             .unwrap_err();
             assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-            assert!(error.to_string().contains(message));
+            assert!(error.message().contains(message));
         }
     }
 
