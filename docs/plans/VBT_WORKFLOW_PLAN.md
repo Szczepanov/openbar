@@ -507,9 +507,9 @@ analyses (CSRT), reports and session record (the recorded commands leave out `--
 `--watch <folder>` first snapshots every `vbt-session-<session>*.csv` already there (modification time
 and size) and ignores those files unless they change, so an old download from an earlier attempt is
 never run. The wide match covers the browsers' duplicate names (Chrome `X (1).csv`, Firefox and
-Safari `X(1).csv` or `X-1.csv`). It polls every 2 s, reads a new file once its size is stable across
-two polls, refuses two new candidates as ambiguous, and stops after `--watch-timeout-s` (default
-900 s, at most 6 h) with a message naming the ignored files.
+Safari `X(1).csv` or `X-1.csv`). It polls every 2 s, reads a new file once its bytes, modification
+time and size match across two polls (#114), refuses two new candidates as ambiguous, and stops
+after `--watch-timeout-s` (default 900 s, at most 6 h) with a message naming the ignored files.
 
 Tests: `research/vbt-workflow/tests/test_vbt_session.py`, `test_session_review_fixes.py`,
 `test_session_watch.py`, `test_session_contract.py`,
@@ -520,6 +520,13 @@ the test, `run` and a byte-identical `--force` re-run on the public synthetic fi
 Research-only machine initialization (#113) is specified in [VBT_RESEARCH_INITIALIZATION.md](../validation/VBT_RESEARCH_INITIALIZATION.md), bounded by the [proceed decision](../analysis/VBT_INITIALIZATION_DECISION.md). `vbt_session.py init-research --session <id> --profile <profile.json>` is a separate, opt-in command. It turns an ingested session's seed-frame suggestions into `machine-init.json` for clips whose suggestions pass the reason checks, and sends every other clip to this page. The record is never human-confirmed, is research-only and is not consumer-eligible. `vbt_session.py run-research --session <id> --profile <profile.json> --tracker-policy <policy> --preset <preset>` then tracks and analyzes the initialized clips. All of its outputs, including a session-local research manifest and `machine-run-record.json`, go under `<session>/machine-run/`. It never writes the personal manifest, `analyses/` or `session-record.json`, and its analyses are not for the recommender import. The human-confirmation path above is unchanged.
 
 ### Step 3 — recommender import and report (Szczepanov/adaptive-training-recommender#981, #982)
+
+Local recovery, completion status and idempotent research-only outgoing validation
+are available through `run --resume`, `status` and `handoff` (#114). See
+[VBT_LOCAL_HANDOFF.md](../validation/VBT_LOCAL_HANDOFF.md) for commands, the inspected
+consumer API and its current tracker-parameter compatibility gate. The outgoing
+package preserves canonical bytes and assessments; local dry run is not consumer
+acceptance or authorization to switch sources/write eligible live trials before #79.
 
 - **One analysis per lift.** Import exactly one `analysis-v1` per lift into the recommender (3a). An
   output folder can hold `<id>.opencv-csrt.analysis-v1.json`, `<id>.sam2.1-bplus-circle.analysis-v1.json`

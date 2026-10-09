@@ -99,6 +99,31 @@ class SessionEndToEndTests(unittest.TestCase):
         self.assertEqual(sorted(first), sorted(second))
         for name in first:
             self.assertEqual(first[name], second[name], name)
+        self.main(["status", *self.common])
+        self.main([*run, "--resume"])
+        self.assertEqual({path.relative_to(session).as_posix(): path.read_bytes()
+                          for path in sorted(session.rglob("*")) if path.is_file()}, second)
+        assessments = self.dir / "assessments"
+        assessments.mkdir()
+        assessment = assessments / f"{fixture_id}.assessment-v1.json"
+        cli = ROOT / "target" / "release" / ("openbar-cli.exe" if os.name == "nt" else "openbar-cli")
+        result = subprocess.run([sys.executable, str(WORKFLOW_DIR / "assess_clip.py"), "--run-record",
+                                 str(analyses / f"{fixture_id}.opencv-csrt.run-record.json"), "--fixture-id", fixture_id,
+                                 "--openbar-cli", str(cli), "--output", str(assessment)], cwd=ROOT,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        outgoing = self.dir / "outgoing"
+        handoff = ["handoff", *self.common, "--tracker-policy", "csrt-all-v1", "--assessments-dir", str(assessments),
+                   "--output-dir", str(outgoing)]
+        self.main([*handoff, "--dry-run"])
+        self.assertFalse(outgoing.exists())
+        self.main(handoff)
+        before = {path.name: path.read_bytes() for path in outgoing.iterdir()}
+        self.main(handoff)
+        self.assertEqual({path.name: path.read_bytes() for path in outgoing.iterdir()}, before)
+        analysis = analyses / f"{fixture_id}.opencv-csrt.analysis-v1.json"
+        self.assertEqual((outgoing / analysis.name).read_bytes(), analysis.read_bytes())
+        self.assertEqual((outgoing / assessment.name).read_bytes(), assessment.read_bytes())
         self.assertEqual(session_contract.FORMAT, "openbar-vbt-session-v1")
 
 

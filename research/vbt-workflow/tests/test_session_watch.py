@@ -94,6 +94,19 @@ class WatchTests(SessionTestCase):
             self.watch(on_sleep)
         self.assertIn("several new session CSVs", str(caught.exception))
 
+    def test_same_size_rewrite_and_disappearance_reset_stability(self) -> None:
+        def on_sleep(count):
+            path = self.downloads / NAME
+            if count == 1:
+                path.write_bytes(b"old\n")
+            elif count == 2:
+                path.unlink()
+            elif count == 3:
+                path.write_bytes(b"new\n")
+            elif count == 4:
+                path.write_bytes(b"yes\n")
+        self.assertEqual(self.watch(on_sleep), b"yes\n")
+
     def test_other_files_are_ignored(self) -> None:
         def on_sleep(count: int) -> None:
             if count == 1:

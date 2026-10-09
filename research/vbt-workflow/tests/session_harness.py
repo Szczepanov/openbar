@@ -132,6 +132,7 @@ class SessionTestCase(unittest.TestCase):
         return self.main(argv, suggester=lambda frame: json.loads(json.dumps(suggestions or fakes.suggestions())))
 
     def main(self, argv: list[str], runner: SessionRunner | None = None, **kwargs: Any) -> tuple[int, str, str]:
+        kwargs.setdefault("sleep", lambda seconds: None)
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = vbt_session.main(argv, runner=runner or SessionRunner(), cropper=fake_cropper, **kwargs)

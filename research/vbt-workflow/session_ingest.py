@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -115,13 +116,44 @@ def list_inbox(inbox: Path) -> list[Path]:
                   key=lambda path: path.name)
 
 
+def inbox_snapshot(inbox: Path) -> dict[Path, tuple[int, int, str | None]]:
+    """Streaming hashes also detect equal-size replacements with a preserved modification time."""
+    found = {}
+    for path in list_inbox(inbox):
+        stamp = (-1, 0, None)
+        try:
+            info = path.stat()
+            stamp = (info.st_mtime_ns, info.st_size, None)
+            found[path] = (info.st_mtime_ns, info.st_size, analyze_lift.file_sha256(path))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            found[path] = stamp  # still a candidate while the sync client holds it unreadable
+    return found
+
+
+def stable_inbox(inbox: Path, timeout_s: float, clock: Any, sleep: Any) -> dict[Path, str]:
+    deadline = clock() + timeout_s
+    last = None
+    while True:
+        current = inbox_snapshot(inbox)
+        if not current:
+            return {}
+        if current == last and all(stamp[1] > 0 and stamp[2] is not None for stamp in current.values()):
+            return {path: stamp[2] for path, stamp in current.items() if stamp[2] is not None}
+        if clock() >= deadline:
+            raise WorkflowError(f"inbox files did not become stable within {timeout_s:g} s; incomplete arrivals are not imported")
+        last = current
+        sleep(2.0)
+
+
 def copy_verified(source: Path, target: Path, sha256: str) -> None:
     """Byte copy through a staging name; the copy must hash to the source's SHA-256."""
     staging = target.with_name(f".{target.name}.tmp")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         shutil.copyfile(source, staging)
-        if analyze_lift.file_sha256(staging) != sha256:
+        if analyze_lift.file_sha256(staging) != sha256 or analyze_lift.file_sha256(source) != sha256:
             raise WorkflowError(f"copy of {source.name} does not match its SHA-256; the inbox file may still be "
                                 "syncing, so try again once it is complete")
         os.replace(staging, target)
@@ -129,9 +161,10 @@ def copy_verified(source: Path, target: Path, sha256: str) -> None:
         staging.unlink(missing_ok=True)
 
 
-def import_video(source: Path, media_dir: Path, registered: list[dict[str, Any]]) -> tuple[Path, str, str]:
+def import_video(source: Path, media_dir: Path, registered: list[dict[str, Any]], sha256: str) -> tuple[Path, str, str]:
     """Return (media path in the repository, SHA-256, action). Never overwrites a different file."""
-    sha256 = analyze_lift.file_sha256(source)
+    if analyze_lift.file_sha256(source) != sha256:
+        raise WorkflowError(f"{source.name} changed after inbox planning; retry once stable")
     for fixture in registered:
         if str(fixture.get("media", {}).get("sha256", "")).lower() == sha256:
             path = analyze_lift.ROOT / fixture["media"]["repository_path"]
@@ -226,15 +259,16 @@ def parse_at_s(values: list[str]) -> dict[str, float]:
 
 # --- Command -------------------------------------------------------------------------------------
 
-def plan_clips(previous: dict[str, Any] | None, inbox_files: list[Path], registered: list[dict[str, Any]],
+def plan_clips(previous: dict[str, Any] | None, inbox_files: dict[Path, str], registered: list[dict[str, Any]],
                include_registered: bool) -> tuple[list[dict[str, Any]], list[str]]:
     """Existing session clips keep their place; new inbox videos follow in file-name order."""
     clips = [dict(clip) for clip in (previous or {}).get("clips", [])]
     known = {clip["sha256"] for clip in clips}
     registered_sha = {str(f.get("media", {}).get("sha256", "")).lower(): f for f in registered}
     notes = []
-    for source in inbox_files:
-        sha256 = analyze_lift.file_sha256(source)
+    for source, sha256 in sorted(inbox_files.items()):
+        if analyze_lift.file_sha256(source) != sha256:
+            raise WorkflowError(f"{source.name} changed after stable inbox polling; retry once stable")
         if sha256 in known:
             continue
         if sha256 in registered_sha and not include_registered:
@@ -249,7 +283,7 @@ def plan_clips(previous: dict[str, Any] | None, inbox_files: list[Path], registe
 def ingest_clip(clip: dict[str, Any], args: argparse.Namespace, registered: list[dict[str, Any]],
                 directory: Path, overrides: dict[str, float]) -> tuple[dict[str, Any], dict[str, Any], str]:
     if "source" in clip:
-        media, sha256, action = import_video(clip["source"], args.media_dir, registered)
+        media, sha256, action = import_video(clip["source"], args.media_dir, registered, clip["sha256"])
         original = clip["source"].name
     else:
         media, sha256, action = analyze_lift.ROOT / clip["media_path"], clip["sha256"], "in session"
@@ -274,7 +308,8 @@ def ingest_clip(clip: dict[str, Any], args: argparse.Namespace, registered: list
     }, entry, action
 
 
-def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None) -> int:
+def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None,
+                   clock: Any = time.monotonic, sleep: Any = time.sleep) -> int:
     manifest = analyze_lift.require_personal_manifest(args.manifest)
     require_allowed(args.media_dir, "--media-dir")
     directory = session_dir(args.sessions_root, args.session)
@@ -288,7 +323,8 @@ def command_ingest(args: argparse.Namespace, suggester: Suggester | None = None)
     overrides = parse_at_s(args.at_s)
     suggest, environment = (suggester, None) if suggester is not None else load_default_suggester()
     registered = analyze_lift.load_manifest_fixtures(manifest)
-    planned, notes = plan_clips(previous, list_inbox(args.inbox), registered, args.include_registered)
+    planned, notes = plan_clips(previous, stable_inbox(args.inbox, args.inbox_timeout_s, clock, sleep),
+                               registered, args.include_registered)
     if not planned:
         raise WorkflowError(f"no new videos in {args.inbox} and no clips in session {args.session}")
     ingested = [ingest_clip(clip, args, registered, directory, overrides) for clip in planned]
