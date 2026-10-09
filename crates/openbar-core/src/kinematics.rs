@@ -78,22 +78,26 @@ impl KinematicsConfig {
     }
 }
 
-/// Shortest decimal that round-trips the `f32` threshold, so `0.4` is persisted as `0.4` rather
-/// than its widened binary value `0.4000000059604645`.
-fn persisted_confidence(value: f32) -> f64 {
-    value.to_string().parse().unwrap_or(f64::from(value))
-}
-
-struct StackBuf<'a> {
+struct StackWriter<'a> {
     buf: &'a mut [u8],
     len: usize,
 }
 
-impl fmt::Write for StackBuf<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
+impl<'a> StackWriter<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, len: 0 }
+    }
+
+    fn as_str(&self) -> Option<&str> {
+        std::str::from_utf8(&self.buf[..self.len]).ok()
+    }
+}
+
+impl<'a> std::fmt::Write for StackWriter<'a> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
         let bytes = s.as_bytes();
         if self.len + bytes.len() > self.buf.len() {
-            return Err(fmt::Error);
+            return Err(std::fmt::Error);
         }
         self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
         self.len += bytes.len();
@@ -101,17 +105,30 @@ impl fmt::Write for StackBuf<'_> {
     }
 }
 
+/// Shortest decimal that round-trips the `f32` threshold, so `0.4` is persisted as `0.4` rather
+/// than its widened binary value `0.4000000059604645`.
+fn persisted_confidence(value: f32) -> f64 {
+    use std::fmt::Write;
+    let mut buf = [0u8; 64];
+    let mut writer = StackWriter::new(&mut buf);
+    if write!(writer, "{value}").is_ok() {
+        if let Some(s) = writer.as_str() {
+            if let Ok(parsed) = s.parse::<f64>() {
+                return parsed;
+            }
+        }
+    }
+    f64::from(value)
+}
+
 /// Restores the `f32` threshold that was applied. Narrowing through the shortest decimal is a
-/// single correctly rounded step, using a stack buffer to avoid heap allocation.
+/// single correctly rounded step, so it is exact for every value `persisted_confidence` writes.
 fn narrow_confidence(value: f64) -> f32 {
-    use fmt::Write;
-    let mut arr = [0u8; 64];
-    let mut buf = StackBuf {
-        buf: &mut arr,
-        len: 0,
-    };
-    if write!(buf, "{value}").is_ok() {
-        if let Ok(s) = std::str::from_utf8(&buf.buf[..buf.len]) {
+    use std::fmt::Write;
+    let mut buf = [0u8; 64];
+    let mut writer = StackWriter::new(&mut buf);
+    if write!(writer, "{value}").is_ok() {
+        if let Some(s) = writer.as_str() {
             if let Ok(parsed) = s.parse::<f32>() {
                 return parsed;
             }
@@ -1182,5 +1199,83 @@ mod tests {
             verify_kinematic_trajectory(&samples, &trajectory),
             Err(KinematicsError::TrajectoryMismatch { index: 1 })
         );
+    }
+
+    #[test]
+    fn persisted_and_narrow_confidence_round_trip_edge_cases() {
+        let test_cases = [
+            0.0_f32,
+            0.000_001_f32,
+            0.1_f32,
+            0.25_f32,
+            0.4_f32,
+            0.5_f32,
+            0.75_f32,
+            0.9999_f32,
+            1.0_f32,
+            f32::MIN_POSITIVE,
+            f32::MAX,
+        ];
+        for &val in &test_cases {
+            let persisted = persisted_confidence(val);
+            let narrowed = narrow_confidence(persisted);
+            assert_eq!(
+                val, narrowed,
+                "Failed to round-trip f32 confidence value {val}"
+            );
+
+            let expected_persisted: f64 = val.to_string().parse().unwrap_or(f64::from(val));
+            let expected_narrowed: f32 = persisted.to_string().parse().unwrap_or(persisted as f32);
+            assert_eq!(
+                persisted, expected_persisted,
+                "persisted_confidence mismatches to_string for {val}"
+            );
+            assert_eq!(
+                narrowed, expected_narrowed,
+                "narrow_confidence mismatches to_string for {persisted}"
+            );
+        }
+
+        assert_eq!(
+            persisted_confidence(f32::NAN).to_bits(),
+            f64::from(f32::NAN).to_bits()
+        );
+        assert_eq!(
+            narrow_confidence(f64::NAN).to_bits(),
+            (f64::NAN as f32).to_bits()
+        );
+        assert_eq!(
+            persisted_confidence(f32::INFINITY),
+            f64::from(f32::INFINITY)
+        );
+        assert_eq!(narrow_confidence(f64::INFINITY), f64::INFINITY as f32);
+    }
+
+    #[test]
+    fn benchmark_confidence_conversions() {
+        use std::time::Instant;
+        let test_values_f32: Vec<f32> = (0..10_000).map(|i| i as f32 / 10000.0).collect();
+        let test_values_f64: Vec<f64> = test_values_f32
+            .iter()
+            .map(|&v| persisted_confidence(v))
+            .collect();
+
+        let start = Instant::now();
+        let mut sum_f64 = 0.0;
+        let mut sum_f32 = 0.0;
+        for _ in 0..100 {
+            for &v in &test_values_f32 {
+                sum_f64 += persisted_confidence(v);
+            }
+            for &v in &test_values_f64 {
+                sum_f32 += f64::from(narrow_confidence(v));
+            }
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "benchmark_confidence_conversions: elapsed={:?} (2,000,000 ops)",
+            elapsed
+        );
+        assert!(sum_f64 > 0.0 && sum_f32 > 0.0);
     }
 }

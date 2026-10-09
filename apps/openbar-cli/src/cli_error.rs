@@ -88,6 +88,10 @@ impl CliError {
         Self::new(CliErrorKind::Internal, message)
     }
 
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub const fn kind(&self) -> CliErrorKind {
         self.kind
     }
@@ -99,7 +103,7 @@ impl CliError {
 
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(self.message())
     }
 }
 
