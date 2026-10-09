@@ -68,7 +68,7 @@ pub enum MediaError {
     },
     InvalidFrame {
         index: usize,
-        detail: String,
+        detail: openbar_tracking::TrackerError,
     },
     Io {
         context: String,

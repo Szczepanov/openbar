@@ -560,12 +560,12 @@ pub fn apply_filter(
 fn validate_input(samples: &[MetricPositionSample]) -> Result<(), FilterError> {
     let mut previous_timestamp = None;
     for (index, sample) in samples.iter().copied().enumerate() {
-        sample
-            .validate()
-            .map_err(|error| FilterError::InvalidSample {
+        if let Err(error) = sample.validate() {
+            return Err(FilterError::InvalidSample {
                 index,
                 reason: error.to_string(),
-            })?;
+            });
+        }
         if let Some(previous) = previous_timestamp {
             if sample.timestamp_s <= previous {
                 return Err(FilterError::NonIncreasingTimestamp {
