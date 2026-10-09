@@ -25,7 +25,10 @@ pub(crate) fn render_svg(
     frame: Option<&SourceFrame>,
 ) -> String {
     let mut out = String::with_capacity(48 * 1024);
-    writeln!(out, r#"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1900" viewBox="0 0 1200 1900">"#).unwrap();
+    let _ = writeln!(
+        out,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1900" viewBox="0 0 1200 1900">"#
+    );
     out.push_str(r#"<style>text{font-family:monospace;fill:#111}.t{font-size:25px;font-weight:700}.h{font-size:17px;font-weight:700}.s{font-size:12px}.p{fill:#fafafa;stroke:#333}.g{stroke:#ddd}.r{fill:none;stroke:#1565c0;stroke-width:3}.f{fill:none;stroke:#ef6c00;stroke-width:3;stroke-dasharray:10 7}.seed{fill:none;stroke:#6a1b9a;stroke-width:3}.low{fill:#fff;stroke:#c62828;stroke-width:2}.b{fill:none;stroke:#555;stroke-width:1;stroke-dasharray:4 4;opacity:.65}.lost{stroke:#c62828;stroke-width:3}</style>
 "#);
     metadata(&mut out, analysis, analysis_path, frame);
@@ -67,11 +70,11 @@ pub(crate) fn render_svg(
 }
 
 fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&SourceFrame>) {
-    writeln!(out, "<metadata>").unwrap();
-    writeln!(out, "renderer={RENDERER_ID}@{RENDERER_VERSION}").unwrap();
-    writeln!(out, "analysis_path={}", esc(&path.display().to_string())).unwrap();
-    writeln!(out, "source_id={}", esc(&analysis.identity().source_id)).unwrap();
-    writeln!(
+    let _ = writeln!(out, "<metadata>");
+    let _ = writeln!(out, "renderer={RENDERER_ID}@{RENDERER_VERSION}");
+    let _ = writeln!(out, "analysis_path={}", esc(&path.display().to_string()));
+    let _ = writeln!(out, "source_id={}", esc(&analysis.identity().source_id));
+    let _ = writeln!(
         out,
         "source_sha256={}",
         analysis
@@ -79,9 +82,8 @@ fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&S
             .source_sha256
             .as_deref()
             .unwrap_or("not-recorded")
-    )
-    .unwrap();
-    writeln!(
+    );
+    let _ = writeln!(
         out,
         "pipeline={} git_commit={}",
         esc(&analysis.provenance().pipeline.openbar_version),
@@ -91,19 +93,17 @@ fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&S
             .git_commit
             .as_deref()
             .unwrap_or("not-recorded"))
-    )
-    .unwrap();
+    );
     if let Some(frame) = frame {
-        writeln!(
+        let _ = writeln!(
             out,
             "source_video={} frame_timestamp_s={:.9} frame_index={}",
             esc(&frame.source_path.display().to_string()),
             frame.timestamp_s,
             frame.frame_index
-        )
-        .unwrap();
+        );
     }
-    writeln!(out, "</metadata>").unwrap();
+    let _ = writeln!(out, "</metadata>");
 }
 
 fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, top: f64) -> f64 {
@@ -117,7 +117,11 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
     let y = top + 14.0;
     rect(out, left, y, w, h, "p");
     if let Some(frame) = frame {
-        writeln!(out, r#"<image data-layer="source-frame" x="{left:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}" href="{}" preserveAspectRatio="none"/>"#, frame.png_data_uri).unwrap();
+        let _ = writeln!(
+            out,
+            r#"<image data-layer="source-frame" x="{left:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}" href="{}" preserveAspectRatio="none"/>"#,
+            frame.png_data_uri
+        );
     } else {
         text(out, left + 10.0, y + 20.0, "source frame not supplied", "s");
     }
@@ -155,19 +159,23 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
     }
     let seed = analysis.manual_seed().target();
     let (sx, sy) = image_point(seed.center().x_px(), seed.center().y_px(), left, y, scale);
-    writeln!(
+    let _ = writeln!(
         out,
         r#"<circle class="seed" data-layer="manual-seed" cx="{sx:.3}" cy="{sy:.3}" r="{:.3}"/>"#,
         seed.radius_px() * scale
-    )
-    .unwrap();
+    );
 
     for sample in analysis.raw_observations() {
         if let Some(m) = sample.measurement {
             let (px, py) = image_point(m.x_px, m.y_px, left, y, scale);
             match sample.tracking_state {
                 TrackingState::Tracked => dot(out, px, py, 3.0, "tracked"),
-                TrackingState::LowConfidence => writeln!(out, r#"<circle class="low" data-state="low_confidence" cx="{px:.3}" cy="{py:.3}" r="6"/>"#).unwrap(),
+                TrackingState::LowConfidence => {
+                    let _ = writeln!(
+                        out,
+                        r#"<circle class="low" data-state="low_confidence" cx="{px:.3}" cy="{py:.3}" r="6"/>"#
+                    );
+                }
                 TrackingState::Lost => {}
             }
         }
@@ -290,18 +298,17 @@ fn velocity(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
         if let Some(value) = value {
             let px = time_x(analysis, sample.timestamp_s, X, PW);
             let py = value_y(value, limits, y);
-            write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' }).unwrap();
+            let _ = write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' });
             active = true;
         }
         prev = Some(sample.timestamp_s);
     }
-    writeln!(
+    let _ = writeln!(
         out,
         r#"<path class="r" data-layer="velocity" data-axis="{}" d="{}"/>"#,
         axis.name().to_ascii_lowercase(),
         d.trim()
-    )
-    .unwrap();
+    );
     labels(out, analysis, y, limits, "m/s");
     y + PH
 }
@@ -316,19 +323,18 @@ fn confidence(out: &mut String, analysis: &Analysis, top: f64) -> f64 {
         if let Some(m) = sample.measurement {
             let px = time_x(analysis, sample.timestamp_s, X, PW);
             let py = value_y(f64::from(m.confidence), (0.0, 1.0), y);
-            write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' }).unwrap();
+            let _ = write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' });
             active = true;
         } else {
             active = false;
         }
     }
     if !d.is_empty() {
-        writeln!(
+        let _ = writeln!(
             out,
             r#"<path class="r" data-layer="confidence" d="{}"/>"#,
             d.trim()
-        )
-        .unwrap();
+        );
     }
     for sample in analysis.raw_observations() {
         let px = time_x(analysis, sample.timestamp_s, X, PW);
@@ -431,16 +437,15 @@ fn metric_path(
     for (i, s) in samples.iter().copied().enumerate() {
         let px = time_x(analysis, s.timestamp_s, X, PW);
         let py = value_y(axis.pos(s), limits, top);
-        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' }).unwrap();
+        let _ = write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' });
     }
     if !d.is_empty() {
-        writeln!(
+        let _ = writeln!(
             out,
             r#"<path class="{class}" data-layer="{layer}" data-axis="{}" d="{}"/>"#,
             axis.name().to_ascii_lowercase(),
             d.trim()
-        )
-        .unwrap();
+        );
     }
 }
 fn pixel_path(
@@ -455,15 +460,14 @@ fn pixel_path(
     let mut d = String::new();
     for (i, (x, y)) in pts.iter().copied().enumerate() {
         let (px, py) = image_point(x, y, left, top, scale);
-        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' }).unwrap();
+        let _ = write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' });
     }
     if !d.is_empty() {
-        writeln!(
+        let _ = writeln!(
             out,
             r#"<path class="{class}" data-layer="{layer}" d="{}"/>"#,
             d.trim()
-        )
-        .unwrap();
+        );
     }
 }
 /// Maps a display pixel coordinate onto the drawn source frame. Integer coordinates are pixel
@@ -530,41 +534,53 @@ fn value_y(v: f64, (lo, hi): (f64, f64), top: f64) -> f64 {
 fn state(out: &mut String, x: f64, y: f64, s: TrackingState) {
     match s {
         TrackingState::Tracked => dot(out, x, y, 3.0, "tracked"),
-        TrackingState::LowConfidence => writeln!(
-            out,
-            r#"<circle class="low" data-state="low_confidence" cx="{x:.3}" cy="{y:.3}" r="5"/>"#
-        )
-        .unwrap(),
+        TrackingState::LowConfidence => {
+            let _ = writeln!(
+                out,
+                r#"<circle class="low" data-state="low_confidence" cx="{x:.3}" cy="{y:.3}" r="5"/>"#
+            );
+        }
         TrackingState::Lost => cross(out, x, y),
     }
 }
 fn dot(out: &mut String, x: f64, y: f64, r: f64, state: &str) {
-    writeln!(out, "<circle data-state=\"{state}\" cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"{r:.3}\" fill=\"#1565c0\"/>").unwrap();
+    let _ = writeln!(
+        out,
+        "<circle data-state=\"{state}\" cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"{r:.3}\" fill=\"#1565c0\"/>"
+    );
 }
 fn cross(out: &mut String, x: f64, y: f64) {
-    writeln!(out,r#"<g data-state="lost"><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/></g>"#,x-5.0,y-5.0,x+5.0,y+5.0,x-5.0,y+5.0,x+5.0,y-5.0).unwrap();
+    let _ = writeln!(
+        out,
+        r#"<g data-state="lost"><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/></g>"#,
+        x - 5.0,
+        y - 5.0,
+        x + 5.0,
+        y + 5.0,
+        x - 5.0,
+        y + 5.0,
+        x + 5.0,
+        y - 5.0
+    );
 }
 fn text(out: &mut String, x: f64, y: f64, v: &str, class: &str) {
-    writeln!(
+    let _ = writeln!(
         out,
         r#"<text class="{class}" x="{x:.3}" y="{y:.3}">{}</text>"#,
         esc(v)
-    )
-    .unwrap();
+    );
 }
 fn rect(out: &mut String, x: f64, y: f64, w: f64, h: f64, class: &str) {
-    writeln!(
+    let _ = writeln!(
         out,
         r#"<rect class="{class}" x="{x:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}"/>"#
-    )
-    .unwrap();
+    );
 }
 fn line(out: &mut String, x1: f64, y1: f64, x2: f64, y2: f64, class: &str) {
-    writeln!(
+    let _ = writeln!(
         out,
         r#"<line class="{class}" x1="{x1:.3}" y1="{y1:.3}" x2="{x2:.3}" y2="{y2:.3}"/>"#
-    )
-    .unwrap();
+    );
 }
 fn esc(v: &str) -> String {
     let mut o = String::new();
