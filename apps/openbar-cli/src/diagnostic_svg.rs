@@ -25,14 +25,28 @@ pub(crate) fn render_svg(
     frame: Option<&SourceFrame>,
 ) -> String {
     let mut out = String::with_capacity(48 * 1024);
-    writeln!(out, r#"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1900" viewBox="0 0 1200 1900">"#).unwrap();
+    render_svg_impl(&mut out, analysis, analysis_path, frame)
+        .expect("writing SVG into String buffer should not fail");
+    out
+}
+
+fn render_svg_impl(
+    out: &mut String,
+    analysis: &Analysis,
+    analysis_path: &Path,
+    frame: Option<&SourceFrame>,
+) -> std::fmt::Result {
+    writeln!(
+        out,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1900" viewBox="0 0 1200 1900">"#
+    )?;
     out.push_str(r#"<style>text{font-family:monospace;fill:#111}.t{font-size:25px;font-weight:700}.h{font-size:17px;font-weight:700}.s{font-size:12px}.p{fill:#fafafa;stroke:#333}.g{stroke:#ddd}.r{fill:none;stroke:#1565c0;stroke-width:3}.f{fill:none;stroke:#ef6c00;stroke-width:3;stroke-dasharray:10 7}.seed{fill:none;stroke:#6a1b9a;stroke-width:3}.low{fill:#fff;stroke:#c62828;stroke-width:2}.b{fill:none;stroke:#555;stroke-width:1;stroke-dasharray:4 4;opacity:.65}.lost{stroke:#c62828;stroke-width:3}</style>
 "#);
-    metadata(&mut out, analysis, analysis_path, frame);
+    metadata(out, analysis, analysis_path, frame)?;
 
-    text(&mut out, X, 42.0, "OpenBar diagnostic report", "t");
+    text(out, X, 42.0, "OpenBar diagnostic report", "t")?;
     text(
-        &mut out,
+        out,
         X,
         66.0,
         &format!(
@@ -46,31 +60,42 @@ pub(crate) fn render_svg(
             analysis.video().source_rotation_deg
         ),
         "s",
-    );
+    )?;
 
-    let mut y = spatial(&mut out, analysis, frame, 95.0) + 26.0;
-    y = position(&mut out, analysis, Axis::X, y) + 22.0;
-    y = position(&mut out, analysis, Axis::Y, y) + 22.0;
-    y = velocity(&mut out, analysis, Axis::X, y) + 22.0;
-    y = velocity(&mut out, analysis, Axis::Y, y) + 22.0;
-    y = confidence(&mut out, analysis, y) + 24.0;
+    let mut y = spatial(out, analysis, frame, 95.0)? + 26.0;
+    y = position(out, analysis, Axis::X, y)? + 22.0;
+    y = position(out, analysis, Axis::Y, y)? + 22.0;
+    y = velocity(out, analysis, Axis::X, y)? + 22.0;
+    y = velocity(out, analysis, Axis::Y, y)? + 22.0;
+    y = confidence(out, analysis, y)? + 24.0;
     text(
-        &mut out,
+        out,
         X,
         y,
         "solid=calibrated/raw; dashed=filtered; red ×=lost; hollow red=low confidence",
         "s",
-    );
-    text(&mut out, X, y + 17.0, "Rendering never runs tracking/filtering/calibration/kinematics and never interpolates missing spans.", "s");
+    )?;
+    text(
+        out,
+        X,
+        y + 17.0,
+        "Rendering never runs tracking/filtering/calibration/kinematics and never interpolates missing spans.",
+        "s",
+    )?;
     out.push_str("</svg>\n");
-    out
+    Ok(())
 }
 
-fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&SourceFrame>) {
-    writeln!(out, "<metadata>").unwrap();
-    writeln!(out, "renderer={RENDERER_ID}@{RENDERER_VERSION}").unwrap();
-    writeln!(out, "analysis_path={}", esc(&path.display().to_string())).unwrap();
-    writeln!(out, "source_id={}", esc(&analysis.identity().source_id)).unwrap();
+fn metadata(
+    out: &mut String,
+    analysis: &Analysis,
+    path: &Path,
+    frame: Option<&SourceFrame>,
+) -> std::fmt::Result {
+    writeln!(out, "<metadata>")?;
+    writeln!(out, "renderer={RENDERER_ID}@{RENDERER_VERSION}")?;
+    writeln!(out, "analysis_path={}", esc(&path.display().to_string()))?;
+    writeln!(out, "source_id={}", esc(&analysis.identity().source_id))?;
     writeln!(
         out,
         "source_sha256={}",
@@ -79,8 +104,7 @@ fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&S
             .source_sha256
             .as_deref()
             .unwrap_or("not-recorded")
-    )
-    .unwrap();
+    )?;
     writeln!(
         out,
         "pipeline={} git_commit={}",
@@ -91,8 +115,7 @@ fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&S
             .git_commit
             .as_deref()
             .unwrap_or("not-recorded"))
-    )
-    .unwrap();
+    )?;
     if let Some(frame) = frame {
         writeln!(
             out,
@@ -100,14 +123,19 @@ fn metadata(out: &mut String, analysis: &Analysis, path: &Path, frame: Option<&S
             esc(&frame.source_path.display().to_string()),
             frame.timestamp_s,
             frame.frame_index
-        )
-        .unwrap();
+        )?;
     }
-    writeln!(out, "</metadata>").unwrap();
+    writeln!(out, "</metadata>")?;
+    Ok(())
 }
 
-fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, top: f64) -> f64 {
-    text(out, X, top, "Spatial trajectory overlay", "h");
+fn spatial(
+    out: &mut String,
+    analysis: &Analysis,
+    frame: Option<&SourceFrame>,
+    top: f64,
+) -> Result<f64, std::fmt::Error> {
+    text(out, X, top, "Spatial trajectory overlay", "h")?;
     let vw = f64::from(analysis.video().display_width_px);
     let vh = f64::from(analysis.video().display_height_px);
     let scale = (PW / vw).min(430.0 / vh);
@@ -115,11 +143,15 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
     let h = vh * scale;
     let left = X + (PW - w) / 2.0;
     let y = top + 14.0;
-    rect(out, left, y, w, h, "p");
+    rect(out, left, y, w, h, "p")?;
     if let Some(frame) = frame {
-        writeln!(out, r#"<image data-layer="source-frame" x="{left:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}" href="{}" preserveAspectRatio="none"/>"#, frame.png_data_uri).unwrap();
+        writeln!(
+            out,
+            r#"<image data-layer="source-frame" x="{left:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}" href="{}" preserveAspectRatio="none"/>"#,
+            frame.png_data_uri
+        )?;
     } else {
-        text(out, left + 10.0, y + 20.0, "source frame not supplied", "s");
+        text(out, left + 10.0, y + 20.0, "source frame not supplied", "s")?;
     }
 
     let stride = analysis.raw_observations().len().div_ceil(12).max(1);
@@ -134,13 +166,13 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
                     bounds.width_px * scale,
                     bounds.height_px * scale,
                     "b",
-                );
+                )?;
             }
         }
     }
 
     for segment in raw_segments(analysis) {
-        pixel_path(out, &segment, left, y, scale, "r", "raw-trajectory");
+        pixel_path(out, &segment, left, y, scale, "r", "raw-trajectory")?;
     }
     if let Some(filtered) = analysis.derived().filtered.as_ref() {
         let mpp = analysis.calibration().scale().metres_per_pixel();
@@ -150,7 +182,7 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
                 .iter()
                 .map(|s| (origin.x_px() + s.x_m / mpp, origin.y_px() - s.y_m / mpp))
                 .collect::<Vec<_>>();
-            pixel_path(out, &points, left, y, scale, "f", "filtered-trajectory");
+            pixel_path(out, &points, left, y, scale, "f", "filtered-trajectory")?;
         }
     }
     let seed = analysis.manual_seed().target();
@@ -159,24 +191,26 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
         out,
         r#"<circle class="seed" data-layer="manual-seed" cx="{sx:.3}" cy="{sy:.3}" r="{:.3}"/>"#,
         seed.radius_px() * scale
-    )
-    .unwrap();
+    )?;
 
     for sample in analysis.raw_observations() {
         if let Some(m) = sample.measurement {
             let (px, py) = image_point(m.x_px, m.y_px, left, y, scale);
             match sample.tracking_state {
-                TrackingState::Tracked => dot(out, px, py, 3.0, "tracked"),
-                TrackingState::LowConfidence => writeln!(out, r#"<circle class="low" data-state="low_confidence" cx="{px:.3}" cy="{py:.3}" r="6"/>"#).unwrap(),
+                TrackingState::Tracked => dot(out, px, py, 3.0, "tracked")?,
+                TrackingState::LowConfidence => writeln!(
+                    out,
+                    r#"<circle class="low" data-state="low_confidence" cx="{px:.3}" cy="{py:.3}" r="6"/>"#
+                )?,
                 TrackingState::Lost => {}
             }
         }
     }
     let ty = y + h + 16.0;
-    line(out, left, ty, left + w, ty, "g");
+    line(out, left, ty, left + w, ty, "g")?;
     for sample in analysis.raw_observations() {
         let px = time_x(analysis, sample.timestamp_s, left, w);
-        state(out, px, ty, sample.tracking_state);
+        state(out, px, ty, sample.tracking_state)?;
     }
     if let Some(frame) = frame {
         text(
@@ -188,21 +222,26 @@ fn spatial(out: &mut String, analysis: &Analysis, frame: Option<&SourceFrame>, t
                 frame.timestamp_s, frame.frame_index
             ),
             "s",
-        );
+        )?;
     }
-    ty + 22.0
+    Ok(ty + 22.0)
 }
 
-fn position(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 {
+fn position(
+    out: &mut String,
+    analysis: &Analysis,
+    axis: Axis,
+    top: f64,
+) -> Result<f64, std::fmt::Error> {
     text(
         out,
         X,
         top,
         &format!("{} position vs time (m)", axis.name()),
         "h",
-    );
+    )?;
     let y = top + 14.0;
-    rect(out, X, y, PW, PH, "p");
+    rect(out, X, y, PW, PH, "p")?;
     let calibrated = &analysis.derived().calibrated.samples;
     let mut values = calibrated
         .iter()
@@ -223,11 +262,11 @@ fn position(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
             range,
             "r",
             "calibrated-raw",
-        );
+        )?;
     }
     if let Some(filtered) = analysis.derived().filtered.as_ref() {
         for segment in metric_segments(analysis, &filtered.samples) {
-            metric_path(out, analysis, &segment, axis, y, range, "f", "filtered");
+            metric_path(out, analysis, &segment, axis, y, range, "f", "filtered")?;
         }
     } else {
         text(
@@ -236,22 +275,27 @@ fn position(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
             y + 20.0,
             "No filtered trajectory in canonical analysis.",
             "s",
-        );
+        )?;
     }
-    labels(out, analysis, y, range, "m");
-    y + PH
+    labels(out, analysis, y, range, "m")?;
+    Ok(y + PH)
 }
 
-fn velocity(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 {
+fn velocity(
+    out: &mut String,
+    analysis: &Analysis,
+    axis: Axis,
+    top: f64,
+) -> Result<f64, std::fmt::Error> {
     text(
         out,
         X,
         top,
         &format!("{} velocity vs time (m/s)", axis.name()),
         "h",
-    );
+    )?;
     let y = top + 14.0;
-    rect(out, X, y, PW, PH, "p");
+    rect(out, X, y, PW, PH, "p")?;
     let Some(k) = analysis.derived().kinematics.as_ref() else {
         text(
             out,
@@ -259,8 +303,8 @@ fn velocity(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
             y + 20.0,
             "No kinematic trajectory in canonical analysis.",
             "s",
-        );
-        return y + PH;
+        )?;
+        return Ok(y + PH);
     };
     let values = k
         .samples
@@ -275,8 +319,8 @@ fn velocity(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
             y + 20.0,
             "No supported velocity samples for this component.",
             "s",
-        );
-        return y + PH;
+        )?;
+        return Ok(y + PH);
     }
     let limits = range(&values, 0.05);
     let mut d = String::new();
@@ -290,7 +334,7 @@ fn velocity(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
         if let Some(value) = value {
             let px = time_x(analysis, sample.timestamp_s, X, PW);
             let py = value_y(value, limits, y);
-            write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' }).unwrap();
+            write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' })?;
             active = true;
         }
         prev = Some(sample.timestamp_s);
@@ -300,23 +344,22 @@ fn velocity(out: &mut String, analysis: &Analysis, axis: Axis, top: f64) -> f64 
         r#"<path class="r" data-layer="velocity" data-axis="{}" d="{}"/>"#,
         axis.name().to_ascii_lowercase(),
         d.trim()
-    )
-    .unwrap();
-    labels(out, analysis, y, limits, "m/s");
-    y + PH
+    )?;
+    labels(out, analysis, y, limits, "m/s")?;
+    Ok(y + PH)
 }
 
-fn confidence(out: &mut String, analysis: &Analysis, top: f64) -> f64 {
-    text(out, X, top, "Confidence / tracking state vs time", "h");
+fn confidence(out: &mut String, analysis: &Analysis, top: f64) -> Result<f64, std::fmt::Error> {
+    text(out, X, top, "Confidence / tracking state vs time", "h")?;
     let y = top + 14.0;
-    rect(out, X, y, PW, PH, "p");
+    rect(out, X, y, PW, PH, "p")?;
     let mut d = String::new();
     let mut active = false;
     for sample in analysis.raw_observations() {
         if let Some(m) = sample.measurement {
             let px = time_x(analysis, sample.timestamp_s, X, PW);
             let py = value_y(f64::from(m.confidence), (0.0, 1.0), y);
-            write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' }).unwrap();
+            write!(d, "{}{px:.3},{py:.3} ", if active { 'L' } else { 'M' })?;
             active = true;
         } else {
             active = false;
@@ -327,8 +370,7 @@ fn confidence(out: &mut String, analysis: &Analysis, top: f64) -> f64 {
             out,
             r#"<path class="r" data-layer="confidence" d="{}"/>"#,
             d.trim()
-        )
-        .unwrap();
+        )?;
     }
     for sample in analysis.raw_observations() {
         let px = time_x(analysis, sample.timestamp_s, X, PW);
@@ -341,10 +383,10 @@ fn confidence(out: &mut String, analysis: &Analysis, top: f64) -> f64 {
             (0.0, 1.0),
             y,
         );
-        state(out, px, py, sample.tracking_state);
+        state(out, px, py, sample.tracking_state)?;
     }
-    labels(out, analysis, y, (0.0, 1.0), "confidence");
-    y + PH
+    labels(out, analysis, y, (0.0, 1.0), "confidence")?;
+    Ok(y + PH)
 }
 
 #[derive(Clone, Copy)]
@@ -426,12 +468,12 @@ fn metric_path(
     limits: (f64, f64),
     class: &str,
     layer: &str,
-) {
+) -> std::fmt::Result {
     let mut d = String::new();
     for (i, s) in samples.iter().copied().enumerate() {
         let px = time_x(analysis, s.timestamp_s, X, PW);
         let py = value_y(axis.pos(s), limits, top);
-        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' }).unwrap();
+        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' })?;
     }
     if !d.is_empty() {
         writeln!(
@@ -439,10 +481,11 @@ fn metric_path(
             r#"<path class="{class}" data-layer="{layer}" data-axis="{}" d="{}"/>"#,
             axis.name().to_ascii_lowercase(),
             d.trim()
-        )
-        .unwrap();
+        )?;
     }
+    Ok(())
 }
+
 fn pixel_path(
     out: &mut String,
     pts: &[(f64, f64)],
@@ -451,21 +494,22 @@ fn pixel_path(
     scale: f64,
     class: &str,
     layer: &str,
-) {
+) -> std::fmt::Result {
     let mut d = String::new();
     for (i, (x, y)) in pts.iter().copied().enumerate() {
         let (px, py) = image_point(x, y, left, top, scale);
-        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' }).unwrap();
+        write!(d, "{}{px:.3},{py:.3} ", if i == 0 { 'M' } else { 'L' })?;
     }
     if !d.is_empty() {
         writeln!(
             out,
             r#"<path class="{class}" data-layer="{layer}" d="{}"/>"#,
             d.trim()
-        )
-        .unwrap();
+        )?;
     }
+    Ok(())
 }
+
 /// Maps a display pixel coordinate onto the drawn source frame. Integer coordinates are pixel
 /// centres (ADR-0007), and the frame image places pixel `i` between `i` and `i + 1` image units,
 /// so the coordinate lands at `x + 0.5`.
@@ -473,22 +517,28 @@ fn image_point(x_px: f64, y_px: f64, left: f64, top: f64, scale: f64) -> (f64, f
     (left + (x_px + 0.5) * scale, top + (y_px + 0.5) * scale)
 }
 
-fn labels(out: &mut String, analysis: &Analysis, top: f64, limits: (f64, f64), unit: &str) {
-    line(out, X, top + PH / 2.0, X + PW, top + PH / 2.0, "g");
+fn labels(
+    out: &mut String,
+    analysis: &Analysis,
+    top: f64,
+    limits: (f64, f64),
+    unit: &str,
+) -> std::fmt::Result {
+    line(out, X, top + PH / 2.0, X + PW, top + PH / 2.0, "g")?;
     text(
         out,
         X + 5.0,
         top + 14.0,
         &format!("max {:.3} {unit}", limits.1),
         "s",
-    );
+    )?;
     text(
         out,
         X + 5.0,
         top + PH - 5.0,
         &format!("min {:.3} {unit}", limits.0),
         "s",
-    );
+    )?;
     text(
         out,
         X + PW - 180.0,
@@ -499,8 +549,10 @@ fn labels(out: &mut String, analysis: &Analysis, top: f64, limits: (f64, f64), u
             analysis.video().trim.end_s
         ),
         "s",
-    );
+    )?;
+    Ok(())
 }
+
 fn range(v: &[f64], pad: f64) -> (f64, f64) {
     let mut lo = v.iter().copied().fold(0.0, f64::min);
     let mut hi = v.iter().copied().fold(0.0, f64::max);
@@ -509,11 +561,13 @@ fn range(v: &[f64], pad: f64) -> (f64, f64) {
     hi += p;
     (lo, hi)
 }
+
 fn lost_between(a: &Analysis, s: f64, e: f64) -> bool {
     a.raw_observations()
         .iter()
         .any(|r| r.tracking_state == TrackingState::Lost && r.timestamp_s > s && r.timestamp_s < e)
 }
+
 fn time_x(a: &Analysis, t: f64, left: f64, w: f64) -> f64 {
     let span = a.video().trim.end_s - a.video().trim.start_s;
     if span <= f64::EPSILON {
@@ -521,51 +575,69 @@ fn time_x(a: &Analysis, t: f64, left: f64, w: f64) -> f64 {
     }
     left + ((t - a.video().trim.start_s) / span).clamp(0.0, 1.0) * w
 }
+
 fn value_y(v: f64, (lo, hi): (f64, f64), top: f64) -> f64 {
     if hi - lo <= f64::EPSILON {
         return top + PH / 2.0;
     }
     top + PH - (v - lo) / (hi - lo) * PH
 }
-fn state(out: &mut String, x: f64, y: f64, s: TrackingState) {
+
+fn state(out: &mut String, x: f64, y: f64, s: TrackingState) -> std::fmt::Result {
     match s {
         TrackingState::Tracked => dot(out, x, y, 3.0, "tracked"),
         TrackingState::LowConfidence => writeln!(
             out,
             r#"<circle class="low" data-state="low_confidence" cx="{x:.3}" cy="{y:.3}" r="5"/>"#
-        )
-        .unwrap(),
+        ),
         TrackingState::Lost => cross(out, x, y),
     }
 }
-fn dot(out: &mut String, x: f64, y: f64, r: f64, state: &str) {
-    writeln!(out, "<circle data-state=\"{state}\" cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"{r:.3}\" fill=\"#1565c0\"/>").unwrap();
+
+fn dot(out: &mut String, x: f64, y: f64, r: f64, state: &str) -> std::fmt::Result {
+    writeln!(
+        out,
+        "<circle data-state=\"{state}\" cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"{r:.3}\" fill=\"#1565c0\"/>"
+    )
 }
-fn cross(out: &mut String, x: f64, y: f64) {
-    writeln!(out,r#"<g data-state="lost"><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/></g>"#,x-5.0,y-5.0,x+5.0,y+5.0,x-5.0,y+5.0,x+5.0,y-5.0).unwrap();
+
+fn cross(out: &mut String, x: f64, y: f64) -> std::fmt::Result {
+    writeln!(
+        out,
+        r#"<g data-state="lost"><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/><line class="lost" x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}"/></g>"#,
+        x - 5.0,
+        y - 5.0,
+        x + 5.0,
+        y + 5.0,
+        x - 5.0,
+        y + 5.0,
+        x + 5.0,
+        y - 5.0
+    )
 }
-fn text(out: &mut String, x: f64, y: f64, v: &str, class: &str) {
+
+fn text(out: &mut String, x: f64, y: f64, v: &str, class: &str) -> std::fmt::Result {
     writeln!(
         out,
         r#"<text class="{class}" x="{x:.3}" y="{y:.3}">{}</text>"#,
         esc(v)
     )
-    .unwrap();
 }
-fn rect(out: &mut String, x: f64, y: f64, w: f64, h: f64, class: &str) {
+
+fn rect(out: &mut String, x: f64, y: f64, w: f64, h: f64, class: &str) -> std::fmt::Result {
     writeln!(
         out,
         r#"<rect class="{class}" x="{x:.3}" y="{y:.3}" width="{w:.3}" height="{h:.3}"/>"#
     )
-    .unwrap();
 }
-fn line(out: &mut String, x1: f64, y1: f64, x2: f64, y2: f64, class: &str) {
+
+fn line(out: &mut String, x1: f64, y1: f64, x2: f64, y2: f64, class: &str) -> std::fmt::Result {
     writeln!(
         out,
         r#"<line class="{class}" x1="{x1:.3}" y1="{y1:.3}" x2="{x2:.3}" y2="{y2:.3}"/>"#
     )
-    .unwrap();
 }
+
 fn esc(v: &str) -> String {
     let mut o = String::new();
     for c in v.chars() {
