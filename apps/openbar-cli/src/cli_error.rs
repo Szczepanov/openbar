@@ -88,6 +88,11 @@ impl CliError {
         Self::new(CliErrorKind::Internal, message)
     }
 
+    #[allow(dead_code)]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub const fn kind(&self) -> CliErrorKind {
         self.kind
     }

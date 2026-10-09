@@ -1609,7 +1609,7 @@ mod tests {
                 let error = parse_args(args).unwrap_err();
                 assert_eq!(error.kind(), CliErrorKind::InvalidInput);
                 assert!(error
-                    .to_string()
+                    .message()
                     .contains("exactly one of --filter-window and --filter-window-s"));
             }
         }
@@ -1628,7 +1628,7 @@ mod tests {
                 }
                 let error = parse_args(args).unwrap_err();
                 assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-                assert!(error.to_string().contains("--filter-window-s"));
+                assert!(error.message().contains("--filter-window-s"));
             }
         }
     }
@@ -1639,7 +1639,7 @@ mod tests {
             let error =
                 parse_args(smoothing_args(filter, &["--filter-window-s", "0.25"])).unwrap_err();
             assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-            assert!(error.to_string().contains("--filter-window-s is not valid"));
+            assert!(error.message().contains("--filter-window-s is not valid"));
         }
     }
 
@@ -1664,7 +1664,7 @@ mod tests {
             ))
             .unwrap_err();
             assert_eq!(error.kind(), CliErrorKind::InvalidInput);
-            assert!(error.to_string().contains(message));
+            assert!(error.message().contains(message));
         }
     }
 
