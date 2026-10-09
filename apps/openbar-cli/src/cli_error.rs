@@ -105,6 +105,12 @@ impl fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
+impl From<fmt::Error> for CliError {
+    fn from(error: fmt::Error) -> Self {
+        Self::internal(format!("formatting error: {error}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
