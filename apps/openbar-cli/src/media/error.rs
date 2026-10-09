@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,7 +72,7 @@ pub enum MediaError {
         detail: openbar_tracking::TrackerError,
     },
     Io {
-        context: String,
+        context: Cow<'static, str>,
         detail: String,
     },
     /// A frame-stream error together with whatever ffmpeg reported while producing it.
