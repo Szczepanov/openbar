@@ -88,6 +88,11 @@ impl CliError {
         Self::new(CliErrorKind::Internal, message)
     }
 
+    #[allow(dead_code)]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
     pub const fn kind(&self) -> CliErrorKind {
         self.kind
     }
@@ -100,11 +105,16 @@ impl CliError {
     pub const fn exit_code(&self) -> i32 {
         self.kind.exit_code()
     }
+
+    #[allow(dead_code)]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        formatter.write_str(self.message())
     }
 }
 
