@@ -16,6 +16,7 @@ from session_harness import SessionRunner  # noqa: E402
 from test_session_machine_init import MachineInitTestCase, pair, plate, profile_text, stick  # noqa: E402
 
 import analyze_lift  # noqa: E402
+import scale_reference  # noqa: E402
 import session_ingest  # noqa: E402
 import session_machine_run as smr  # noqa: E402
 import session_run  # noqa: E402
@@ -171,6 +172,99 @@ class TrackerTests(MachineRunTestCase):
         tracker, gpu_python = smr.resolve_tracker(args, "snatch", SessionRunner())
         self.assertEqual(tracker, session_run.SAM2)
         self.assertIsNotNone(gpu_python)
+
+
+RAW_PLATE = plate(center_x_px=400.125)
+RAW_STICK = stick(low_x_px=830.125)
+
+
+class PlanAndInputsTests(MachineRunTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.clips = self.prepare_session(pair(RAW_PLATE, RAW_STICK), pair())
+        self.runner = SessionRunner()
+
+    def prepared(self, *extra: str) -> dict[str, Any]:
+        return self.quiet(lambda: smr.prepare(self.parsed(*extra), self.runner))
+
+    def written(self) -> dict[str, Any]:
+        plan_set = self.prepared()
+        self.quiet(lambda: smr.write_inputs(plan_set))
+        return plan_set
+
+    def test_prepare_plans_every_initialized_clip_without_writing(self) -> None:
+        before = self.snapshot()
+        plan_set = self.prepared()
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual([plan["clip"]["fixture_id"] for plan in plan_set["plans"]],
+                         [clip["fixture_id"] for clip in self.clips])
+        self.assertEqual({plan["tracker"] for plan in plan_set["plans"]}, {"csrt"})
+        self.assertEqual((plan_set["stale"], plan_set["rejected"]), ([], []))
+
+    def test_seed_is_machine_origin_unrounded_and_accepted_by_analyze_lift(self) -> None:
+        self.written()
+        clip = self.clips[0]
+        path = self.run_dir / "seeds" / f"{clip['fixture_id']}.machine-origin-seed.json"
+        seed = json.loads(path.read_text(encoding="utf-8"))
+        notes = seed["seed"].pop("notes")
+        self.assertEqual(seed, {"schema_version": 1, "fixture_id": clip["fixture_id"], "seed": {
+            "timestamp_s": 0.0, "frame_index": 0,
+            "target": {"center": {"x_px": 400.125, "y_px": 1500.0}, "radius_px": 180.25},
+            "coordinate_space": "display_top_left", "source_rotation_deg": 0}})
+        self.assertTrue(notes.startswith("MACHINE-ORIGIN research seed"), notes)
+        for needle in ("not a manual selection and not human-confirmed", "not consumer-eligible",
+                       f"machine-init.json sha256={analyze_lift.file_sha256(self.record_path)}",
+                       f"plate suggestion {fakes.PLATE['id']}", "suggester confidence 0.8, not a selection confidence"):
+            self.assertIn(needle, notes)
+        for word in ("accepted", "adjusted", "placed by hand"):
+            self.assertNotIn(word, notes)
+        analyze_lift.load_bound_seed(path, clip["fixture_id"], ROOT / clip["media_path"])  # schema-valid, bound
+
+    def test_click_csv_carries_the_unrounded_stick_values(self) -> None:
+        self.written()
+        clip = self.clips[0]
+        data = (self.run_dir / "scale" / f"{clip['fixture_id']}.scale-reference.csv").read_bytes()
+        row = ",".join([clip["fixture_id"], clip["sha256"], clip["package_id"], "0", "0.0", "1080", "1920", "1.3",
+                        "830.125", "1630.0", "840.0", "580.0"])
+        self.assertEqual(data.decode("utf-8"), ",".join(scale_reference.CSV_COLUMNS) + "\n" + row + "\n")
+        click, _ = scale_reference.parse_click_csv(data)
+        self.assertEqual(click["point_a_x_px"], 830.125)
+
+    def test_scale_package_is_a_mirror_and_the_ingested_package_is_untouched(self) -> None:
+        source = ROOT / self.clips[0]["package_dir"]
+        before = {path.name: path.read_bytes() for path in source.iterdir() if path.is_file()}
+        self.written()
+        mirror = self.run_dir / "scale-packages" / self.clips[0]["fixture_id"]
+        self.assertEqual((mirror / "metadata.json").read_bytes(), (source / "metadata.json").read_bytes())
+        self.assertEqual(json.loads((mirror / scale_reference.REFERENCE_CONFIG_NAME).read_text(encoding="utf-8")),
+                         scale_reference.reference_config_from_label_package(source, 1.3))
+        self.assertEqual({path.name: path.read_bytes() for path in source.iterdir() if path.is_file()}, before)
+        self.assertFalse((source / scale_reference.REFERENCE_CONFIG_NAME).exists())
+
+    def test_research_manifest_is_session_local_and_the_personal_manifest_is_untouched(self) -> None:
+        before = self.outside_run_dir()
+        self.written()
+        self.assertEqual(self.outside_run_dir(), before)
+        self.assertFalse(self.manifest.exists(), "a machine run never registers in the personal manifest")
+        manifest = json.loads((self.run_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual([(entry["id"], entry["exercise"]) for entry in manifest["fixtures"]],
+                         [(clip["fixture_id"], "snatch") for clip in self.clips])
+
+    def test_package_coordinate_system_mismatch_refuses_before_writing(self) -> None:
+        path = ROOT / self.clips[0]["package_dir"] / "metadata.json"
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+        metadata["coordinate_system"]["origin"] = "bottom_left"
+        path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        self.assert_refused("coordinate system", lambda: smr.prepare(self.parsed(), self.runner))
+
+    def test_existing_outputs_refuse_without_force_and_force_plans_no_stale_output(self) -> None:
+        self.written()
+        before = self.snapshot()
+        with self.assertRaises(WorkflowError) as caught:
+            self.prepared()
+        self.assertIn("machine-run outputs already exist", str(caught.exception))
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.prepared("--force")["stale"], [])
 
 
 if __name__ == "__main__":

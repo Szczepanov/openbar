@@ -108,3 +108,183 @@ def resolve_tracker(args: argparse.Namespace, exercise: str, runner: Runner) -> 
     except WorkflowError as error:
         raise WorkflowError(f"{error}; or choose --tracker-policy csrt-all-v1") from error
     return tracker, gpu_python
+
+
+# --- Per-clip documents (no writes) --------------------------------------------------------------
+
+COORDINATE_KEYS = ("space", "origin", "x_direction", "y_direction", "rotation_applied")
+DISPLAY_TOP_LEFT = ("decoded_display_pixels", "top_left", "right", "down", True)
+
+
+def require_package_binding(metadata: dict[str, Any], clip: dict[str, Any]) -> None:
+    """The ingested label package must be in ADR-0007 display pixels and belong to this video."""
+    coordinate = metadata.get("coordinate_system")
+    found = tuple(coordinate.get(key) for key in COORDINATE_KEYS) if isinstance(coordinate, dict) else None
+    if found != DISPLAY_TOP_LEFT:
+        raise WorkflowError(f"{clip['fixture_id']}: the label package coordinate system is not decoded display "
+                            "pixels with a top-left origin, +X right, +Y down and rotation applied (ADR-0007); "
+                            "re-run ingest")
+    if metadata.get("source_video_sha256") != clip["sha256"]:
+        raise WorkflowError(f"{clip['fixture_id']}: the label package is for a different video; re-run ingest")
+
+
+def seed_notes(init_clip: dict[str, Any], profile: dict[str, Any], hashes: dict[str, str]) -> str:
+    plate = init_clip["items"]["plate_center"]["suggestion"]
+    return (f"MACHINE-ORIGIN research seed (vbt_session.py run-research, #113): not a manual selection and not "
+            f"human-confirmed; research only, not consumer-eligible. machine-init.json "
+            f"sha256={hashes['machine_init_sha256']}; profile {profile['profile_id']} "
+            f"sha256={hashes['profile_sha256']}; plate suggestion {plate['id']} (method {plate['method']}, "
+            f"suggester confidence {plate['confidence']!r}, not a selection confidence).")
+
+
+def seed_document(clip: dict[str, Any], init_clip: dict[str, Any], notes: str) -> dict[str, Any]:
+    """manual-target-seed-v1 is the only seed the tracker and analyzer accept; the notes carry the machine origin.
+
+    The values are the recorded suggester numbers, unrounded. selection_confidence is left out: it means human
+    confidence in a manual selection, and a suggester confidence is not that.
+    """
+    centre = init_clip["items"]["plate_center"]["values"]
+    document = {"schema_version": 1, "fixture_id": clip["fixture_id"], "seed": {
+        "timestamp_s": float(clip["timestamp_s"]), "frame_index": clip["frame_index"],
+        "target": {"center": {"x_px": centre["center_x_px"], "y_px": centre["center_y_px"]},
+                   "radius_px": init_clip["items"]["plate_radius"]["values"]["radius_px"]},
+        "coordinate_space": "display_top_left", "source_rotation_deg": clip["rotation_deg"] % 360, "notes": notes}}
+    try:
+        errors = schema_check.validate_document(document, schema_check.load_schema(analyze_lift.SEED_SCHEMA))
+    except (schema_check.SchemaError, OSError) as error:
+        raise WorkflowError(f"cannot load the seed schema: {error}") from error
+    if errors:
+        raise WorkflowError(f"{clip['fixture_id']}: the machine-origin seed is not a valid manual-target-seed-v1: "
+                            + "; ".join(errors))
+    return document
+
+
+def click_csv_text(config: dict[str, Any], init_clip: dict[str, Any]) -> str:
+    """The scale_reference click CSV with the recorded stick values unrounded (repr), not at the #95 2 decimals."""
+    frame = config["frames"][0]
+    low, high = init_clip["items"]["stick_low"]["values"], init_clip["items"]["stick_high"]["values"]
+    row = [config["fixture_id"], config["source_video_sha256"], config["package_id"], str(frame["frame_index"]),
+           repr(float(frame["timestamp_s"])), str(config["width_px"]), str(config["height_px"]),
+           repr(float(config["known_length_m"])), repr(float(low["low_x_px"])), repr(float(low["low_y_px"])),
+           repr(float(high["high_x_px"])), repr(float(high["high_y_px"]))]
+    return ",".join(scale_reference.CSV_COLUMNS) + "\n" + ",".join(row) + "\n"
+
+
+def plan_clip(clip: dict[str, Any], init_clip: dict[str, Any], tracker: str, paths: dict[str, Path],
+              profile: dict[str, Any], hashes: dict[str, str]) -> dict[str, Any]:
+    """Everything one clip writes, computed from read-only inputs. The ingested label package is only read."""
+    fixture_id = clip["fixture_id"]
+    source = analyze_lift.ROOT / clip["package_dir"]
+    try:
+        metadata_raw = (source / "metadata.json").read_bytes()
+    except OSError as error:
+        raise WorkflowError(f"{fixture_id}: cannot read its label package metadata: {error}") from error
+    require_package_binding(smi.parse_json_object(metadata_raw, f"{fixture_id} label package metadata.json"), clip)
+    try:
+        config = scale_reference.reference_config_from_label_package(source, profile["stick_length_m"])
+    except scale_reference.ScaleReferenceError as error:
+        raise WorkflowError(f"{fixture_id}: {error}") from error
+    package_dir = paths["packages"] / fixture_id
+    seed = paths["seeds"] / f"{fixture_id}{SEED_SUFFIX}"
+    click_csv = paths["scale"] / f"{fixture_id}.scale-reference.csv"
+    seed_text = json.dumps(seed_document(clip, init_clip, seed_notes(init_clip, profile, hashes)), indent=2,
+                           sort_keys=True, allow_nan=False) + "\n"
+    return {
+        "clip": clip, "init": init_clip, "tracker": tracker, "media": analyze_lift.ROOT / clip["media_path"],
+        "package_dir": package_dir, "seed": seed, "click_csv": click_csv,
+        "outputs": analyze_lift.output_paths(paths["analyses"], fixture_id, tracker),
+        "texts": {
+            package_dir / "metadata.json": metadata_raw.decode("utf-8"),
+            package_dir / scale_reference.REFERENCE_CONFIG_NAME:
+                json.dumps(config, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            seed: seed_text,
+            click_csv: click_csv_text(config, init_clip),
+        },
+    }
+
+
+def check_media(plans: list[dict[str, Any]], profile: dict[str, Any]) -> None:
+    """Re-probe and re-hash each video before anything is written, as the #95 run does."""
+    for plan in plans:
+        clip = plan["clip"]
+        drafted = analyze_lift.draft_entry(plan["media"], clip["fixture_id"], profile["plate_diameter_m"],
+                                           profile["exercise"])
+        if str(drafted["media"].get("sha256", "")).lower() != clip["sha256"].lower():
+            raise WorkflowError(f"{clip['fixture_id']} changed since it was ingested; re-run ingest and init-research")
+        if (drafted["media"].get("repository_path") != clip["media_path"]
+                or drafted["video"].get("rotation_deg", 0) != clip["rotation_deg"]):
+            raise WorkflowError(f"{clip['fixture_id']} no longer matches its ingested media path or rotation; "
+                                "re-run ingest and init-research")
+
+
+# --- Planning ------------------------------------------------------------------------------------
+
+def planned_outputs(plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
+    outputs = [paths["manifest"], paths["record"], *(paths["scale_report"] / name for name in SCALE_REPORT_NAMES)]
+    for plan in plans:
+        outputs += [*plan["texts"], *plan["outputs"].values()]
+    return outputs
+
+
+def known_clip_outputs(state: dict[str, Any], paths: dict[str, Path]) -> list[Path]:
+    """Every per-clip file name this command writes, for every clip of the session and every tracker."""
+    outputs = []
+    for clip in state["clips"]:
+        fixture_id = clip["fixture_id"]
+        package = paths["packages"] / fixture_id
+        outputs += [package / "metadata.json", package / scale_reference.REFERENCE_CONFIG_NAME,
+                    paths["seeds"] / f"{fixture_id}{SEED_SUFFIX}", paths["scale"] / f"{fixture_id}.scale-reference.csv"]
+        for tracker in sorted(TRACKERS):
+            outputs += analyze_lift.output_paths(paths["analyses"], fixture_id, tracker).values()
+    return outputs
+
+
+def stale_outputs(state: dict[str, Any], plans: list[dict[str, Any]], paths: dict[str, Path]) -> list[Path]:
+    """Existing machine-run outputs this run will not rewrite (a clip now rejected, another tracker)."""
+    planned = set(planned_outputs(plans, paths))
+    return [path for path in known_clip_outputs(state, paths) if path.exists() and path not in planned]
+
+
+def prepare(args: argparse.Namespace, runner: Runner) -> dict[str, Any]:
+    """Every check that can fail, in order, before the first write. Returns the run's plan."""
+    inputs = load_inputs(args)
+    chosen = initialized_clips(inputs)
+    profile = inputs["record"]["profile"]
+    options = analyze_lift.analysis_options(args)
+    openbar_cli = None if args.openbar_cli is None else analyze_lift.resolve_openbar_cli(args.openbar_cli)
+    analyze_lift.require_tools(runner, ("ffmpeg", "ffprobe"))
+    tracker, gpu_python = resolve_tracker(args, profile["exercise"], runner)
+    paths = run_paths(inputs["directory"])
+    plans = [plan_clip(clip, init_clip, tracker, paths, profile, inputs["hashes"]) for clip, init_clip in chosen]
+    check_media(plans, profile)
+    stale = stale_outputs(inputs["state"], plans, paths)
+    existing = [path for path in planned_outputs(plans, paths) if path.exists()] + stale
+    if existing and not args.force:
+        raise WorkflowError("machine-run outputs already exist (pass --force to replace them; outputs of clips this "
+                            "run does not use are then removed): " + ", ".join(rel(path) for path in existing[:6])
+                            + (" ..." if len(existing) > 6 else ""))
+    rejected = [{"fixture_id": clip["fixture_id"], "reasons": clip["reasons"]}
+                for clip in inputs["record"]["clips"] if clip["outcome"] == "rejected"]
+    return {**inputs, "profile": profile, "options": options, "openbar_cli": openbar_cli, "gpu_python": gpu_python,
+            "tracker": tracker, "paths": paths, "plans": plans, "stale": stale, "rejected": rejected,
+            "git": analyze_lift.git_provenance(runner)}
+
+
+def write_inputs(plan_set: dict[str, Any]) -> None:
+    """The record goes first, so machine-run/ is marked incomplete before anything changes."""
+    paths, profile = plan_set["paths"], plan_set["profile"]
+    paths["record"].unlink(missing_ok=True)
+    for path in plan_set["stale"]:
+        path.unlink()
+        print(f"removed stale output {rel(path)}")
+    # Rebuilt from the profile on every run, so a changed profile or a now-rejected clip leaves no entry behind.
+    # It is never the personal manifest: a machine run registers nothing there.
+    paths["manifest"].unlink(missing_ok=True)
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    for plan in plan_set["plans"]:
+        clip = plan["clip"]
+        _, action = analyze_lift.register_video(plan["media"], paths["manifest"], clip["sha256"],
+                                                profile["plate_diameter_m"], profile["exercise"])
+        print(f"{clip['fixture_id']}: research manifest entry {action} ({profile['exercise']})")
+        for path, text in plan["texts"].items():
+            session_ingest.write_text(path, text)
