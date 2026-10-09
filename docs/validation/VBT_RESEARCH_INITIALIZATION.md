@@ -9,8 +9,8 @@ a machine-initialized session is research evidence to be assessed, not a measure
 
 The command runs no tracking, analysis or calibration. It writes nothing except
 `machine-init.json` in the session folder. It writes no seed, no session CSV, no personal manifest,
-no `session.html`, no `session-input.csv` and no `session-record.json`. Consuming the record in
-`run` is a later slice and is not implemented. The module is
+no `session.html`, no `session-input.csv` and no `session-record.json`. The separate research command
+`run-research` (see [Research run](#research-run)) tracks and analyzes the initialized clips. The module is
 `research/vbt-workflow/session_machine_init.py`; it is standard library only and needs neither
 FFmpeg nor OpenCV.
 
@@ -162,10 +162,83 @@ The reader does not check `implementation.source_sha256` against the current mod
 module therefore does not invalidate existing records, but a change to the reason rules or the record
 shape must come with a bump of `IMPLEMENTATION_VERSION` (see above).
 
+## Research run
+
+`vbt_session.py run-research` is the opt-in, research-only consumer of `machine-init.json`
+(`research/vbt-workflow/session_machine_run.py`, standard library only). It tracks and analyzes every
+`initialized` clip and writes every output under `<session>/machine-run/`. Rejected clips are not run;
+the command names them and points to the #95 confirmation page.
+
+```powershell
+research/opencv-tracking/.venv/Scripts/python.exe research/vbt-workflow/vbt_session.py run-research `
+  --session 2026-10-03 --profile validation/private/vbt/profiles/snatch-lab.json `
+  --tracker-policy csrt-all-v1 --preset vbt-sg-0.15s-v1
+```
+
+- **Inputs.** The record is read only through `load_machine_init`, so the profile must be the one
+  the record was written with. Plate diameter, stick length and exercise come only from that profile.
+  `--plate-diameter-m`, `--stick-length-m`, `--manifest`, `--csv` and `--watch` are refused.
+  `--tracker-policy`, `--gpu-python`, `--openbar-cli`, `--preset` and the explicit filter/kinematics
+  flags follow the same rules as `run`. A record with no initialized clip is refused.
+- **Outputs**, all under `machine-run/`:
+  - `manifest.json`: a session-local research manifest, rebuilt on every run.
+  - `seeds/<fixture>.machine-origin-seed.json`.
+  - `scale/<fixture>.scale-reference.csv` and `scale-packages/<fixture>/` (a byte copy of the label
+    package `metadata.json` plus `reference-config.json`).
+  - `analyses/<fixture>.<tracker>.*` from `analyze_lift.py run`.
+  - `scale-report/`.
+  - `machine-run-record.json`.
+- **Never written:** the personal manifest, `seeds/`, `scale/`, `analyses/`, `packages/`,
+  `session.json`, `session.html`, `session-input.csv`, `report.html`, `session-record.json` and
+  `machine-init.json`. A machine run therefore never binds a clip's exercise in the personal manifest
+  and never hides a video from a later `ingest`. The #95 `run` neither reads nor removes
+  `machine-run/`.
+- **Seed.** The tracker and analyzer accept only `manual-target-seed-v1`, and the canonical
+  `Analysis` stores it as `manual_seed`, which #113 does not change. The research seed is therefore a
+  schema-valid `manual-target-seed-v1`. Its plate centre and radius are the recorded values,
+  unrounded. It has no `selection_confidence`, because that means human confidence. Its `notes`,
+  which the canonical analysis carries, begin `MACHINE-ORIGIN research seed` and say it is not a
+  manual selection, not human-confirmed and not consumer-eligible. The notes also give the
+  `machine-init.json` and profile hashes and the plate suggestion id, method and suggester
+  confidence. Any analysis whose seed notes begin that way is machine-origin. Do not import such an
+  analysis into the recommender.
+- **Scale clicks** carry the recorded stick values in `repr` form, not the 2-decimal #95 form.
+- **Record** (`openbar-research-vbt-machine-run-record` v1, sorted keys, written last):
+  - `origin: machine`, `human_confirmed: false`, `research_only: true`, `consumer_eligible: false`;
+  - an `implementation` block (`name`, `version`, `source_sha256` of the module's bytes);
+    `IMPLEMENTATION_VERSION` must be bumped when the seed, click CSV or record rules change;
+  - `inputs` with the SHA-256 of `session.json`, the profile and `machine-init.json`;
+  - the profile, the tracker configuration and the per-clip seed, click, analysis and run-record
+    hashes, with each clip's `origin: machine`;
+  - the rejected clips with their reasons, the removed stale outputs, the scale report and the git
+    state.
+
+  It has no `status` or `statuses` key at any depth (checked before writing), no timestamp, no
+  absolute path and no `original_name` field. Each video is identified by its repository media path and
+  SHA-256; the media path keeps the imported file's name and stays under the git-ignored
+  `validation/private/`.
+- **Restart and idempotence.** All input, profile, media and output-existence checks run before the first write; the status-key
+  check and the input-change guard run last and only prevent the record from being written. Then:
+  - The record is deleted first and written last, so a folder without it is incomplete.
+  - Existing outputs are refused without `--force`.
+  - `--force` removes every file under `machine-run/` that this run does not rewrite (this command owns
+    the whole folder, including outputs of clips a re-ingest dropped), prunes the emptied directories,
+    and rebuilds the research manifest.
+  - A same-input `--force` rerun is byte-identical once no stale outputs remain (the run that removes
+    stale outputs lists them in `removed_stale_outputs`). If that run is interrupted, the files are already gone and
+    the completing rerun records `removed_stale_outputs: []`; the list is informational, not an audit log.
+  - An interrupted run leaves no record, and its `--force` rerun reproduces a clean run.
+  - If `session.json`, `machine-init.json` or the profile changes during the run, no record is written.
+  - A re-ingest makes `machine-init.json` stale until `init-research` runs again. Re-ingesting does not
+    touch `machine-run/`: an earlier `machine-run-record.json` stays until `run-research --force` and
+    belongs to the `session.json` whose SHA-256 is its `inputs.session_state_sha256`.
+
 ## Limits
 
-- No run, no tracking, no kinematics and no canonical `Analysis` change.
-- No seed, CSV, manifest, `session.html`, `session-input.csv` or `session-record.json` is written.
+- `init-research` runs no tracking or kinematics; `run-research` does, with outputs under
+  `machine-run/` only. Neither changes the canonical `Analysis`.
+- Neither command writes a #95 seed, CSV, the personal manifest, `session.html`, `session-input.csv`
+  or `session-record.json`.
 - No confidence threshold and no automatic acceptance. Confidence is validated for range only.
 - No #57 held-out data, no tracker or default selection, and no consumer write.
 - A record is not consumer-eligible and cannot be promoted to human-confirmed by serialization,
@@ -180,3 +253,19 @@ provenance, malformed session structure, idempotence and restart, the writer's s
 key inside `parameters` writes nothing), isolation (only `machine-init.json` is written), the
 fail-closed reader and its promotion and forgery attempts, and the session-integrity refusals. It runs
 with fakes under the research venv.
+
+`research/vbt-workflow/tests/test_session_machine_run.py` covers the research run. It runs with the
+#95 fakes and checks:
+
+- the refused flags and missing, promoted or stale inputs;
+- the GPU policy rules;
+- the machine-origin seed, the unrounded click CSV, the mirrored scale package and the
+  session-local manifest;
+- the record contract;
+- that nothing is written outside `machine-run/`;
+- byte-identical `--force` reruns, interruption and restart, mid-run input changes and stale-output
+  removal;
+- that the #95 `run` still works before and after a research run.
+
+The synthetic public fixture has no stick, so `init-research` rejects it. There is no
+`OPENBAR_VBT_E2E` test for this command.

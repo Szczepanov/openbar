@@ -13,8 +13,12 @@
           run analyze_lift.py `run` per clip with the tracker that the named --tracker-policy assigns
           to its lift, then scale_reference.py `report`, report.html and a session record.
           --watch <folder> waits (bounded by --watch-timeout-s) for vbt-session-<session>.csv.
+  init-research / run-research
+          research only (#113): machine-initialize clips from a validated profile, then track and
+          analyze them with every output under <session>/machine-run/; never human-confirmed and
+          not consumer-eligible. See docs/validation/VBT_RESEARCH_INITIALIZATION.md.
 
-Suggestions are proposals only: nothing is used until the clip is confirmed on the page, and the
+For the #95 run, suggestions are proposals only: nothing is used until the clip is confirmed on the page, and the
 CSV records per item whether a suggestion was accepted unchanged, adjusted, or placed by hand.
 Research orchestration: no measurement logic, no calibration change. Run it with the research venv
 interpreter (research/opencv-tracking/.venv). See docs/plans/VBT_WORKFLOW_PLAN.md (step 2).
@@ -30,6 +34,7 @@ from typing import Callable
 import analyze_lift
 import session_ingest
 import session_machine_init
+import session_machine_run
 import session_run
 from vbt_process import Runner, WorkflowError
 
@@ -112,6 +117,21 @@ def add_session(parser: argparse.ArgumentParser) -> None:
                         help="personal manifest (default validation/private/vbt/manifest.json)")
 
 
+def add_tracking(parser: argparse.ArgumentParser) -> None:
+    """Tracker policy and analysis options, shared by `run` and `run-research`."""
+    parser.add_argument("--tracker-policy", required=True, choices=sorted(session_run.TRACKER_POLICIES),
+                        help="; ".join(f"{name}: {policy['description']}"
+                                       for name, policy in sorted(session_run.TRACKER_POLICIES.items())))
+    parser.add_argument("--gpu-python", help="GPU venv interpreter, needed when the policy runs SAM 2")
+    parser.add_argument("--openbar-cli", help="prebuilt openbar-cli binary passed to analyze_lift.py")
+    parser.add_argument("--preset", choices=sorted(analyze_lift.PRESETS))
+    parser.add_argument("--filter", choices=analyze_lift.FILTERS)
+    for flag, kind in analyze_lift.FILTER_FLAGS:
+        parser.add_argument(flag, type=kind)
+    for flag in analyze_lift.KINEMATICS_FLAGS:
+        parser.add_argument(flag, type=analyze_lift.finite_number)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -145,25 +165,27 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--watch-timeout-s", type=bounded_timeout, default=WATCH_TIMEOUT_S)
     run.add_argument("--plate-diameter-m", required=True)
     run.add_argument("--stick-length-m", required=True, help="known length between the lowest and highest marker")
-    run.add_argument("--tracker-policy", required=True, choices=sorted(session_run.TRACKER_POLICIES),
-                     help="; ".join(f"{name}: {policy['description']}"
-                                    for name, policy in sorted(session_run.TRACKER_POLICIES.items())))
-    run.add_argument("--gpu-python", help="GPU venv interpreter, needed when the policy runs SAM 2")
-    run.add_argument("--openbar-cli", help="prebuilt openbar-cli binary passed to analyze_lift.py")
     run.add_argument("--force", action="store_true", help="replace existing session outputs")
-    run.add_argument("--preset", choices=sorted(analyze_lift.PRESETS))
-    run.add_argument("--filter", choices=analyze_lift.FILTERS)
-    for flag, kind in analyze_lift.FILTER_FLAGS:
-        run.add_argument(flag, type=kind)
-    for flag in analyze_lift.KINEMATICS_FLAGS:
-        run.add_argument(flag, type=analyze_lift.finite_number)
+    add_tracking(run)
+
+    research = sub.add_parser("run-research", help="research only: track and analyze the clips machine-init.json "
+                                                   "initialized; outputs under machine-run/, never human-confirmed")
+    research.add_argument("--session", required=True, help="session id, e.g. 2026-10-03")
+    research.add_argument("--sessions-root", type=Path, default=DEFAULT_SESSIONS_ROOT,
+                          help="the sessions root used by ingest and init-research "
+                               "(default validation/private/vbt/sessions)")
+    research.add_argument("--profile", type=Path, required=True,
+                          help="the profile machine-init.json was written with; the plate diameter, stick length "
+                               "and exercise come only from it")
+    research.add_argument("--force", action="store_true", help="replace existing machine-run outputs")
+    add_tracking(research)
     return parser
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command != "run":
+    if args.command not in ("run", "run-research"):
         return args
     explicit = [flag for flag in ("--filter", *(f for f, _ in analyze_lift.FILTER_FLAGS), *analyze_lift.KINEMATICS_FLAGS)
                 if getattr(args, analyze_lift.dest(flag)) is not None]
@@ -189,6 +211,8 @@ def main(argv: list[str] | None = None, runner: Runner | None = None,
             return session_ingest.command_ingest(args, suggester)
         if args.command == "init-research":
             return session_machine_init.command_init_research(args)
+        if args.command == "run-research":
+            return session_machine_run.command_run_research(args, runner)
         if args.csv is not None:
             try:
                 data = args.csv.read_bytes()
