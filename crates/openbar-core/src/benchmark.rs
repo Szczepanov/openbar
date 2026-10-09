@@ -930,11 +930,11 @@ pub enum FilterBenchmarkError {
     },
     InvalidReferenceSample {
         index: usize,
-        reason: crate::trajectory::TrajectoryValidationError,
+        error: crate::trajectory::TrajectoryValidationError,
     },
     InvalidFilteredSample {
         index: usize,
-        reason: crate::trajectory::TrajectoryValidationError,
+        error: crate::trajectory::TrajectoryValidationError,
     },
     TimestampMismatch {
         index: usize,
@@ -945,7 +945,7 @@ pub enum FilterBenchmarkError {
         previous_index: usize,
         index: usize,
     },
-    Kinematics(String),
+    Kinematics(crate::kinematics::KinematicsError),
 }
 
 impl fmt::Display for FilterBenchmarkError {
@@ -962,11 +962,11 @@ impl fmt::Display for FilterBenchmarkError {
                 formatter,
                 "filter benchmark requires one output per observed input/reference sample; reference={reference}, filtered={filtered}"
             ),
-            Self::InvalidReferenceSample { index, reason } => {
-                write!(formatter, "reference sample {index} is invalid: {reason}")
+            Self::InvalidReferenceSample { index, error } => {
+                write!(formatter, "reference sample {index} is invalid: {error}")
             }
-            Self::InvalidFilteredSample { index, reason } => {
-                write!(formatter, "filtered sample {index} is invalid: {reason}")
+            Self::InvalidFilteredSample { index, error } => {
+                write!(formatter, "filtered sample {index} is invalid: {error}")
             }
             Self::TimestampMismatch {
                 index,
@@ -983,7 +983,7 @@ impl fmt::Display for FilterBenchmarkError {
                 formatter,
                 "filter benchmark timestamps must be strictly increasing (indices {previous_index} and {index})"
             ),
-            Self::Kinematics(reason) => write!(formatter, "kinematics evaluation failed: {reason}"),
+            Self::Kinematics(error) => write!(formatter, "kinematics evaluation failed: {error}"),
         }
     }
 }
@@ -1042,10 +1042,10 @@ pub fn evaluate_filter_case(
     for (index, (truth, actual)) in reference.iter().zip(filtered).enumerate() {
         truth
             .validate()
-            .map_err(|reason| FilterBenchmarkError::InvalidReferenceSample { index, reason })?;
+            .map_err(|error| FilterBenchmarkError::InvalidReferenceSample { index, error })?;
         actual
             .validate()
-            .map_err(|reason| FilterBenchmarkError::InvalidFilteredSample { index, reason })?;
+            .map_err(|error| FilterBenchmarkError::InvalidFilteredSample { index, error })?;
 
         if truth.timestamp_s != actual.timestamp_s {
             return Err(FilterBenchmarkError::TimestampMismatch {
@@ -1077,11 +1077,11 @@ pub fn evaluate_filter_case(
 
     let kinematics_config =
         crate::kinematics::KinematicsConfig::try_new(parameters.max_velocity_gap_s, 0.0)
-            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+            .map_err(FilterBenchmarkError::Kinematics)?;
     let reference_velocity = crate::kinematics::derive_velocity(reference, kinematics_config)
-        .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        .map_err(FilterBenchmarkError::Kinematics)?;
     let filtered_velocity = crate::kinematics::derive_velocity(filtered, kinematics_config)
-        .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        .map_err(FilterBenchmarkError::Kinematics)?;
 
     let mut velocity_absolute_error_sum = 0.0;
     let mut velocity_squared_error_sum = 0.0;
@@ -1203,10 +1203,8 @@ fn axis_metric_errors(
     ) -> Result<Option<f64>, crate::kinematics::KinematicsError>,
 ) -> Result<(Option<f64>, Option<f64>), FilterBenchmarkError> {
     let axis_error = |axis| {
-        let truth = metric(reference, axis)
-            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
-        let actual = metric(filtered, axis)
-            .map_err(|error| FilterBenchmarkError::Kinematics(error.to_string()))?;
+        let truth = metric(reference, axis).map_err(FilterBenchmarkError::Kinematics)?;
+        let actual = metric(filtered, axis).map_err(FilterBenchmarkError::Kinematics)?;
         Ok(truth
             .zip(actual)
             .map(|(truth, actual)| (actual - truth).abs()))
@@ -1358,5 +1356,54 @@ mod filter_benchmark_tests {
             ),
             Err(FilterBenchmarkError::TimestampMismatch { .. })
         ));
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_filter_case_performance() {
+        let count = 10_000;
+        let mut reference = Vec::with_capacity(count);
+        let mut filtered = Vec::with_capacity(count);
+
+        for i in 0..count {
+            let t = i as f64 * 0.01;
+            let x = (t * 2.0).sin();
+            let y = (t * 3.0).cos();
+            reference.push(crate::trajectory::MetricPositionSample {
+                timestamp_s: t,
+                x_m: x,
+                y_m: y,
+                confidence: 1.0,
+            });
+            filtered.push(crate::trajectory::MetricPositionSample {
+                timestamp_s: t,
+                x_m: x + 0.001,
+                y_m: y - 0.001,
+                confidence: 1.0,
+            });
+        }
+
+        let params = FilterBenchmarkParameters {
+            max_velocity_gap_s: 0.1,
+            evaluate_peak_metrics: true,
+        };
+
+        // Warm up
+        for _ in 0..10 {
+            let _ = evaluate_filter_case(&reference, &filtered, params);
+        }
+
+        let start = std::time::Instant::now();
+        let iterations = 100;
+        for _ in 0..iterations {
+            let _ = evaluate_filter_case(&reference, &filtered, params).unwrap();
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "bench_filter_case_performance: {:?} total for {} iterations ({:?} per iter)",
+            elapsed,
+            iterations,
+            elapsed / iterations
+        );
     }
 }
