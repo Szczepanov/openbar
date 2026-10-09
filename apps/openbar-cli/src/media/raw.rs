@@ -45,7 +45,7 @@ pub fn read_gray_frames<R: Read>(
                 let image = GrayFrame::try_new(layout.width_px, layout.height_px, buffer.clone())
                     .map_err(|error| MediaError::InvalidFrame {
                     index: decoded,
-                    detail: error.to_string(),
+                    detail: error,
                 })?;
                 frames.push(DecodedFrame {
                     timestamp_s,
