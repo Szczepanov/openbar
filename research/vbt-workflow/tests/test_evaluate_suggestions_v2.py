@@ -311,6 +311,32 @@ class EvaluationV2Tests(unittest.TestCase):
         result = evaluation.evaluate_session(self.root, self.directory, directory)
         self.assertEqual(result['clips'][0]['exclusions'], ['assessment_binding_invalid'])
 
+    def test_missing_optional_video_or_seed_source_is_binding_invalid(self) -> None:
+        directory, item, assessment = self.bound_assessment()
+        schema = evaluation.workflow.schema_check.load_schema(evaluation.ASSESSMENT_SCHEMA)
+        for missing in (('video',), ('seed',), ('video', 'seed')):
+            with self.subTest(missing=missing):
+                changed = json.loads(json.dumps(assessment))
+                for name in missing:
+                    del changed['sources'][name]
+                self.assertEqual(evaluation.workflow.schema_check.validate_document(changed, schema), [])
+                item.write_text(json.dumps(changed))
+                result = evaluation.evaluate_session(self.root, self.directory, directory)
+                self.assertEqual(result['clips'][0]['exclusions'], ['assessment_binding_invalid'])
+
+    def test_copied_noncanonical_record_path_is_binding_invalid(self) -> None:
+        directory, item, assessment = self.bound_assessment()
+        record_path = self.directory / 'session-record.json'
+        record = json.loads(record_path.read_text())
+        bad = './' + record['clips'][0]['seed']['path']
+        record['clips'][0]['seed']['path'] = bad
+        record_path.write_text(json.dumps(record))
+        changed = json.loads(json.dumps(assessment))
+        changed['sources']['seed']['path'] = bad
+        item.write_text(json.dumps(changed))
+        result = evaluation.evaluate_session(self.root, self.directory, directory)
+        self.assertEqual(result['clips'][0]['exclusions'], ['assessment_binding_invalid'])
+
     def test_report_declares_v2(self) -> None:
         self.assertEqual(evaluation.VERSION, 2)
         self.assertTrue(evaluation.RULES.name.endswith('_V2.md'))

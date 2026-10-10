@@ -29,4 +29,8 @@ The path check runs for all three sources before any hash check. A clip whose as
 any differing path, even with identical bytes, is excluded with the explicit reason
 `assessment_source_path_mismatch` and stays in inventory and status counts like any other
 exclusion. Other assessment binding failures keep the reason `assessment_binding_invalid`.
+A schema-valid assessment that omits the optional `sources.video` or `sources.seed` (only
+`run_record` and `validator` are required) also maps to `assessment_binding_invalid`, never to a
+crash. Path checks run first, so `assessment_source_path_mismatch` takes priority over any hash
+difference on the same clip.
 Correctly bound assessments are accepted exactly as in version 1.
