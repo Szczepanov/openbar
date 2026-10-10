@@ -113,7 +113,12 @@ additional protocol. A private, git-ignored log template with these fields is in
     attempted-rep start times from the video itself. Use a plain video player; WL Analysis shows
     velocities. These times feed the seed-before-rep-1 check and the hand-check.
 11. Transfer the original files byte-for-byte: no trimming, re-encoding, stabilizing or
-    re-compressing "optimized" sharing.
+    re-compressing "optimized" sharing. Do not trim in the phone gallery before transfer. The
+    retained development clips are named `VID_<date>_<time>~2.mp4`, and in the one inspected the
+    container `creation_time` falls 21 s after the time in the file name and the clip lasts about
+    6 s. That pattern fits a trimmed copy saved from the gallery editor, not the camera original.
+    For the study, transfer the camera's original file (no `~N` suffix) and leave the full clip,
+    including the still intervals, untouched.
 12. In WL Analysis, analyse the same full original clip and export the full per-frame CSV. Do not
     pick rep windows by hand. Keep the CSV next to the log under `validation/private/vbt/study-79/`.
     A WL Analysis or tooling crash on unchanged input is an infrastructure failure and may be
