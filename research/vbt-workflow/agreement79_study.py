@@ -2,14 +2,16 @@
 """Frozen constants and shared helpers for the #79 owner agreement study (owner-vbt-agreement-79-v1).
 
 Every value here restates docs/plans/VBT_AGREEMENT_PREREGISTRATION.md (frozen content 75bc5f1) or a
-verified freeze reference recorded in docs/analysis/VBT_AGREEMENT_STUDY_STATUS.md. Changing any of
-them is a protocol amendment and needs a new study identity, never an in-place edit after outcomes.
+verified freeze reference (see docs/validation/VBT_AGREEMENT_STUDY_TOOLS.md). Changing any of them is
+a protocol amendment and needs a new study identity, never an in-place edit after outcomes.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import math
+import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -63,6 +65,40 @@ EXCLUSION_LIST = STUDY_DIR / "novelty-exclusion-v1.sha256-list.txt"
 
 FAILURE_STAGES = ("recording", "transfer", "novelty", "confirmation", "processing", "assessment",
                   "reference", "wl_export", "protocol")
+
+# Consumer report metrics: primary first, then secondary (velocityAgreement.ts METRICS).
+METRICS = ("meanVelocityMps", "peakVelocityMps", "romCm")
+
+# The preregistered hand-check slot and its private output format.
+HANDCHECK_SLOT = "S1-SQ-1"
+HANDCHECK_FORMAT = "owner-vbt-agreement-79-handcheck"
+
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+class StudyInputError(ValueError):
+    """Invalid or inconsistent study input (exit 1)."""
+
+
+class StudyInfrastructureError(RuntimeError):
+    """Tool or environment unavailable; nothing written, retry unchanged inputs (exit 3)."""
+
+
+def git_state(root: Path) -> tuple[str, bool]:
+    """HEAD commit of a checkout and whether its tracked files are clean."""
+    git = ["git", "-C", str(root)]
+    try:
+        head = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, check=False)
+        porcelain = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"],
+                                   capture_output=True, check=False)
+    except OSError as error:
+        raise StudyInfrastructureError(f"git could not be run: {error}") from error
+    commit = head.stdout.decode("utf-8", errors="replace").strip()
+    if head.returncode != 0 or porcelain.returncode != 0 or COMMIT_RE.fullmatch(commit) is None:
+        raise StudyInfrastructureError(f"cannot read the git state of {root}")
+    return commit, porcelain.stdout.strip() == b""
+
 
 # Private study documents shared by the inventory, hand-check and report tools.
 SLOTS_FORMAT = "owner-vbt-agreement-79-slots"
