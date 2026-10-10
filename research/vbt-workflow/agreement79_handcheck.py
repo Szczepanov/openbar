@@ -9,15 +9,17 @@ consumer's arithmetic (left-to-right mean, peak, endpoint ROM, `Math.round(x * k
 window, and compares the rounded values exactly to the parser and to the back_squat run-1 report.
 
 Recorded inventory paths resolve against `--root` (the pinned data checkout); command-line paths are used
-as given. The output is private and written once. Exit 0 written (passed or failed), 1 invalid input,
-3 infrastructure (consumer checkout not the clean pinned commit, node/bridge unavailable; nothing written).
+as given. `--report` may be omitted only when S1-SQ-1 was not paired (not analyzable, or no back_squat
+pairs file); the result is then `failed` with `slot_not_analyzable`. The tool checkout's commit is
+recorded and must be tracked-clean. The output is private and written once. Exit 0 written (passed or
+failed), 1 invalid input (including a dirty tool checkout), 3 infrastructure (consumer checkout not the
+clean pinned commit, git/node/bridge unavailable; nothing written).
 Standard library only.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,56 +27,29 @@ from typing import Any, Callable
 
 import agreement79_study as study
 import analyze_lift as workflow
-from agreement79_slot_evidence import InfrastructureError, is_number
+from agreement79_slot_evidence import is_number
 
 ROOT = workflow.ROOT
-SLOT = "S1-SQ-1"
-FORMAT = "owner-vbt-agreement-79-handcheck"
-FORMAT_VERSION = 1
-INVENTORY_FORMAT = study.INVENTORY_FORMAT
 # Spec-frozen bound on |recomputed vy - analysis vy_mps|; both are the same IEEE arithmetic, so any real
 # difference is a contract break rather than rounding.
 VY_TOLERANCE_MPS = 1e-9
 REVIEWS = ("confirmed", "failed", "not_done")
-METRICS = ("meanVelocityMps", "peakVelocityMps", "romCm")
 SOURCES = ("recomputed_vy", "analysis_vy")
-TARGETS = ("vs_parser", "vs_report")
 BRIDGE = Path(__file__).resolve().with_name("agreement79_consumer_reps.mjs")
-SHA256 = re.compile(r"[0-9a-f]{64}")
-COMMIT = re.compile(r"[0-9a-f]{40}")
 REPORT_CONTRACT = (("schemaVersion", study.REPORT_SCHEMA), ("segmentationRule", study.SEGMENTATION),
                    ("wlParserVersion", study.WL_PARSER), ("openBarParserVersion", study.OPENBAR_PARSER),
                    ("minOverlap", study.MIN_OVERLAP))
 
 Bridge = Callable[[Path, Path], dict]
-GitState = Callable[[Path], "tuple[str, str]"]
-
-
-class HandcheckInputError(ValueError):
-    """Invalid inventory, report, path or existing output (exit 1)."""
+GitState = Callable[[Path], "tuple[str, bool]"]
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
-        raise HandcheckInputError(message)
+        raise study.StudyInputError(message)
 
 
 # --- Injectable process boundaries ---------------------------------------------------------------
-
-def consumer_git_state(app: Path) -> tuple[str, str]:
-    """HEAD of the consumer checkout (the app dir's parent) and its tracked-file porcelain status."""
-    git = ["git", "-C", str(Path(app) / "..")]
-    try:
-        head = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, check=False)
-        status = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"],
-                                capture_output=True, check=False)
-    except OSError as error:
-        raise InfrastructureError(f"git could not be run: {error}") from error
-    if head.returncode != 0 or status.returncode != 0:
-        raise InfrastructureError(f"cannot read the consumer checkout's git state at {app}")
-    return (head.stdout.decode("utf-8", errors="replace").strip(),
-            status.stdout.decode("utf-8", errors="replace"))
-
 
 def consumer_reps(app: Path, analysis: Path) -> dict:
     """The pinned consumer parser's output for ``analysis`` via the node bridge (one JSON line)."""
@@ -82,36 +57,46 @@ def consumer_reps(app: Path, analysis: Path) -> dict:
     try:
         result = subprocess.run(argv, capture_output=True, check=False)
     except OSError as error:
-        raise InfrastructureError(f"node could not be run: {error}") from error
+        raise study.StudyInfrastructureError(f"node could not be run: {error}") from error
     if result.returncode != 0:
         detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
-        raise InfrastructureError(f"consumer parser bridge failed: {detail[-1] if detail else result.returncode}")
+        raise study.StudyInfrastructureError(
+            f"consumer parser bridge failed: {detail[-1] if detail else result.returncode}")
     lines = result.stdout.decode("utf-8", errors="replace").strip().splitlines()
     try:
         return json.loads(lines[-1])
     except (IndexError, json.JSONDecodeError) as error:
-        raise InfrastructureError("consumer parser bridge wrote no JSON line") from error
+        raise study.StudyInfrastructureError("consumer parser bridge wrote no JSON line") from error
 
 
 def verify_consumer(app: Path, git: GitState) -> str:
-    commit, porcelain = git(app)
-    if commit != study.CONSUMER_COMMIT or porcelain.strip():
-        raise InfrastructureError(f"the consumer checkout must be the clean pinned commit {study.CONSUMER_COMMIT}; "
-                                  f"found {commit} (tracked changes: {bool(porcelain.strip())})")
+    """The consumer checkout (the app dir's parent) must be the clean pinned commit (else exit 3)."""
+    commit, clean = git(Path(app) / "..")
+    if commit != study.CONSUMER_COMMIT or not clean:
+        raise study.StudyInfrastructureError(f"the consumer checkout must be the clean pinned commit "
+                                             f"{study.CONSUMER_COMMIT}; found {commit} (tracked files clean: {clean})")
     return commit
+
+
+def verify_tool(tool_root: Path, git: GitState) -> tuple[str, bool]:
+    """The tool checkout running this hand-check must have no tracked changes (else exit 1)."""
+    commit, clean = git(tool_root)
+    require(clean, f"the tool checkout {tool_root} has tracked changes; run the hand-check from a clean commit")
+    return commit, clean
 
 
 def checked_bridge_output(value: Any) -> dict:
     """Shape of the bridge line; anything else means the bridge or consumer is not the pinned one."""
     def rep_ok(rep: Any) -> bool:
-        return (isinstance(rep, dict) and all(type(rep.get(key)) is int for key in ("index", "startFrame", "endFrame"))
-                and all(is_number(rep.get(key)) for key in ("startTimeS", "endTimeS", *METRICS)))
+        return (isinstance(rep, dict)
+                and all(type(rep.get(key)) is int for key in ("index", "startFrame", "endFrame", "frameCount"))
+                and all(is_number(rep.get(key)) for key in ("startTimeS", "endTimeS", *study.METRICS)))
     ok = (isinstance(value, dict) and isinstance(value.get("parserVersion"), str)
           and isinstance(value.get("segmentationRule"), str) and type(value.get("frameCount")) is int
           and isinstance(value.get("breaks"), list) and isinstance(value.get("reps"), list)
           and all(rep_ok(rep) for rep in value["reps"]))
     if not ok:
-        raise InfrastructureError("consumer parser bridge output is malformed")
+        raise study.StudyInfrastructureError("consumer parser bridge output is malformed")
     return value
 
 
@@ -121,52 +106,67 @@ def load_document(path: Path, label: str) -> Any:
     try:
         return study.load_json(path)
     except (OSError, ValueError) as error:
-        raise HandcheckInputError(f"cannot read {label} {path}: {error}") from error
+        raise study.StudyInputError(f"cannot read {label} {path}: {error}") from error
 
 
 def load_slot(root: Path, inventory: Any) -> dict[str, Any]:
-    """The S1-SQ-1 inventory entry: analyzability and, when analyzable, the bound analysis file."""
-    require(isinstance(inventory, dict) and inventory.get("format") == INVENTORY_FORMAT
+    """The S1-SQ-1 inventory entry (analyzability, bound analysis) and whether back_squat has a pairs file."""
+    slot = study.HANDCHECK_SLOT
+    require(isinstance(inventory, dict) and inventory.get("format") == study.INVENTORY_FORMAT
             and inventory.get("format_version") == study.STUDY_DOCUMENT_VERSION
             and inventory.get("study_id") == study.STUDY_ID, f"not a v1 {study.STUDY_ID} inventory")
-    slots = inventory.get("slots")
+    slots, lifts = inventory.get("slots"), inventory.get("lifts")
     require(isinstance(slots, list), "inventory slots must be a list")
-    entries = [entry for entry in slots if isinstance(entry, dict) and entry.get("slot") == SLOT]
-    require(len(entries) == 1, f"inventory must hold exactly one {SLOT} entry")
+    squat = lifts.get("back_squat") if isinstance(lifts, dict) else None
+    require(isinstance(squat, dict) and "pairs_file" in squat, "inventory has no back_squat lift record")
+    entries = [entry for entry in slots if isinstance(entry, dict) and entry.get("slot") == slot]
+    require(len(entries) == 1, f"inventory must hold exactly one {slot} entry")
     entry = entries[0]
-    require(isinstance(entry.get("analyzable"), bool), f"inventory {SLOT} analyzable must be a boolean")
+    require(isinstance(entry.get("analyzable"), bool), f"inventory {slot} analyzable must be a boolean")
+    pairs = squat["pairs_file"] is not None
     if not entry["analyzable"]:
-        return {"analyzable": False, "path": None, "recorded": None, "sha256": None}
+        return {"analyzable": False, "pairs_file": pairs, "path": None, "recorded": None, "sha256": None}
     files = entry.get("files")
     binding = files.get("analysis") if isinstance(files, dict) else None
-    require(isinstance(binding, dict), f"analyzable {SLOT} has no inventory analysis binding")
+    require(isinstance(binding, dict), f"analyzable {slot} has no inventory analysis binding")
     path = study.recorded_path(root, binding.get("path"))
     sha = binding.get("sha256")
-    require(path is not None, f"inventory {SLOT} analysis path is not a canonical path inside {root}")
-    require(isinstance(sha, str) and SHA256.fullmatch(sha) is not None, f"inventory {SLOT} analysis sha256 is invalid")
-    return {"analyzable": True, "path": path, "recorded": binding["path"], "sha256": sha}
+    require(path is not None, f"inventory {slot} analysis path is not a canonical path inside {root}")
+    require(isinstance(sha, str) and study.SHA256_RE.fullmatch(sha) is not None,
+            f"inventory {slot} analysis sha256 is invalid")
+    return {"analyzable": True, "pairs_file": pairs, "path": path, "recorded": binding["path"], "sha256": sha}
+
+
+def report_expected(slot: dict[str, Any]) -> bool:
+    """A back_squat run-1 report exists for the hand-check only if S1-SQ-1 was paired."""
+    return slot["analyzable"] and slot["pairs_file"]
+
+
+def slot_videos(report: dict[str, Any]) -> list[Any]:
+    return [video for video in report["videos"] if isinstance(video, dict) and video.get("label") == study.HANDCHECK_SLOT]
 
 
 def report_rows(report: Any) -> list[dict[str, Any]] | None:
     """Paired rows of the S1-SQ-1 video (None when absent); malformed consumer output is invalid input."""
+    slot = study.HANDCHECK_SLOT
     require(isinstance(report, dict) and isinstance(report.get("videos"), list), "report has no videos list")
-    videos = [video for video in report["videos"] if isinstance(video, dict) and video.get("label") == SLOT]
-    require(len(videos) <= 1, f"report labels {SLOT} more than once")
+    videos = slot_videos(report)
+    require(len(videos) <= 1, f"report labels {slot} more than once")
     if not videos:
         return None
     rows = videos[0].get("paired")
-    require(isinstance(rows, list), f"report {SLOT} paired must be a list")
+    require(isinstance(rows, list), f"report {slot} paired must be a list")
     for row in rows:
         require(isinstance(row, dict) and type(row.get("openBarIndex")) is int and type(row.get("wlIndex")) is int
                 and all(isinstance(row.get(metric), dict) and is_number(row[metric].get("openBar"))
-                        for metric in METRICS), f"report {SLOT} has a malformed paired row")
+                        for metric in study.METRICS), f"report {slot} has a malformed paired row")
     return rows
 
 
 def report_checks(report: dict[str, Any], analysis_sha: str) -> list[str]:
     reasons = [f"report_contract_mismatch:{key}" for key, expected in REPORT_CONTRACT
                if report.get(key) != expected or type(report.get(key)) is not type(expected)]
-    videos = [video for video in report["videos"] if isinstance(video, dict) and video.get("label") == SLOT]
+    videos = slot_videos(report)
     if not videos:
         return reasons + ["report_slot_missing"]
     open_bar = videos[0].get("openBar")
@@ -285,7 +285,8 @@ def window_metrics(detail: dict[str, Any], rep: dict[str, Any], series: dict[str
                         "start_time_s": window[0]["timestamp_s"], "end_time_s": window[-1]["timestamp_s"],
                         "sample_count": len(window)}
     reasons = []
-    if window[0]["timestamp_s"] != rep["startTimeS"] or window[-1]["timestamp_s"] != rep["endTimeS"]:
+    if (window[0]["timestamp_s"] != rep["startTimeS"] or window[-1]["timestamp_s"] != rep["endTimeS"]
+            or rep["frameCount"] != len(window)):
         reasons.append("window_mismatch")
     values = {"recomputed_vy": None if recomputed is None else recomputed[start:end + 1],
               "analysis_vy": [sample["vy_mps"] for sample in window]}
@@ -310,7 +311,7 @@ def compare_rep(detail: dict[str, Any]) -> tuple[int, int, bool]:
         detail["matches"][source] = {}
         for target, expected in (("vs_parser", detail["parser"]), ("vs_report", detail["report"])):
             flags = {metric: computed is not None and expected is not None and computed[metric] == expected[metric]
-                     for metric in METRICS}
+                     for metric in study.METRICS}
             detail["matches"][source][target] = flags
             compared += len(flags)
             matched += sum(flags.values())
@@ -326,8 +327,8 @@ def rep_details(rows: list[dict[str, Any]], parser: dict[str, Any] | None, serie
         rep = by_index.get(row["openBarIndex"])
         detail = {"openBarIndex": row["openBarIndex"], "wlIndex": row["wlIndex"], "window": None,
                   "window_contains_null": None, "recomputed": {source: None for source in SOURCES},
-                  "parser": None if rep is None else {metric: rep[metric] for metric in METRICS},
-                  "report": {metric: row[metric]["openBar"] for metric in METRICS}}
+                  "parser": None if rep is None else {metric: rep[metric] for metric in study.METRICS},
+                  "report": {metric: row[metric]["openBar"] for metric in study.METRICS}}
         if rep is None:
             reasons.append("parser_rep_missing")
         elif series is not None:
@@ -346,11 +347,12 @@ def hashed_input(root: Path, path: Path) -> dict[str, str]:
     return {"path": study.repo_relative(path, root), "sha256": study.file_sha256(path)}
 
 
-def evaluate(root: Path, slot: dict[str, Any], report: dict[str, Any], app: Path, bridge: Bridge) -> dict[str, Any]:
-    """Every check after the inputs are valid; the bridge runs only for an analyzable, hash-bound analysis."""
+def evaluate(root: Path, slot: dict[str, Any], report: dict[str, Any] | None, app: Path,
+             bridge: Bridge) -> dict[str, Any]:
+    """Every check after the inputs are valid; the bridge runs only for a paired, hash-bound analysis."""
     result: dict[str, Any] = {"reasons": [], "reps": [], "velocity_check": None, "parser": None,
                               "analysis": None, "compared": 0, "matched": 0}
-    if not slot["analyzable"]:
+    if not report_expected(slot) or report is None:
         result["reasons"].append("slot_not_analyzable")
         return result
     reasons = result["reasons"]
@@ -390,7 +392,7 @@ def evaluate(root: Path, slot: dict[str, Any], report: dict[str, Any], app: Path
     return result
 
 
-def document(root: Path, args: argparse.Namespace, slot: dict[str, Any], consumer_commit: str,
+def document(root: Path, args: argparse.Namespace, slot: dict[str, Any], commits: dict[str, Any],
              result: dict[str, Any]) -> dict[str, Any]:
     reasons = list(result["reasons"])
     reasons += [f"pairing_review_{args.pairing_review}"] if args.pairing_review != "confirmed" else []
@@ -402,12 +404,11 @@ def document(root: Path, args: argparse.Namespace, slot: dict[str, Any], consume
     worst = None if check is None else check["max_abs_discrepancy_mps"]
     analysis = result["analysis"] or {"path": slot["recorded"], "sha256": None}
     return {
-        "format": FORMAT, "format_version": FORMAT_VERSION, "study_id": study.STUDY_ID,
-        "tool_version": study.TOOL_VERSION, "slot": SLOT, "status": status, "reasons": reasons,
+        "format": study.HANDCHECK_FORMAT, "format_version": study.STUDY_DOCUMENT_VERSION, "study_id": study.STUDY_ID,
+        "tool_version": study.TOOL_VERSION, "slot": study.HANDCHECK_SLOT, "status": status, "reasons": reasons,
         "reviews": {"pairing": args.pairing_review, "seed_reference": args.seed_reference_review},
-        "consumer_commit": consumer_commit, "freeze": study.freeze_references(),
-        "vy_tolerance_mps": VY_TOLERANCE_MPS,
-        "inputs": {"analysis": analysis, "report": hashed_input(root, args.report),
+        **commits, "freeze": study.freeze_references(), "vy_tolerance_mps": VY_TOLERANCE_MPS,
+        "inputs": {"analysis": analysis, "report": None if args.report is None else hashed_input(root, args.report),
                    "inventory": hashed_input(root, args.inventory)},
         "parser": result["parser"], "velocity_check": check, "reps": result["reps"],
         "public": {"status": status, "reasons": reasons, "values_compared": result["compared"],
@@ -420,6 +421,8 @@ def document(root: Path, args: argparse.Namespace, slot: dict[str, Any], consume
 def check_paths(root: Path, args: argparse.Namespace) -> None:
     study_dir = workflow.safe_resolve(root / study.STUDY_DIR)
     for flag, path in (("--inventory", args.inventory), ("--report", args.report)):
+        if path is None:
+            continue
         require(workflow.is_within(path, root), f"{flag} {path} is outside the data checkout {root}")
         require(path.is_file(), f"{flag} {path} is not a file")
     require(workflow.is_within(args.output, study_dir) and args.output != study_dir,
@@ -433,7 +436,8 @@ def parse_args(argv: list[str] | None, root: Path) -> argparse.Namespace:
                         help="pinned data checkout holding the study evidence (default: this checkout)")
     parser.add_argument("--inventory", type=Path, required=True, help="private #79 inventory.json")
     parser.add_argument("--consumer-app", type=Path, required=True, help="pinned consumer app/ directory")
-    parser.add_argument("--report", type=Path, required=True, help="back_squat run-1 velocity-agreement JSON")
+    parser.add_argument("--report", type=Path,
+                        help="back_squat run-1 velocity-agreement JSON (required when S1-SQ-1 was paired)")
     parser.add_argument("--pairing-review", choices=REVIEWS, required=True,
                         help="pairing of the three reps verified against the video")
     parser.add_argument("--seed-reference-review", choices=REVIEWS, required=True,
@@ -442,30 +446,42 @@ def parse_args(argv: list[str] | None, root: Path) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None, *, root: Path = ROOT, bridge: Bridge = consumer_reps,
-         git: GitState = consumer_git_state) -> int:
+def load_report(args: argparse.Namespace, slot: dict[str, Any]) -> dict[str, Any] | None:
+    """The back_squat run-1 report; it may be absent only when S1-SQ-1 was not paired."""
+    if args.report is None:
+        require(not report_expected(slot), f"--report is required: {study.HANDCHECK_SLOT} is analyzable and "
+                                           "back_squat has a pairs file")
+        return None
+    report = load_document(args.report, "report")
+    report_rows(report)
+    return report
+
+
+def main(argv: list[str] | None = None, *, root: Path = ROOT, tool_root: Path = ROOT,
+         bridge: Bridge = consumer_reps, git: GitState = study.git_state) -> int:
     args = parse_args(argv, root)
     try:
         root = workflow.safe_resolve(args.root)
-        args.inventory, args.report = workflow.safe_resolve(args.inventory), workflow.safe_resolve(args.report)
-        args.output = workflow.safe_resolve(args.output)
+        args.inventory, args.output = workflow.safe_resolve(args.inventory), workflow.safe_resolve(args.output)
+        args.report = None if args.report is None else workflow.safe_resolve(args.report)
         check_paths(root, args)
         slot = load_slot(root, load_document(args.inventory, "inventory"))
-        report = load_document(args.report, "report")
-        report_rows(report)
+        report = load_report(args, slot)
         consumer_commit = verify_consumer(args.consumer_app, git)
+        tool_commit, tool_clean = verify_tool(tool_root, git)
         result = evaluate(root, slot, report, args.consumer_app, bridge)
-        output = document(root, args, slot, consumer_commit, result)
+        commits = {"consumer_commit": consumer_commit, "tool_commit": tool_commit, "tool_tree_clean": tool_clean}
+        output = document(root, args, slot, commits, result)
         study.write_new(args.output, study.serialize(output))
-    except (HandcheckInputError, workflow.WorkflowError, FileExistsError) as error:
+    except (study.StudyInputError, workflow.WorkflowError, FileExistsError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    except (InfrastructureError, OSError) as error:
+    except (study.StudyInfrastructureError, OSError) as error:
         print(f"error: infrastructure abort ({error}); retry with unchanged inputs", file=sys.stderr)
         return 3
     public = output["public"]
-    print(f"hand-check {SLOT}: {public['status']}; {public['values_matched']}/{public['values_compared']} rounded "
-          f"values matched; max |vy| discrepancy {public['max_abs_discrepancy_mps']}; "
+    print(f"hand-check {study.HANDCHECK_SLOT}: {public['status']}; {public['values_matched']}/"
+          f"{public['values_compared']} rounded values matched; max |vy| discrepancy {public['max_abs_discrepancy_mps']}; "
           f"reasons: {', '.join(public['reasons']) or 'none'}")
     return 0
 

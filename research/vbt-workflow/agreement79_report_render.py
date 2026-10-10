@@ -2,12 +2,16 @@
 """Deterministic, aggregate-only Markdown for the #79 report (agreement79_report.py builds the context).
 
 Never rendered: file paths or names, fixture ids, original names, timestamps, session ids or dates, input
-file hashes or per-rep values. Slot ids (S1-SQ-1 ...) are public. Free text that reaches the page (owner
-failure reasons, hand-check reasons, version strings) is redacted against the inventory's private strings
-and Markdown-escaped. Numbers render as the consumer renders its rounded JSON (ECMAScript ``String``).
+file hashes or per-rep values. Slot ids (S1-SQ-1 ...) are public. Owner free text is rendered only when it
+has a code shape: a failure renders `stage:reason` only when each matches ``^[a-z0-9_:.-]+$`` (otherwise
+`[owner note]`), hand-check reasons likewise (otherwise `[unrecognized reason]`), and the WL Analysis version
+only when it matches ``^[A-Za-z0-9 ._()+-]{1,40}$``. Every cell is additionally redacted against the
+inventory's private strings (defence in depth) and Markdown-escaped. Numbers render as the consumer renders its
+rounded JSON (ECMAScript ``String``).
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -26,6 +30,10 @@ SCALE_CAVEAT = ("Diagnostic only: the stick/plate `reference_to_plate_ratio` nev
                 "velocities are uncorrected, and it is distinct from the geometric OpenBar/WL velocity ratio.")
 DASH = "—"
 REDACTED = "[redacted]"
+OWNER_NOTE = "[owner note]"
+UNRECOGNIZED = "[unrecognized reason]"
+CODE_RE = re.compile(r"[a-z0-9_:.-]+")
+WL_VERSION_RE = re.compile(r"[A-Za-z0-9 ._()+-]{1,40}")
 CONDITIONS = (("C1", "Collection and protocol (18 conforming slots; 6 per lift over 3 sessions)"),
               ("C2", "Counts and completeness (3/3/3 per video, no unmatched or excluded reps, 18 pairs per lift)"),
               ("C3", f"Primary agreement (pooled meanVelocityMps LoA within ±{study.TOLERANCE_MPS:.6f} m/s, inclusive)"),
@@ -34,10 +42,25 @@ STAT_COLUMNS = (("n", "n"), ("bias", "Bias"), ("sampleSd", "Sample SD"), ("lower
                 ("upperLoA", "Upper 95% LoA"), ("meanAbsoluteDifference", "Mean absolute difference"))
 DIAGNOSTIC_COLUMNS = (("slope", "Slope"), ("intercept", "Intercept"), ("pearsonR", "Pearson r"),
                       ("geometricMeanRatio", "Geometric OpenBar/WL measurement ratio"))
-SECONDARY = ("peakVelocityMps", "romCm")
-METRICS = ("meanVelocityMps", *SECONDARY)
+SECONDARY = study.METRICS[1:]
 COUNT_COLUMNS = (("wlTotal", "WL total"), ("openBarTotal", "OpenBar total"), ("paired", "Paired"),
                  ("wlOnly", "WL only"), ("openBarOnly", "OpenBar only"), ("openBarExcluded", "OpenBar excluded"))
+
+
+# --- Public text ---------------------------------------------------------------------------------
+
+def public_code(value: Any, placeholder: str = UNRECOGNIZED) -> str:
+    """A tool or owner code shown as-is only when it has a code shape; free text becomes ``placeholder``."""
+    return value if isinstance(value, str) and CODE_RE.fullmatch(value) else placeholder
+
+
+def public_failure(item: Any) -> str:
+    """`stage:reason` of an inventory failure with owner free text replaced by `[owner note]`."""
+    return f"{public_code(dig(item, 'stage'), OWNER_NOTE)}:{public_code(dig(item, 'reason'), OWNER_NOTE)}"
+
+
+def public_wl_version(value: Any) -> str:
+    return value if isinstance(value, str) and WL_VERSION_RE.fullmatch(value) else OWNER_NOTE
 
 
 # --- Cells ---------------------------------------------------------------------------------------
@@ -102,21 +125,19 @@ def unavailable(lift: dict[str, Any], cells: Cells) -> str:
 
 def header(context: dict[str, Any], cells: Cells) -> list[str]:
     criterion = context["criterion"]
-    provisional = " (collection in progress: every condition below is provisional)" if criterion["provisional"] else ""
     return [TITLE, "",
             f"Study: `{study.STUDY_ID}`. Preregistration frozen content commit `{study.PREREGISTRATION_COMMIT}` "
             f"(merged to main as `{study.PREREGISTRATION_MAIN_COMMIT}`); freeze instant {study.FREEZE_INSTANT.isoformat()}.",
-            "", f"**{VERDICT_LABEL}: {criterion['verdict']}**{provisional}", "", NON_CLAIMS]
+            "", f"**{VERDICT_LABEL}: {criterion['verdict']}**", "", NON_CLAIMS]
 
 
 def criterion_section(context: dict[str, Any], cells: Cells) -> list[str]:
     criterion = context["criterion"]
-    suffix = " (provisional)" if criterion["provisional"] else ""
     rows = []
     for name, title in CONDITIONS:
         item = criterion["conditions"][name]
         reasons = "; ".join(cells.text(reason) for reason in item["reasons"]) or DASH
-        rows.append([name, title, ("pass" if item["passed"] else "fail") + suffix, reasons])
+        rows.append([name, title, "pass" if item["passed"] else "fail", reasons])
     return ["## Frozen criterion", "", *table(["Condition", "Requirement", "Result", "Reasons"], rows), "",
             f"Verdict: **{criterion['verdict']}**. Secondary metrics and scale diagnostics never enter the verdict."]
 
@@ -128,10 +149,19 @@ def report_video(context: dict[str, Any], slot: dict[str, Any]) -> dict[str, Any
     return next((video for video in report["videos"] if video["label"] == slot["slot"]), None)
 
 
+def tracking_cells(context: dict[str, Any], slot: dict[str, Any]) -> list[str]:
+    if slot["slot"] not in context["tracking"]:
+        return [DASH, DASH]
+    counts = context["tracking"][slot["slot"]]
+    if counts is None:
+        return ["unavailable", "unavailable"]
+    return [js_number(counts["lost"]), js_number(counts["low_confidence"])]
+
+
 def slot_section(context: dict[str, Any], cells: Cells) -> list[str]:
     rows = []
     for slot in context["inventory"]["slots"]:
-        failures = "; ".join(cells.text(f"{item.get('stage')}:{item.get('reason')}") for item in slot["failures"])
+        failures = "; ".join(cells.text(public_failure(item)) for item in slot["failures"])
         video = report_video(context, slot)
         if video is None:
             counts = [DASH] * (len(COUNT_COLUMNS) + 2)
@@ -141,11 +171,14 @@ def slot_section(context: dict[str, Any], cells: Cells) -> list[str]:
             counts = [js_number(video["counts"][key]) for key, _ in COUNT_COLUMNS]
             counts += [js_number(video["openBar"]["breakCount"]), complete]
         rows.append([slot["slot"], slot["exercise"], slot["status"], yes_no(slot["analyzable"]),
-                     yes_no(slot["protocol_conforming"]), failures or DASH, *counts])
+                     yes_no(slot["protocol_conforming"]), failures or DASH, *counts, *tracking_cells(context, slot)])
     columns = ["Slot", "Lift", "Status", "Analyzable", "Conforming", "Failures (stage:reason)",
-               *(title for _, title in COUNT_COLUMNS), "Tracking breaks", "Completeness all true"]
+               *(title for _, title in COUNT_COLUMNS), "Tracking breaks", "Completeness all true", "Lost",
+               "Low confidence"]
     return ["## Slot accounting", "", "Every frozen slot, in frozen order; report columns come from the run 1 "
-            "consumer report and are `—` for slots the consumer did not receive.", "", *table(columns, rows)]
+            "consumer report and are `—` for slots the consumer did not receive. Lost and low confidence count "
+            "the slot analysis's raw observations by tracking state (`—` without an analysis, `unavailable` when "
+            "it no longer matches its inventory hash or cannot be read).", "", *table(columns, rows)]
 
 
 def counts_section(context: dict[str, Any], cells: Cells) -> list[str]:
@@ -189,7 +222,7 @@ def statistics_section(context: dict[str, Any], cells: Cells) -> list[str]:
     titles = [title for _, title in STAT_COLUMNS]
     primary = stats_rows(context, cells, ("meanVelocityMps",), STAT_COLUMNS, True)
     secondary = stats_rows(context, cells, SECONDARY, STAT_COLUMNS, False)
-    diagnostics = stats_rows(context, cells, METRICS, DIAGNOSTIC_COLUMNS, False)
+    diagnostics = stats_rows(context, cells, study.METRICS, DIAGNOSTIC_COLUMNS, False)
     return ["## Per-lift primary statistics (meanVelocityMps, pooled)", "",
             "Differences are OpenBar minus WL, as serialized (six decimals) by the consumer report.", "",
             *table(["Lift", *titles, f"LoA within ±{study.TOLERANCE_MPS:.6f}"], primary), "",
@@ -248,9 +281,9 @@ def reproducibility_section(context: dict[str, Any], cells: Cells) -> list[str]:
 def handcheck_section(context: dict[str, Any], cells: Cells) -> list[str]:
     handcheck = context["handcheck"]
     discrepancy = handcheck["max_abs_discrepancy_mps"]
-    return [f"## Hand-check ({study.SLOTS[0]})", "",
+    return [f"## Hand-check ({study.HANDCHECK_SLOT})", "",
             f"- Status: {cells.text(handcheck['status'])}",
-            f"- Reasons: {'; '.join(cells.text(reason) for reason in handcheck['reasons']) or DASH}",
+            f"- Reasons: {'; '.join(cells.text(public_code(reason)) for reason in handcheck['reasons']) or DASH}",
             f"- Values compared/matched: {handcheck['values_compared']}/{handcheck['values_matched']}",
             f"- Max |vy| discrepancy (m/s): {DASH if discrepancy is None else js_number(discrepancy)}",
             f"- Bound to this inventory and the back_squat run 1 report: {yes_no(handcheck['inputs_match'])}"]
@@ -262,13 +295,14 @@ def method_config_lines(context: dict[str, Any]) -> list[str]:
     lines = [f"- OpenBar method config SHA-256, {exercise}: `{configs[exercise]}`" for exercise in lift_names()
              if exercise in configs]
     if configs:
-        lines.append(f"- Method config identical across produced lift reports (diagnostic): "
+        lines.append(f"- Method config identical across produced lift reports (C3): "
                      f"{yes_no(len(set(configs.values())) == 1)}")
     return lines
 
 
 def provenance_section(context: dict[str, Any], cells: Cells) -> list[str]:
     inventory, summary, consumer = context["inventory"], context["lock_summary"], context["consumer"]
+    tool = context["tool"]
     environment = inventory.get("environment") or {}
     env = ", ".join(f"{key} {cells.text(environment.get(key) or 'unrecorded')}"
                     for key in ("python", "opencv_version", "numpy_version", "ffmpeg", "ffprobe"))
@@ -279,6 +313,8 @@ def provenance_section(context: dict[str, Any], cells: Cells) -> list[str]:
             f"{yes_no(summary['inventory_sha256'] == context['inventory_sha256'])})",
             f"- Tool commit `{cells.text(summary.get('tool_commit'))}` (tracked files clean: "
             f"{yes_no(summary.get('tool_tree_clean'))}); data checkout commit `{cells.text(inventory.get('data_root_commit'))}`",
+            f"- Report tool commit `{cells.text(tool['commit'])}` (tracked files clean: {yes_no(tool['tree_clean'])}); "
+            f"hand-check tool commit `{cells.text(tool['handcheck_commit'] or 'unrecorded')}`",
             f"- OpenBar baseline `{study.OPENBAR_BASELINE_COMMIT}`; CLI SHA-256 `{study.OPENBAR_CLI_SHA256}`",
             f"- Consumer commit `{consumer['commit']}`; node {cells.text(consumer['node_version'])}",
             f"- Report schema {study.REPORT_SCHEMA}; segmentation {study.SEGMENTATION}; WL parser {study.WL_PARSER}; "
@@ -286,7 +322,7 @@ def provenance_section(context: dict[str, Any], cells: Cells) -> list[str]:
             f"- Tracker {study.TRACKER_IMPLEMENTATION} (policy {study.TRACKER_POLICY}); preset {study.PRESET}",
             *method_config_lines(context),
             f"- Environment: {env}",
-            f"- WL Analysis version: {cells.text(inventory.get('wl_analysis_version'))}"]
+            f"- WL Analysis version: {cells.text(public_wl_version(inventory.get('wl_analysis_version')))}"]
 
 
 SECTIONS = (header, criterion_section, slot_section, counts_section, statistics_section, per_video_section,

@@ -2,10 +2,11 @@
 """#79 private input inventory, 18-slot accounting, per-lift pairs files, collection-lock summary, rehash.
 
 `inventory` reads the owner's strict slots.json and the retained session outputs, derives each slot's
-failures (stage:reason) next to the owner's, and writes, into a NEW directory under
-validation/private/vbt/study-79/: one consumer pairs file per lift with analyzable slots, the private
-inventory.json binding every input by exact-byte SHA-256, and a public-safe lock-summary.json carrying
-only the inventory digest, counts and freeze references. `verify` rehashes everything recorded.
+failures (stage:reason) next to the owner's, checks every analyzable pair with the pinned consumer's own
+parsers (accept/reject only), and writes, into a NEW directory under validation/private/vbt/study-79/:
+the private inventory.json binding every input by exact-byte SHA-256, a public-safe lock-summary.json
+carrying only the inventory digest, counts and freeze references, and - only when the inventory is
+lockable - one consumer pairs file per lift with analyzable slots. `verify` rehashes everything recorded.
 
 No outcome is computed: velocities and scale ratios are never read, frozen values come only from
 agreement79_study.py, and nothing is overwritten. Exit 0 written, 1 invalid input, 3 infrastructure abort
@@ -17,16 +18,14 @@ import argparse
 import hashlib
 import os
 import re
-import subprocess
 import sys
-from collections import Counter
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
 
 import agreement79_study as study
 import analyze_lift as workflow
-from agreement79_slot_evidence import InfrastructureError, Probe, StatusCheck
+from agreement79_slot_evidence import Preflight, Probe, StatusCheck
 import agreement79_slot_evidence as evidence
 
 ROOT = workflow.ROOT
@@ -43,32 +42,24 @@ BLOCKING_STAGES = ("novelty", "confirmation", "processing", "assessment", "wl_ex
 FIXTURE_ID = re.compile(r"vbt-[0-9a-f]{16}")
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-COMMIT = re.compile(r"[0-9a-f]{40}")
 GitState = Callable[[Path], "tuple[str, bool]"]
 
-
-class InventoryInputError(ValueError):
-    """Invalid slots document, path or existing output (exit 1)."""
+# Compatibility names for the report tool; both are the shared agreement79_study objects.
+InventoryInputError = study.StudyInputError
+git_state = study.git_state
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
-        raise InventoryInputError(message)
+        raise study.StudyInputError(message)
 
 
-def git_state(root: Path) -> tuple[str, bool]:
-    """HEAD of the tool checkout and whether tracked files are clean."""
-    git = ["git", "-C", str(root)]
+def resolve(path: Path) -> Path:
+    """``workflow.safe_resolve`` with an unresolvable path reported as invalid input (exit 1)."""
     try:
-        head = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, check=False)
-        porcelain = subprocess.run([*git, "status", "--porcelain", "--untracked-files=no"],
-                                   capture_output=True, check=False)
-    except OSError as error:
-        raise InfrastructureError(f"git could not be run: {error}") from error
-    commit = head.stdout.decode("utf-8", errors="replace").strip()
-    if head.returncode != 0 or porcelain.returncode != 0 or COMMIT.fullmatch(commit) is None:
-        raise InfrastructureError("cannot read the tool checkout's git state")
-    return commit, porcelain.stdout.strip() == b""
+        return workflow.safe_resolve(path)
+    except RuntimeError as error:
+        raise study.StudyInputError(str(error)) from error
 
 
 # --- slots.json ----------------------------------------------------------------------------------
@@ -141,7 +132,7 @@ def parse_slots(root: Path, data: bytes) -> dict[str, Any]:
     try:
         document = workflow.schema_check.loads_strict(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as error:
-        raise InventoryInputError(f"slots file is not strict UTF-8 JSON: {error}") from error
+        raise study.StudyInputError(f"slots file is not strict UTF-8 JSON: {error}") from error
     require(isinstance(document, dict) and set(document) == TOP_KEYS, f"slots keys must be exactly {sorted(TOP_KEYS)}")
     require(document["format"] == study.SLOTS_FORMAT, f"slots format must be {study.SLOTS_FORMAT}")
     version = document["format_version"]
@@ -201,16 +192,79 @@ def derive_all(root: Path, document: dict[str, Any], context: dict[str, Any],
 
 
 def reference_environment(results: list[evidence.SlotEvidence | None]) -> dict[str, Any] | None:
-    """Most common run environment (ties: earliest slot); every other slot is a method mismatch."""
-    keyed = [(result, tuple(sorted(result.environment.items()))) for result in results
-             if result is not None and result.environment is not None]
-    if not keyed:
+    """Run environment of the first processed slot in frozen order; a differing slot is a protocol note.
+
+    Values are compared as canonical JSON, so nested dicts or lists never break the comparison. The
+    difference is non-blocking: the frozen method is checked field by field elsewhere.
+    """
+    processed = [result for result in results
+                 if result is not None and result.processed and result.environment is not None]
+    if not processed:
         return None
-    reference = Counter(key for _, key in keyed).most_common(1)[0][0]
-    for result, key in keyed:
-        if key != reference:
-            result.fail("processing", "method_mismatch:environment")
-    return dict(reference)
+    reference = processed[0].environment
+    for result in processed[1:]:
+        if workflow.canonical_sha256(result.environment) != workflow.canonical_sha256(reference):
+            result.fail("protocol", "environment_mismatch")
+    return reference
+
+
+def session_membership(document: dict[str, Any], results: list[evidence.SlotEvidence | None],
+                       sessions: dict[str, dict[str, Any]]) -> None:
+    """Every enrolled slot of a session whose record holds a clip or skipped name no slot of it claims."""
+    for session_id, session in sessions.items():
+        entries = [(entry, result) for entry, result in zip(document["slots"], results)
+                   if entry["status"] == "enrolled" and entry["session_id"] == session_id]
+        record = session["record"]
+        if record is None:
+            continue
+        fixture_ids = {entry["fixture_id"] for entry, _ in entries if entry["fixture_id"] is not None}
+        names = {entry["original_name"] for entry, _ in entries}
+        clips = record.get("clips") if isinstance(record.get("clips"), list) else []
+        skipped = record.get("skipped") if isinstance(record.get("skipped"), list) else []
+        stray = (any(evidence.dig(clip, "fixture_id") not in fixture_ids for clip in clips)
+                 or any(name not in names for name in skipped))
+        if stray:
+            for _, result in entries:
+                if result is not None:
+                    result.fail("protocol", "session_has_unenrolled_clip")
+
+
+def slot_order(document: dict[str, Any], results: list[evidence.SlotEvidence | None]) -> None:
+    """Within a session, each slot's container creation instant must be strictly after the previous one's."""
+    previous: dict[str, Any] = {}
+    for entry, result in zip(document["slots"], results):
+        if entry["status"] != "enrolled" or result is None:
+            continue
+        instant = evidence.parse_creation_time(result.creation_time)
+        if instant is None:
+            continue
+        earlier = previous.get(entry["session_id"])
+        if earlier is not None and not instant > earlier:
+            result.fail("protocol", "slot_order_violation")
+        previous[entry["session_id"]] = instant
+
+
+def blocked(result: evidence.SlotEvidence) -> bool:
+    return any(stage in BLOCKING_STAGES for stage, _ in result.failures)
+
+
+def parser_preflight(root: Path, app: Path, results: list[evidence.SlotEvidence | None],
+                     preflight: Preflight) -> None:
+    """Run the pinned consumer's parsers on every analyzable-so-far slot holding both files.
+
+    A rejection blocks the slot; the parser's message stays in the private inventory only.
+    """
+    for result in results:
+        if result is None or not result.processed or blocked(result):
+            continue
+        if "analysis" not in result.files or "wl_csv" not in result.files:
+            continue
+        verdict = preflight(app, root / result.files["analysis"]["path"], root / result.files["wl_csv"]["path"])
+        result.parser_preflight = verdict
+        if not verdict["openbar"]["accepted"]:
+            result.fail("processing", "openbar_parser_rejected")
+        if not verdict["wl"]["accepted"]:
+            result.fail("wl_export", "wl_parser_rejected")
 
 
 def slot_document(entry: dict[str, Any], result: evidence.SlotEvidence | None) -> dict[str, Any]:
@@ -218,7 +272,7 @@ def slot_document(entry: dict[str, Any], result: evidence.SlotEvidence | None) -
     enrolled = entry["status"] == "enrolled"
     derived = result.failures if result is not None else []
     processed = result is not None and result.processed
-    analyzable = enrolled and processed and not any(stage in BLOCKING_STAGES for stage, _ in derived)
+    analyzable = enrolled and processed and not blocked(result)
     failures = failure_list(entry["protocol_failures"], derived)
     return {
         "slot": entry["slot"], "lift": lift["code"], "exercise": lift["exercise"], "load_kg": lift["load_kg"],
@@ -231,6 +285,7 @@ def slot_document(entry: dict[str, Any], result: evidence.SlotEvidence | None) -
         "attempted_rep_start_s": entry.get("attempted_rep_start_s"),
         "creation_time": None if result is None else result.creation_time,
         "manifest_entry_sha256": None if result is None else result.manifest_entry_sha256,
+        "parser_preflight": None if result is None else result.parser_preflight,
         "files": {} if result is None else result.files,
     }
 
@@ -264,14 +319,17 @@ def counts(slots: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def lift_records(root: Path, slots: list[dict[str, Any]], pairs: dict[str, bytes],
-                 output_dir: Path) -> dict[str, Any]:
+                 output_dir: Path, lockable: bool) -> dict[str, Any]:
+    """Per-lift slot lists; a pairs file is recorded only for a lockable inventory."""
     records = {}
     for lift in study.LIFTS.values():
         exercise = lift["exercise"]
         record: dict[str, Any] = {
             "slots": [slot["slot"] for slot in slots if slot["exercise"] == exercise],
             "analyzable_slots": [slot["slot"] for slot in slots if slot["exercise"] == exercise and slot["analyzable"]]}
-        if exercise in pairs:
+        if not lockable:
+            record.update(pairs_file=None, reason="collection_in_progress")
+        elif exercise in pairs:
             record["pairs_file"] = {"path": study.repo_relative(output_dir / f"pairs-{exercise}.json", root),
                                     "sha256": hashlib.sha256(pairs[exercise]).hexdigest()}
         else:
@@ -283,45 +341,72 @@ def lift_records(root: Path, slots: list[dict[str, Any]], pairs: dict[str, bytes
 # --- Command -------------------------------------------------------------------------------------
 
 def check_paths(root: Path, slots_path: Path, output_dir: Path, exclusion_list: Path) -> None:
-    study_dir = workflow.safe_resolve(root / study.STUDY_DIR)
+    study_dir = resolve(root / study.STUDY_DIR)
     for flag, path in (("--slots", slots_path), ("--exclusion-list", exclusion_list)):
         require(workflow.is_within(path, root), f"{flag} {path} is outside the repository")
     require(slots_path.is_file(), f"--slots {slots_path} is not a file")
-    require(workflow.is_within(output_dir, study_dir) and workflow.safe_resolve(output_dir) != study_dir,
+    require(workflow.is_within(output_dir, study_dir) and output_dir != study_dir,
             f"--output-dir must be a new folder under {study.STUDY_DIR.as_posix()}/")
     require(not output_dir.exists(), f"--output-dir {study.repo_relative(output_dir, root)} already exists; "
                                      "retained outputs are never replaced")
 
 
-def build(root: Path, slots_path: Path, output_dir: Path, exclusion_list: Path | None = None, *,
+def check_consumer(app: Path, git: GitState) -> Path:
+    """The pinned consumer app must sit in a tracked-clean checkout at CONSUMER_COMMIT (else exit 3)."""
+    app = resolve(app)
+    commit, clean = git(app.parent)
+    if commit != study.CONSUMER_COMMIT or not clean:
+        raise study.StudyInfrastructureError(
+            f"the consumer checkout must be the clean pinned {study.CONSUMER_COMMIT}; found {commit} "
+            f"(tracked files clean: {clean})")
+    return app
+
+
+def derive(root: Path, document: dict[str, Any], context: dict[str, Any], status: StatusCheck, app: Path,
+           preflight: Preflight) -> tuple[list[evidence.SlotEvidence | None], dict[str, Any], dict[str, Any]]:
+    """Every derived failure: per slot, across slots, then the consumer parser preflight."""
+    results, sessions = derive_all(root, document, context, status)
+    environment = reference_environment(results)
+    session_membership(document, results, sessions)
+    slot_order(document, results)
+    parser_preflight(root, app, results, preflight)
+    return results, sessions, environment
+
+
+def build(root: Path, slots_path: Path, output_dir: Path, consumer_app: Path, exclusion_list: Path | None = None, *,
           status: StatusCheck = evidence.session_status, probe: Probe = evidence.ffprobe_creation_time,
-          git: GitState = git_state, exclusion_sha256: str | None = None, tool_root: Path = ROOT) -> dict[str, Any]:
-    """Every check and every derived value; no writes. Raises InventoryInputError or InfrastructureError.
+          git: GitState = study.git_state, preflight: Preflight = evidence.consumer_preflight,
+          exclusion_sha256: str | None = None, tool_root: Path = ROOT) -> dict[str, Any]:
+    """Every check and every derived value; no writes. Raises StudyInputError or StudyInfrastructureError.
 
     ``root`` is the pinned data checkout that ran the session workflow; ``tool_root`` is this tool's own
-    checkout. Both commits are recorded, and the data checkout must be the clean frozen baseline.
+    checkout. Both commits are recorded, and the data checkout must be the clean frozen baseline. A
+    lockable inventory also needs a tracked-clean tool checkout.
     """
-    root = workflow.safe_resolve(root)
+    root = resolve(root)
     data_commit, data_clean = git(root)
     require(data_commit == study.OPENBAR_BASELINE_COMMIT and data_clean,
             f"the data checkout must be the clean pinned baseline {study.OPENBAR_BASELINE_COMMIT}; "
             f"found {data_commit} (tracked files clean: {data_clean})")
-    tool_commit, tool_clean = git(workflow.safe_resolve(tool_root))
-    slots_path, output_dir = workflow.safe_resolve(slots_path), workflow.safe_resolve(output_dir)
-    exclusion_list = workflow.safe_resolve(exclusion_list or root / study.EXCLUSION_LIST)
+    tool_commit, tool_clean = git(resolve(tool_root))
+    slots_path, output_dir = resolve(slots_path), resolve(output_dir)
+    exclusion_list = resolve(exclusion_list or root / study.EXCLUSION_LIST)
     check_paths(root, slots_path, output_dir, exclusion_list)
     data = slots_path.read_bytes()
     document = parse_slots(root, data)
+    lockable = document["collection_status"] != "in_progress"
+    require(tool_clean or not lockable,
+            f"a lockable inventory needs a tracked-clean tool checkout; {tool_root} at {tool_commit} has tracked "
+            "changes (commit or revert them, or keep collection_status in_progress for a draft)")
+    app = check_consumer(consumer_app, git)
     exclusion_digest, excluded = evidence.load_exclusion_list(
         exclusion_list, exclusion_sha256 or study.NOVELTY_EXCLUSION_SHA256)
     context = {"plate_diameter_m": document["plate_diameter_m"], "excluded": excluded, "probe": probe,
                "assessments_dir": study.recorded_path(root, document["assessments_dir"])}
-    results, sessions = derive_all(root, document, context, status)
-    environment = reference_environment(results)
+    results, sessions, environment = derive(root, document, context, status, app, preflight)
     slots = [slot_document(entry, result) for entry, result in zip(document["slots"], results)]
-    pairs = pairs_documents(root, slots, output_dir)
+    pairs = pairs_documents(root, slots, output_dir) if lockable else {}
     tally = counts(slots)
-    lockable = document["collection_status"] != "in_progress"
     inventory = {
         "format": study.INVENTORY_FORMAT, "format_version": study.STUDY_DOCUMENT_VERSION,
         "study_id": study.STUDY_ID, "tool_version": study.TOOL_VERSION, "freeze": study.freeze_references(),
@@ -330,8 +415,10 @@ def build(root: Path, slots_path: Path, output_dir: Path, exclusion_list: Path |
         "assessments_dir": document["assessments_dir"],
         "slots_file": {"path": study.repo_relative(slots_path, root), "sha256": hashlib.sha256(data).hexdigest()},
         "exclusion_list": {"path": study.repo_relative(exclusion_list, root), "sha256": exclusion_digest},
-        "slots": slots, "sessions": {key: {"files": value["files"]} for key, value in sessions.items()},
-        "lifts": lift_records(root, slots, pairs, output_dir), "environment": environment, "counts": tally,
+        "slots": slots,
+        "sessions": {key: {"files": value["files"], "status_detail": value["status_detail"]}
+                     for key, value in sessions.items()},
+        "lifts": lift_records(root, slots, pairs, output_dir, lockable), "environment": environment, "counts": tally,
         "lockable": lockable, "data_root_commit": data_commit, "tool_commit": tool_commit,
         "tool_tree_clean": tool_clean,
     }
@@ -339,7 +426,8 @@ def build(root: Path, slots_path: Path, output_dir: Path, exclusion_list: Path |
     summary = {
         "format": study.LOCK_SUMMARY_FORMAT, "format_version": study.STUDY_DOCUMENT_VERSION,
         "study_id": study.STUDY_ID, "tool_version": study.TOOL_VERSION, "tool_commit": tool_commit,
-        "tool_tree_clean": tool_clean, "data_root_commit": data_commit, "inventory_sha256": hashlib.sha256(inventory_bytes).hexdigest(),
+        "tool_tree_clean": tool_clean, "data_root_commit": data_commit,
+        "inventory_sha256": hashlib.sha256(inventory_bytes).hexdigest(),
         "counts": tally, "lockable": lockable, "freeze": study.freeze_references(),
         "exclusion_list_sha256": exclusion_digest,
     }
@@ -360,6 +448,9 @@ def write(plan: dict[str, Any]) -> None:
 # --- verify --------------------------------------------------------------------------------------
 
 def recorded_files(document: dict[str, Any]) -> list[tuple[str, dict[str, str]]]:
+    """Every (label, {path, sha256}) the inventory binds; a malformed structure raises StudyInputError."""
+    require(isinstance(document["slots"], list) and isinstance(document["sessions"], dict)
+            and isinstance(document["lifts"], dict), "slots, sessions or lifts have the wrong type")
     entries = [(f"slot {slot['slot']} {role}", item) for slot in document["slots"]
                for role, item in sorted(slot["files"].items())]
     entries += [(f"session {name} {role}", item) for name, session in sorted(document["sessions"].items())
@@ -367,6 +458,9 @@ def recorded_files(document: dict[str, Any]) -> list[tuple[str, dict[str, str]]]
     entries += [("slots_file", document["slots_file"]), ("exclusion_list", document["exclusion_list"])]
     entries += [(f"pairs {exercise}", lift["pairs_file"]) for exercise, lift in sorted(document["lifts"].items())
                 if lift["pairs_file"] is not None]
+    for label, item in entries:
+        require(isinstance(item, dict) and isinstance(item.get("path"), str) and isinstance(item.get("sha256"), str),
+                f"{label} is not a {{path, sha256}} record")
     return entries
 
 
@@ -379,14 +473,14 @@ def verify(inventory_path: Path, lock_summary_path: Path | None = None, root: Pa
                 and document.get("format_version") == study.STUDY_DOCUMENT_VERSION, "not a v1 #79 inventory")
         entries = recorded_files(document)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-        raise InventoryInputError(f"cannot read inventory {inventory_path}: {error}") from error
+        raise study.StudyInputError(f"cannot read inventory {inventory_path}: {error}") from error
     mismatches = []
     for label, item in entries:
-        path = study.recorded_path(root, item.get("path"))
+        path = study.recorded_path(root, item["path"])
         actual = evidence.hashed(root, path)
         actual_sha = None if actual is None else actual["sha256"]
-        if actual_sha != item.get("sha256"):
-            mismatches.append({"role": label, "path": item.get("path"), "expected": item.get("sha256"),
+        if actual_sha != item["sha256"]:
+            mismatches.append({"role": label, "path": item["path"], "expected": item["sha256"],
                                "actual": actual_sha})
     inventory_sha = hashlib.sha256(data).hexdigest()
     summary = evidence.load_document(lock_summary_path or inventory_path.parent / LOCK_SUMMARY_NAME)
@@ -408,8 +502,8 @@ def print_verification(result: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None, *, root: Path = ROOT, status: StatusCheck = evidence.session_status,
-         probe: Probe = evidence.ffprobe_creation_time, git: GitState = git_state,
-         exclusion_sha256: str | None = None) -> int:
+         probe: Probe = evidence.ffprobe_creation_time, git: GitState = study.git_state,
+         preflight: Preflight = evidence.consumer_preflight, exclusion_sha256: str | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     build_parser = commands.add_parser("inventory", help="derive the 18-slot inventory, pairs files and lock summary")
@@ -420,6 +514,8 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT, status: StatusChec
     build_parser.add_argument("--slots", type=Path, required=True, help="private owner slots.json")
     build_parser.add_argument("--output-dir", type=Path, required=True,
                               help=f"new folder under {study.STUDY_DIR.as_posix()}/")
+    build_parser.add_argument("--consumer-app", type=Path, required=True,
+                              help=f"pinned consumer app folder (checkout at {study.CONSUMER_COMMIT[:12]})")
     build_parser.add_argument("--exclusion-list", type=Path,
                               help=f"frozen novelty list (default {study.EXCLUSION_LIST.as_posix()})")
     verify_parser.add_argument("--inventory", type=Path, required=True)
@@ -427,16 +523,19 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT, status: StatusChec
     args = parser.parse_args(argv)
     try:
         if args.command == "verify":
-            result = verify(args.inventory.resolve(), args.lock_summary and args.lock_summary.resolve(), args.root)
+            result = verify(resolve(args.inventory), args.lock_summary and resolve(args.lock_summary), args.root)
             print_verification(result)
             return 0 if result["ok"] else 1
-        plan = build(args.root, args.slots, args.output_dir, args.exclusion_list, status=status, probe=probe, git=git,
-                     exclusion_sha256=exclusion_sha256)
+        plan = build(args.root, args.slots, args.output_dir, args.consumer_app, args.exclusion_list, status=status,
+                     probe=probe, git=git, preflight=preflight, exclusion_sha256=exclusion_sha256)
         write(plan)
-    except InventoryInputError as error:
+    except study.StudyInfrastructureError as error:
+        print(f"error: infrastructure abort ({error}); retry with unchanged inputs", file=sys.stderr)
+        return 3
+    except (study.StudyInputError, workflow.WorkflowError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    except (InfrastructureError, OSError) as error:
+    except OSError as error:
         print(f"error: infrastructure abort ({error}); retry with unchanged inputs", file=sys.stderr)
         return 3
     tally = plan["summary"]["counts"]

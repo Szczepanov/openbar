@@ -6,8 +6,10 @@ Reads the locked private inventory and lock summary (agreement79_inventory.py), 
 writes ONE new aggregate-only Markdown report (agreement79_report_render.py) under docs/analysis/ or
 target/ of this checkout. No parser, segmenter, pairing or statistic is reimplemented: every number comes
 from the consumer's serialized JSON. The verdict is a mechanical evaluation of the frozen criterion; the
-reviewed decision is recorded separately. Exit 0 written, 1 invalid or inconsistent input, 3 infrastructure
-(consumer checkout not the pinned clean commit, node unavailable). Standard library only.
+reviewed decision is recorded separately. Only a lockable inventory (collection complete or concluded) is
+reported; statistics are never rendered for a collection in progress. The tool checkout's git state enters C4.
+Exit 0 written, 1 invalid or inconsistent input (including a non-lockable inventory), 3 infrastructure (consumer
+checkout not the pinned clean commit, git or node unavailable). Standard library only.
 """
 from __future__ import annotations
 
@@ -22,18 +24,17 @@ import agreement79_inventory as inventory_tool
 import agreement79_report_render as render
 import agreement79_study as study
 import analyze_lift as workflow
-from agreement79_slot_evidence import InfrastructureError, dig, is_number
+from agreement79_slot_evidence import InfrastructureError as EvidenceInfrastructureError
+from agreement79_slot_evidence import dig, is_number
 
 ROOT = workflow.ROOT
-HANDCHECK_FORMAT = "owner-vbt-agreement-79-handcheck"
-HANDCHECK_SLOT = study.SLOTS[0]
 HANDCHECK_STATUSES = ("passed", "failed")
 EXERCISES = tuple(lift["exercise"] for lift in study.LIFTS.values())
 REPORT_FILES = (("run1_json", "run1.json"), ("run2_json", "run2.json"), ("run1_md", "run1.md"), ("run2_md", "run2.md"))
 OUTPUT_DIRS = ("docs/analysis", "target")
 COUNT_KEYS = ("wlTotal", "openBarTotal", "paired", "wlOnly", "openBarOnly", "openBarExcluded")
 UNMATCHED_KEYS = ("wlOnly", "openBarOnly", "openBarExcluded")
-METRICS = ("meanVelocityMps", "peakVelocityMps", "romCm")
+TRACKING_STATES = ("tracked", "low_confidence", "lost")
 STATISTICS = ("bias", "sampleSd", "lowerLoA", "upperLoA", "meanAbsoluteDifference", "slope", "intercept",
               "pearsonR", "geometricMeanRatio")
 STAT_REASONS = frozenset({"insufficient_n", "constant_magnitudes", "zero_variance", "invalid_scale",
@@ -42,10 +43,8 @@ PAIRS_PER_LIFT = study.VIDEOS_PER_LIFT * study.PLANNED_REPS_PER_VIDEO
 REDACTION_MIN_CHARS = 4
 GitState = Callable[[Path], "tuple[str, bool]"]
 NodeVersion = Callable[[], str]
-
-
-class ReportInputError(ValueError):
-    """Invalid or inconsistent study input, or an existing output (exit 1)."""
+ReportInputError = study.StudyInputError
+INFRASTRUCTURE_ERRORS = (study.StudyInfrastructureError, EvidenceInfrastructureError, OSError)
 
 
 def require(condition: bool, message: str) -> None:
@@ -54,7 +53,7 @@ def require(condition: bool, message: str) -> None:
 
 
 def is_sha256(value: Any) -> bool:
-    return isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+    return isinstance(value, str) and study.SHA256_RE.fullmatch(value) is not None
 
 
 # --- Injectable process boundaries ---------------------------------------------------------------
@@ -62,19 +61,19 @@ def is_sha256(value: Any) -> bool:
 def consumer_git_state(app: Path) -> tuple[str, bool]:
     """HEAD of the consumer checkout holding ``app`` and whether its tracked files are clean."""
     try:
-        return inventory_tool.git_state(app.parent)
-    except InfrastructureError as error:
-        raise InfrastructureError(f"consumer checkout: {error}") from error
+        return study.git_state(app.parent)
+    except study.StudyInfrastructureError as error:
+        raise study.StudyInfrastructureError(f"consumer checkout: {error}") from error
 
 
 def node_version() -> str:
     try:
         result = subprocess.run(["node", "--version"], capture_output=True, check=False)
     except OSError as error:
-        raise InfrastructureError(f"node could not be run: {error}") from error
+        raise study.StudyInfrastructureError(f"node could not be run: {error}") from error
     text = result.stdout.decode("utf-8", errors="replace").strip()
     if result.returncode != 0 or not text or "\n" in text:
-        raise InfrastructureError("node --version failed")
+        raise study.StudyInfrastructureError("node --version failed")
     return text
 
 
@@ -98,6 +97,8 @@ def check_inventory(document: Any) -> None:
             and document.get("study_id") == study.STUDY_ID, f"inventory must be a v1 {study.STUDY_ID} inventory")
     require(document.get("freeze") == study.freeze_references(), "inventory freeze references are not the frozen ones")
     require(document.get("collection_status") in inventory_tool.COLLECTION_STATUSES, "inventory collection_status is invalid")
+    require(document.get("lockable") is True and document["collection_status"] != "in_progress",
+            "inventory is not lockable (collection in progress); only a locked, lockable inventory is reported")
     slots = document.get("slots")
     require(isinstance(slots, list) and [dig(slot, "slot") for slot in slots] == list(study.SLOTS),
             "inventory slots must list the 18 frozen slots in order")
@@ -120,12 +121,14 @@ def check_lock_summary(summary: Any, inventory_sha: str) -> None:
             and summary.get("format_version") == study.STUDY_DOCUMENT_VERSION
             and summary.get("study_id") == study.STUDY_ID, "lock summary must be a v1 #79 lock summary")
     require(summary.get("inventory_sha256") == inventory_sha, "inventory sha256 is not the lock summary's")
+    require(summary.get("lockable") is True, "lock summary is not lockable; only a locked, lockable inventory is reported")
     require(summary.get("freeze") == study.freeze_references(), "lock summary freeze references are not the frozen ones")
 
 
 def check_stats(stats: Any, where: str) -> None:
-    require(isinstance(stats, dict) and set(METRICS) <= set(stats), f"{where}: stats must cover {', '.join(METRICS)}")
-    for metric in METRICS:
+    require(isinstance(stats, dict) and set(study.METRICS) <= set(stats),
+            f"{where}: stats must cover {', '.join(study.METRICS)}")
+    for metric in study.METRICS:
         item = stats[metric]
         require(isinstance(item, dict) and type(item.get("n")) is int and item["n"] >= 0
                 and isinstance(item.get("reasons"), dict), f"{where}: {metric} stats are malformed")
@@ -220,13 +223,29 @@ def load_lift(root: Path, runs_dir: Path, exercise: str, inventory: dict[str, An
             "json_identical": data["run1_json"] == data["run2_json"], "md_identical": data["run1_md"] == data["run2_md"]}
 
 
+def handcheck_consistent(document: dict[str, Any], inventory_sha: str, squat_report_sha: str | None) -> bool:
+    """Bound to this inventory and squat report (null only without one), pinned consumer, frozen refs, coherent status."""
+    recorded_report = dig(document, "inputs", "report")
+    report_bound = (recorded_report is None if squat_report_sha is None
+                    else dig(recorded_report, "sha256") == squat_report_sha)
+    public = document["public"]
+    coherent = public["status"] != "passed" or (not public["reasons"] and not document.get("reasons"))
+    return (dig(document, "inputs", "inventory", "sha256") == inventory_sha and report_bound
+            and document.get("consumer_commit") == study.CONSUMER_COMMIT
+            and ("freeze" not in document or document["freeze"] == study.freeze_references()) and coherent)
+
+
 def load_handcheck(path: Path, inventory_sha: str, squat_report_sha: str | None) -> dict[str, Any]:
-    """The only reader of the hand-check document; uses its `public` sub-object and recorded input hashes."""
+    """The only reader of the hand-check document; uses its `public` sub-object and recorded input hashes.
+
+    Reasons are reduced to public tool codes; any inconsistency adds `handcheck_inputs_mismatch` (status failed).
+    """
     document, _ = read_json(path, "hand-check")
-    require(isinstance(document, dict) and document.get("format") == HANDCHECK_FORMAT
+    require(isinstance(document, dict) and document.get("format") == study.HANDCHECK_FORMAT
             and document.get("format_version") == study.STUDY_DOCUMENT_VERSION
-            and document.get("study_id") == study.STUDY_ID, f"hand-check must be a {study.STUDY_ID} {HANDCHECK_FORMAT} v1")
-    require(document.get("slot") == HANDCHECK_SLOT, f"hand-check slot must be {HANDCHECK_SLOT}")
+            and document.get("study_id") == study.STUDY_ID,
+            f"hand-check must be a {study.STUDY_ID} {study.HANDCHECK_FORMAT} v1")
+    require(document.get("slot") == study.HANDCHECK_SLOT, f"hand-check slot must be {study.HANDCHECK_SLOT}")
     public = document.get("public")
     require(isinstance(public, dict) and public.get("status") in HANDCHECK_STATUSES
             and public["status"] == document.get("status"), "hand-check public status is missing or inconsistent")
@@ -236,12 +255,38 @@ def load_handcheck(path: Path, inventory_sha: str, squat_report_sha: str | None)
         require(type(public.get(key)) is int and public[key] >= 0, f"hand-check public {key} must be a count")
     discrepancy = public.get("max_abs_discrepancy_mps")
     require(discrepancy is None or is_number(discrepancy), "hand-check max_abs_discrepancy_mps must be a number or null")
-    inputs_match = dig(document, "inputs", "inventory", "sha256") == inventory_sha and (
-        squat_report_sha is None or dig(document, "inputs", "report", "sha256") == squat_report_sha)
-    reasons = list(public["reasons"]) + ([] if inputs_match else ["handcheck_inputs_mismatch"])
+    inputs_match = handcheck_consistent(document, inventory_sha, squat_report_sha)
+    reasons = [render.public_code(item) for item in public["reasons"]]
+    reasons += [] if inputs_match else ["handcheck_inputs_mismatch"]
+    tool_commit = document.get("tool_commit")
     return {"status": public["status"] if inputs_match else "failed", "reasons": reasons,
             "values_compared": public["values_compared"], "values_matched": public["values_matched"],
-            "max_abs_discrepancy_mps": discrepancy, "inputs_match": inputs_match}
+            "max_abs_discrepancy_mps": discrepancy, "inputs_match": inputs_match,
+            "tool_commit": tool_commit if isinstance(tool_commit, str) else None}
+
+
+def tracking_counts(root: Path, binding: Any) -> dict[str, int] | None:
+    """Counts of `lost` and `low_confidence` raw observations of a hash-bound analysis; None when unavailable."""
+    path = study.recorded_path(root, dig(binding, "path"))
+    if path is None or not path.is_file():
+        return None
+    try:
+        data = path.read_bytes()
+        observations = dig(workflow.schema_check.loads_strict(data.decode("utf-8")), "raw_observations")
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if hashlib.sha256(data).hexdigest() != dig(binding, "sha256") or not isinstance(observations, list):
+        return None
+    states = [dig(item, "tracking_state") for item in observations]
+    if not all(state in TRACKING_STATES for state in states):
+        return None
+    return {"lost": states.count("lost"), "low_confidence": states.count("low_confidence")}
+
+
+def tracking_diagnostics(root: Path, inventory: dict[str, Any]) -> dict[str, dict[str, int] | None]:
+    """Per slot with an inventory analysis binding: tracking-state counts (counts only, never values)."""
+    return {slot["slot"]: tracking_counts(root, slot["files"]["analysis"]) for slot in inventory["slots"]
+            if isinstance(slot["files"].get("analysis"), dict)}
 
 
 def scale_ratio(row: Any) -> dict[str, Any]:
@@ -323,7 +368,7 @@ def private_tokens(root: Path, inventory: dict[str, Any]) -> list[str]:
 # --- Criterion (pure) ----------------------------------------------------------------------------
 
 def failure_text(failures: Any) -> str:
-    return "; ".join(f"{dig(item, 'stage')}:{dig(item, 'reason')}" for item in failures or [])
+    return "; ".join(render.public_failure(item) for item in failures or [])
 
 
 def condition(reasons: list[str]) -> dict[str, Any]:
@@ -390,11 +435,25 @@ def criterion_c3(reports: dict[str, Any]) -> dict[str, Any]:
                 reasons.append(f"{exercise}: {key} unavailable ({dig(stats, 'reasons', key) or 'missing'})")
             elif not inside(value):
                 reasons.append(f"{exercise}: {key}={value!r} outside ±{study.TOLERANCE_MPS:.6f}")
+    configs = {report.get("openBarMethodConfigSha256") for report in reports.values() if report is not None}
+    if len(configs) > 1:
+        reasons.append("method_config_mismatch_across_lifts")
     return condition(reasons)
 
 
+def tool_reasons(tool: dict[str, Any]) -> list[str]:
+    """The report's tool checkout must be clean and at the lock's tool commit, like the hand-check's."""
+    lock = tool.get("lock_commit")
+    reasons = [] if tool.get("tree_clean") is True else ["tool_tree_dirty"]
+    if lock is None or tool.get("commit") != lock:
+        reasons.append("tool_commit_differs_from_lock")
+    if lock is None or tool.get("handcheck_commit") != lock:
+        reasons.append("handcheck_tool_commit_differs")
+    return reasons
+
+
 def criterion_c4(reproducibility: dict[str, dict[str, bool]], inputs_unchanged: bool,
-                 handcheck: dict[str, Any]) -> dict[str, Any]:
+                 handcheck: dict[str, Any], tool: dict[str, Any]) -> dict[str, Any]:
     reasons = []
     for exercise in EXERCISES:
         runs = reproducibility.get(exercise)
@@ -408,7 +467,7 @@ def criterion_c4(reproducibility: dict[str, dict[str, bool]], inputs_unchanged: 
     if handcheck.get("status") != "passed":
         details = ", ".join(handcheck.get("reasons") or []) or "no reason recorded"
         reasons.append(f"handcheck_{handcheck.get('status')}: {details}")
-    return condition(reasons)
+    return condition(reasons + tool_reasons(tool))
 
 
 def evaluate_criterion(facts: dict[str, Any]) -> dict[str, Any]:
@@ -416,11 +475,14 @@ def evaluate_criterion(facts: dict[str, Any]) -> dict[str, Any]:
 
     ``facts``: collection_status, slots (inventory slot documents), reports ({exercise: run1 report or
     None}), reproducibility ({exercise: {json_identical, md_identical}} for produced reports),
-    inputs_unchanged and handcheck ({status, reasons}). Secondary metrics and scale never enter.
+    inputs_unchanged, handcheck ({status, reasons}) and tool ({commit, tree_clean, lock_commit,
+    handcheck_commit}). Secondary metrics and scale never enter. The CLI only evaluates lockable
+    inventories, so it never renders PENDING; the branch stays for the pure rule.
     """
     conditions = {"C1": criterion_c1(facts["slots"]), "C2": criterion_c2(facts["slots"], facts["reports"]),
                   "C3": criterion_c3(facts["reports"]),
-                  "C4": criterion_c4(facts["reproducibility"], facts["inputs_unchanged"], facts["handcheck"])}
+                  "C4": criterion_c4(facts["reproducibility"], facts["inputs_unchanged"], facts["handcheck"],
+                                     facts["tool"])}
     provisional = facts["collection_status"] == "in_progress"
     passed = all(item["passed"] for item in conditions.values())
     verdict = "PENDING" if provisional else "PASS" if passed else "FAIL"
@@ -444,11 +506,12 @@ def check_paths(root: Path, tool_root: Path, args: argparse.Namespace) -> None:
 def check_consumer(app: Path, git: GitState) -> None:
     commit, clean = git(app)
     if commit != study.CONSUMER_COMMIT or not clean:
-        raise InfrastructureError(f"consumer checkout must be the clean pinned {study.CONSUMER_COMMIT}; "
+        raise study.StudyInfrastructureError(f"consumer checkout must be the clean pinned {study.CONSUMER_COMMIT}; "
                                   f"found {commit} (tracked files clean: {clean})")
 
 
-def build(args: argparse.Namespace, root: Path, tool_root: Path, git: GitState, node: NodeVersion) -> dict[str, Any]:
+def build(args: argparse.Namespace, root: Path, tool_root: Path, git: GitState, node: NodeVersion,
+          tool_git: GitState = study.git_state) -> dict[str, Any]:
     """Every check and the rendered bytes; no writes."""
     check_paths(root, tool_root, args)
     verification = inventory_tool.verify(args.inventory, args.lock_summary, root)
@@ -463,15 +526,19 @@ def build(args: argparse.Namespace, root: Path, tool_root: Path, git: GitState, 
     lifts = {exercise: load_lift(root, args.runs_dir, exercise, inventory) for exercise in EXERCISES}
     squat = lifts["back_squat"]
     handcheck = load_handcheck(args.handcheck, inventory_sha, dig(squat, "hashes", "run1_json"))
+    tool_commit, tool_clean = tool_git(tool_root)
+    tool = {"commit": tool_commit, "tree_clean": tool_clean, "lock_commit": summary.get("tool_commit"),
+            "handcheck_commit": handcheck["tool_commit"]}
     facts = {"collection_status": inventory["collection_status"], "slots": inventory["slots"],
              "reports": {exercise: lift["report"] for exercise, lift in lifts.items()},
              "reproducibility": {exercise: {key: lift[key] for key in ("json_identical", "md_identical")}
                                  for exercise, lift in lifts.items() if lift["report"] is not None},
-             "inputs_unchanged": verification["inputs_unchanged"], "handcheck": handcheck}
+             "inputs_unchanged": verification["inputs_unchanged"], "handcheck": handcheck, "tool": tool}
     criterion = evaluate_criterion(facts)
     context = {"inventory": inventory, "inventory_sha256": inventory_sha, "lock_summary": summary,
                "verification": verification, "lifts": lifts, "handcheck": handcheck, "criterion": criterion,
-               "scale": scale_diagnostics(root, inventory), "consumer": consumer,
+               "scale": scale_diagnostics(root, inventory), "tracking": tracking_diagnostics(root, inventory),
+               "consumer": consumer, "tool": tool,
                "private_tokens": private_tokens(root, inventory)}
     return {"criterion": criterion, "markdown": render.render(context)}
 
@@ -483,7 +550,8 @@ def resolved(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None, *, root: Path = ROOT, tool_root: Path = ROOT,
-         git: GitState = consumer_git_state, node: NodeVersion = node_version) -> int:
+         git: GitState = consumer_git_state, node: NodeVersion = node_version,
+         tool_git: GitState = study.git_state) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=root,
                         help="pinned data checkout holding the study evidence (default: this checkout)")
@@ -497,12 +565,12 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT, tool_root: Path = 
     args = parser.parse_args(argv)
     try:
         data_root = workflow.safe_resolve(args.root)
-        result = build(resolved(args), data_root, workflow.safe_resolve(tool_root), git, node)
+        result = build(resolved(args), data_root, workflow.safe_resolve(tool_root), git, node, tool_git)
         study.write_new(args.output, result["markdown"])
-    except (ReportInputError, inventory_tool.InventoryInputError, FileExistsError, workflow.WorkflowError) as error:
+    except (study.StudyInputError, inventory_tool.InventoryInputError, FileExistsError, workflow.WorkflowError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    except (InfrastructureError, OSError) as error:
+    except INFRASTRUCTURE_ERRORS as error:
         print(f"error: infrastructure abort ({error}); retry with unchanged inputs", file=sys.stderr)
         return 3
     conditions = " ".join(f"{name}={'pass' if item['passed'] else 'fail'}"

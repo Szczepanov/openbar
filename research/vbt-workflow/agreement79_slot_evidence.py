@@ -3,7 +3,8 @@
 
 Read-only: bindings, the frozen method, the #111 assessment, novelty and timing of retained session
 outputs. It never reads velocities or scale-ratio values and computes no outcome; missing evidence is a
-recorded failure, never an invented value. Tools that cannot run raise InfrastructureError (retry).
+recorded failure, never an invented value. Tools that cannot run raise
+``study.StudyInfrastructureError`` (exit 3, retry); a bad exclusion list raises ``study.StudyInputError``.
 """
 from __future__ import annotations
 
@@ -28,26 +29,79 @@ ASSESSMENT_STATUSES = ("processing", "mechanical", "experiment_suitability", "ac
 ENVIRONMENT_KEYS = ("python", "opencv_version", "numpy_version", "ffmpeg", "ffprobe")
 RUN_OUTPUTS = ("prediction", "analysis")
 FREEZE_DATE = study.FREEZE_INSTANT.date()
-SHA256 = re.compile(r"[0-9a-f]{64}")
+BRIDGE = Path(__file__).resolve().with_name("agreement79_consumer_reps.mjs")
+PREFLIGHT_SOURCES = ("openbar", "wl")
+SCALE_BINDINGS = (("source_video_sha256", "video"), ("analysis_sha256", "analysis"),
+                  ("click_csv_sha256", "scale_click_csv"))
 
-StatusCheck = Callable[[Path, str], bool]
+# Compatibility alias for callers that still import it from here; the class is the shared one.
+InfrastructureError = study.StudyInfrastructureError
+
+StatusCheck = Callable[[Path, str], "tuple[bool, str | None]"]
 Probe = Callable[[Path], "str | None"]
-
-
-class InfrastructureError(RuntimeError):
-    """A tool needed to establish evidence could not run; nothing is written (exit 3, retry unchanged)."""
+Preflight = Callable[[Path, Path, Path], "dict[str, Any]"]
 
 
 # --- Injectable process boundaries ---------------------------------------------------------------
 
-def session_status(root: Path, session_id: str) -> bool:
-    """The existing `vbt_session.py status` (#114) verdict: exit 0 means complete and hash-verified."""
+def last_line(data: bytes) -> str | None:
+    lines = [line.strip() for line in data.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    return lines[-1] if lines else None
+
+
+def session_status(root: Path, session_id: str) -> tuple[bool, str | None]:
+    """The existing `vbt_session.py status` (#114) verdict and, when it failed, its last message line.
+
+    Exit 0 means complete and hash-verified, exit 1 a verdict of not complete. A Python traceback or any
+    other exit code means the status tool itself broke: infrastructure, never a slot failure.
+    """
     argv = [sys.executable, "research/vbt-workflow/vbt_session.py", "status", "--session", session_id]
     try:
         result = subprocess.run(argv, cwd=root, capture_output=True, check=False)
     except OSError as error:
-        raise InfrastructureError(f"vbt_session.py status could not be run: {error}") from error
-    return result.returncode == 0
+        raise study.StudyInfrastructureError(f"vbt_session.py status could not be run: {error}") from error
+    if b"Traceback (most recent call last)" in result.stderr:
+        raise study.StudyInfrastructureError(f"vbt_session.py status crashed for session {session_id}")
+    if result.returncode not in (0, 1):
+        raise study.StudyInfrastructureError(
+            f"vbt_session.py status exited {result.returncode} for session {session_id}")
+    if result.returncode == 0:
+        return True, None
+    return False, last_line(result.stderr) or last_line(result.stdout)
+
+
+def valid_preflight(value: Any) -> bool:
+    """Exactly two sources, each {accepted: bool, error: null when accepted, else non-empty text}."""
+    if not isinstance(value, dict) or set(value) != set(PREFLIGHT_SOURCES):
+        return False
+    for item in value.values():
+        if not isinstance(item, dict) or set(item) != {"accepted", "error"} or type(item["accepted"]) is not bool:
+            return False
+        if item["accepted"] != (item["error"] is None):
+            return False
+        if item["error"] is not None and not (isinstance(item["error"], str) and item["error"].strip()):
+            return False
+    return True
+
+
+def consumer_preflight(app: Path, analysis: Path, wl_csv: Path) -> dict[str, Any]:
+    """Whether the pinned consumer's own parsers accept the pair (bridge preflight mode); no values."""
+    argv = ["node", "--experimental-strip-types", str(BRIDGE), "preflight", str(app), str(analysis), str(wl_csv)]
+    try:
+        result = subprocess.run(argv, capture_output=True, check=False)
+    except OSError as error:
+        raise study.StudyInfrastructureError(f"node could not be run: {error}") from error
+    if result.returncode != 0:
+        detail = last_line(result.stderr) or f"exit {result.returncode}"
+        raise study.StudyInfrastructureError(f"consumer parser preflight bridge failed: {detail}")
+    line = last_line(result.stdout)
+    try:
+        value = json.loads(line) if line is not None else None
+    except json.JSONDecodeError as error:
+        raise study.StudyInfrastructureError("consumer parser preflight bridge wrote no JSON line") from error
+    if not valid_preflight(value):
+        raise study.StudyInfrastructureError("consumer parser preflight bridge output is malformed")
+    return value
 
 
 def ffprobe_creation_time(video: Path) -> str | None:
@@ -56,7 +110,7 @@ def ffprobe_creation_time(video: Path) -> str | None:
     try:
         result = subprocess.run(argv, capture_output=True, check=False)
     except OSError as error:
-        raise InfrastructureError(f"ffprobe could not be run: {error}") from error
+        raise study.StudyInfrastructureError(f"ffprobe could not be run: {error}") from error
     if result.returncode != 0:
         return None
     try:
@@ -127,22 +181,22 @@ def load_exclusion_list(path: Path, expected_sha256: str) -> tuple[str, frozense
     try:
         data = path.read_bytes()
     except OSError as error:
-        raise InfrastructureError(f"novelty exclusion list unreadable: {error}") from error
+        raise study.StudyInputError(f"novelty exclusion list unreadable: {error}") from error
     digest = hashlib.sha256(data).hexdigest()
     if digest != expected_sha256:
-        raise InfrastructureError(f"novelty exclusion list digest {digest} is not the frozen {expected_sha256}")
+        raise study.StudyInputError(f"novelty exclusion list digest {digest} is not the frozen {expected_sha256}")
     try:
         lines = data.decode("utf-8").splitlines()
     except UnicodeDecodeError as error:
-        raise InfrastructureError("novelty exclusion list is not UTF-8") from error
+        raise study.StudyInputError("novelty exclusion list is not UTF-8") from error
     hashes = set()
     for number, line in enumerate(lines, start=1):
         text = line.strip()
         if not text or text.startswith("#"):
             continue
         token = text.split()[0].lower()
-        if SHA256.fullmatch(token) is None:
-            raise InfrastructureError(f"novelty exclusion list line {number} does not start with a SHA-256")
+        if study.SHA256_RE.fullmatch(token) is None:
+            raise study.StudyInputError(f"novelty exclusion list line {number} does not start with a SHA-256")
         hashes.add(token)
     return digest, frozenset(hashes)
 
@@ -152,12 +206,15 @@ def load_exclusion_list(path: Path, expected_sha256: str) -> tuple[str, frozense
 def load_session(root: Path, session_id: str, status: StatusCheck) -> dict[str, Any]:
     directory = root / study.SESSIONS_DIR / session_id
     paths = session_run.session_paths(directory)
-    complete = status(root, session_id)
+    complete, status_detail = status(root, session_id)
     record = load_document(paths["record"])
     record = record if isinstance(record, dict) else None
     scale_path = paths["scale_report"] / SCALE_REPORT_JSON
     rows = dig(load_document(scale_path), "rows")
-    scale_ids = {dig(row, "fixture_id") for row in rows} if isinstance(rows, list) else set()
+    # Only each row's fixture id and its three binding hashes are read; never a ratio value.
+    scale_rows = {row["fixture_id"]: {key: row.get(key) for key, _ in SCALE_BINDINGS}
+                  for row in (rows if isinstance(rows, list) else [])
+                  if isinstance(row, dict) and isinstance(row.get("fixture_id"), str)}
     sources = {"session_record": paths["record"], "scale_report_json": scale_path,
                "session_csv": study.recorded_path(root, dig(record, "inputs", "session_csv", "path")),
                "session_state": study.recorded_path(root, dig(record, "inputs", "session_state", "path")),
@@ -165,7 +222,7 @@ def load_session(root: Path, session_id: str, status: StatusCheck) -> dict[str, 
                "manifest": study.recorded_path(root, dig(record, "inputs", "manifest", "path"))}
     files = {role: item for role, path in sources.items() if (item := hashed(root, path)) is not None}
     return {"id": session_id, "complete": complete and record is not None, "record": record,
-            "scale_ids": scale_ids, "files": files}
+            "scale_rows": scale_rows, "files": files, "status_detail": status_detail}
 
 
 # --- Per-slot derivation -------------------------------------------------------------------------
@@ -183,6 +240,7 @@ class SlotEvidence:
         self.manifest_entry_sha256: str | None = None
         self.environment: dict[str, Any] | None = None
         self.video_sha256: str | None = None
+        self.parser_preflight: dict[str, Any] | None = None
 
     def fail(self, stage: str, reason: str) -> None:
         self.failures.append((stage, reason))
@@ -225,7 +283,7 @@ def derive_slot(root: Path, entry: dict[str, Any], session: dict[str, Any], cont
 def clip_evidence(root: Path, entry: dict[str, Any], session: dict[str, Any], clip: dict[str, Any],
                   context: dict[str, Any], evidence: SlotEvidence, reps_valid: bool) -> None:
     if clip.get("exercise") != study.slot_lift(entry["slot"])["exercise"]:
-        evidence.fail("protocol", "exercise_mismatch")
+        evidence.fail("processing", "exercise_mismatch")
     configuration = session["record"].get("configuration")
     for field, mismatched in record_method(configuration, clip, context["plate_diameter_m"]):
         if mismatched:
@@ -246,8 +304,20 @@ def clip_evidence(root: Path, entry: dict[str, Any], session: dict[str, Any], cl
     if reps_valid and (evidence.seed_timestamp_s is None
                        or not evidence.seed_timestamp_s < entry["attempted_rep_start_s"][0]):
         evidence.fail("protocol", "seed_not_before_first_rep")
-    if entry["fixture_id"] not in session["scale_ids"]:
+    scale_evidence(entry["fixture_id"], session, evidence)
+
+
+def scale_evidence(fixture_id: str, session: dict[str, Any], evidence: SlotEvidence) -> None:
+    """The scale row must exist and bind this slot's exact video, analysis and click CSV bytes."""
+    row = session["scale_rows"].get(fixture_id)
+    if row is None:
         evidence.fail("reference", "scale_reference_missing")
+        return
+    for key, role in SCALE_BINDINGS:
+        bound = evidence.files.get(role, {}).get("sha256")
+        if not isinstance(row[key], str) or study.SHA256_RE.fullmatch(row[key]) is None or row[key] != bound:
+            evidence.fail("reference", "scale_reference_unbound")
+            return
 
 
 def record_method(configuration: Any, clip: dict[str, Any], plate: float) -> list[tuple[str, bool]]:
@@ -335,7 +405,7 @@ def creation_evidence(video: Path | None, probe: Probe, evidence: SlotEvidence) 
     text = probe(video) if video is not None else None
     parsed = parse_creation_time(text)
     if parsed is None:
-        evidence.fail("protocol", "creation_time_unavailable")
+        evidence.fail("novelty", "creation_time_unavailable")
         return
     evidence.creation_time = text
     if not parsed > study.FREEZE_INSTANT:

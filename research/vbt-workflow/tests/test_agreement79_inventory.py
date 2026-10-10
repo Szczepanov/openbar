@@ -58,6 +58,11 @@ class FakeStudy:
         self.excluded: list[str] = ["0" * 64]
         self.creation: dict[str, str | None] = {}
         self.failing_sessions: set[str] = set()
+        self.app = root / "consumer" / "app"
+        self.rejected: dict[str, dict[str, str]] = {}
+        self.preflight_calls: list[tuple[Path, Path, Path]] = []
+        self.hashes: dict[str, dict[str, str]] = {}
+        self.scale_patch: dict[str, Callable[[dict], None]] = {}
         self.run_patch: dict[str, Callable[[dict], None]] = {}
         self.assessment_patch: dict[str, Callable[[dict], None]] = {}
         self.slots_doc: dict[str, Any] = {
@@ -118,6 +123,8 @@ class FakeStudy:
         analysis = analyses / f"{fixture_id}.opencv-csrt.analysis-v1.json"
         prediction_sha = self.put(prediction, dump({"prediction": slot}))
         analysis_sha = self.put(analysis, dump({"analysis": slot}))
+        self.hashes[slot] = {"source_video_sha256": video_sha, "analysis_sha256": analysis_sha,
+                             "click_csv_sha256": click_sha}
         run = {
             "format": "openbar-research-vbt-run-record", "format_version": 2, "workflow_version": "vbt-workflow-3",
             "fixture_id": fixture_id,
@@ -161,15 +168,16 @@ class FakeStudy:
             csv_sha = self.put(directory / "session-input.csv", f"csv {session_id}\n".encode())
             state_sha = self.put(directory / "session.json", dump({"session_id": session_id}))
             report_sha = self.put(directory / "report.html", b"<html></html>\n")
-            rows = [{"fixture_id": self.clips[slot]["fixture_id"], "reference_to_plate_ratio": {"value": 1.0}}
-                    for slot in slots if self.clips[slot]["scale_row"] and self.clips[slot]["fixture_id"]]
+            rows = [self.scale_row(slot) for slot in slots
+                    if self.clips[slot]["scale_row"] and self.clips[slot]["fixture_id"]]
             self.put(directory / "scale-report/scale-reference-v1.json", dump({"schema_version": 1, "rows": rows}))
             record = {"format": "openbar-research-vbt-session-record", "format_version": 1,
                       "session_id": session_id, "page_id": "p" * 12,
                       "inputs": {"session_csv": {"path": self.rel(directory / "session-input.csv"), "sha256": csv_sha},
                                  "session_state": {"path": self.rel(directory / "session.json"), "sha256": state_sha},
                                  "manifest": {"path": self.rel(self.manifest)}},
-                      "configuration": self.records[session_id]["configuration"], "clips": clips,
+                      "configuration": self.records[session_id]["configuration"],
+                      "clips": clips + self.records[session_id].get("extra_clips", []),
                       "skipped": self.records[session_id]["skipped"],
                       "report": {"path": self.rel(directory / "report.html"), "sha256": report_sha}}
             self.put(directory / "session-record.json", dump(record))
@@ -178,28 +186,52 @@ class FakeStudy:
         self.put(slots_path, dump(self.slots_doc))
         return slots_path
 
+    def scale_row(self, slot: str) -> dict[str, Any]:
+        row = {"fixture_id": self.clips[slot]["fixture_id"], "reference_to_plate_ratio": {"value": 1.0},
+               **self.hashes.get(slot, {})}
+        self.scale_patch.get(slot, lambda _: None)(row)
+        return row
+
     # Injected boundaries -----------------------------------------------------------------------
-    def status(self, root: Path, session_id: str) -> bool:
+    def status(self, root: Path, session_id: str) -> tuple[bool, str | None]:
         assert root == self.root
-        return session_id not in self.failing_sessions
+        if session_id in self.failing_sessions:
+            return False, f"error: session {session_id} is incomplete"
+        return True, None
+
+    def preflight(self, app: Path, analysis: Path, wl_csv: Path) -> dict[str, Any]:
+        """Accepts every pair unless `rejected[<slot>]` maps a source to its error message."""
+        assert app == self.app
+        self.preflight_calls.append((app, analysis, wl_csv))
+        rejected = self.rejected.get(wl_csv.stem, {})
+        return {source: {"accepted": source not in rejected, "error": rejected.get(source)}
+                for source in ("openbar", "wl")}
 
     def probe(self, video: Path) -> str | None:
-        return self.creation.get(video.stem, CREATED)
+        """Container creation times one minute apart in frozen slot order (S1-SQ-1 is CREATED)."""
+        default = CREATED.replace("10:00:", f"10:{study.SLOTS.index(video.stem):02d}:")
+        return self.creation.get(video.stem, default)
 
     def git(self, root: Path) -> tuple[str, bool]:
-        """The fake repo root is the pinned data checkout; any other root is the tool checkout."""
-        return (study.OPENBAR_BASELINE_COMMIT, True) if root == self.root else (COMMIT, True)
+        """The fake root is the pinned data checkout, consumer/ the pinned consumer, else the tool checkout."""
+        if root == self.root:
+            return study.OPENBAR_BASELINE_COMMIT, True
+        return (study.CONSUMER_COMMIT, True) if root == self.app.parent else (COMMIT, True)
 
     def exclusion_sha(self) -> str:
         return study.file_sha256(self.root / study.EXCLUSION_LIST)
 
     def run(self, output: str = "out", **overrides: Any) -> tuple[int, str, str]:
         slots_path = self.write() if not (self.study_dir / "slots.json").exists() else self.study_dir / "slots.json"
-        argv = ["inventory", "--slots", str(slots_path), "--output-dir", str(self.study_dir / output)]
-        return self.main(argv, **overrides)
+        return self.main(self.argv(slots_path, output), **overrides)
+
+    def argv(self, slots_path: Path, output: str = "out") -> list[str]:
+        return ["inventory", "--slots", str(slots_path), "--output-dir", str(self.study_dir / output),
+                "--consumer-app", str(self.app)]
 
     def main(self, argv: list[str], **overrides: Any) -> tuple[int, str, str]:
         options = {"root": self.root, "status": self.status, "probe": self.probe, "git": self.git,
+                   "preflight": self.preflight,
                    "exclusion_sha256": self.exclusion_sha() if (self.root / study.EXCLUSION_LIST).exists() else None,
                    **overrides}
         out, err = io.StringIO(), io.StringIO()
@@ -368,11 +400,17 @@ class AccountingTests(InventoryTestCase):
         self.assertTrue((self.fake.study_dir / "out/pairs-clean.json").exists())
         self.assertNotIn("reason", document["lifts"]["clean"])
 
-    def test_in_progress_collection_is_not_lockable(self) -> None:
+    def test_in_progress_collection_is_not_lockable_and_writes_no_pairs_files(self) -> None:
         self.fake.slots_doc["collection_status"] = "in_progress"
         document = self.inventory_ok()
         self.assertFalse(document["lockable"])
         self.assertFalse(self.fake.load(name="lock-summary.json")["lockable"])
+        out = self.fake.study_dir / "out"
+        self.assertEqual(sorted(path.name for path in out.iterdir()), ["inventory.json", "lock-summary.json"])
+        for exercise, record in document["lifts"].items():
+            self.assertEqual((record["pairs_file"], record["reason"]), (None, "collection_in_progress"), exercise)
+            self.assertEqual(len(record["analyzable_slots"]), 6)
+        self.assertEqual(document["counts"]["analyzable"], 18)
 
     def test_duplicate_video_is_a_novelty_failure_of_the_later_slot(self) -> None:
         self.fake.clips["S2-CL-1"]["video"] = self.fake.clips["S1-SQ-2"]["video"]
@@ -387,12 +425,33 @@ class AccountingTests(InventoryTestCase):
         self.assertEqual(self.failures(document, "S3-SQ-1"), {"novelty:duplicate_of_excluded_clip"})
         self.assertFalse(self.slot_of(document, "S3-SQ-1")["analyzable"])
 
-    def test_environment_difference_marks_the_differing_slot(self) -> None:
+    def test_environment_difference_marks_the_differing_slot_non_blocking(self) -> None:
         self.fake.run_patch["S3-CL-2"] = lambda run: run["environment"].update(numpy_version="2.3.0")
         document = self.inventory_ok()
-        self.assertEqual(self.failures(document, "S3-CL-2"), {"processing:method_mismatch:environment"})
+        self.assertEqual(self.failures(document, "S3-CL-2"), {"protocol:environment_mismatch"})
+        self.assertTrue(self.slot_of(document, "S3-CL-2")["analyzable"])
         self.assertEqual(self.failures(document, "S1-SQ-1"), set())
         self.assertEqual(document["environment"]["numpy_version"], "2.2.6")
+
+    def test_environment_reference_is_the_first_processed_slot_not_the_majority(self) -> None:
+        self.fake.run_patch["S1-SQ-1"] = lambda run: run["environment"].update(numpy_version="2.3.0")
+        document = self.inventory_ok()
+        self.assertEqual(document["environment"]["numpy_version"], "2.3.0")
+        self.assertEqual(self.failures(document, "S1-SQ-1"), set())
+        for slot in study.SLOTS[1:]:
+            self.assertEqual(self.failures(document, slot), {"protocol:environment_mismatch"}, slot)
+        self.assertEqual(document["counts"]["analyzable"], 18)
+
+    def test_unhashable_environment_values_are_compared_canonically(self) -> None:
+        self.fake.slot("S1-SQ-1")["fixture_id"] = None
+        self.fake.clips["S1-SQ-1"]["fixture_id"] = None
+        self.fake.slot("S1-SQ-1")["protocol_failures"] = [{"stage": "transfer", "reason": "file lost"}]
+        for slot in ("S1-SQ-2", "S1-SN-1"):
+            self.fake.run_patch[slot] = lambda run: run["environment"].update(python={"version": [3, 12]})
+        document = self.inventory_ok()
+        self.assertEqual(document["environment"]["python"], {"version": [3, 12]})
+        self.assertEqual(self.failures(document, "S1-SN-1"), set())
+        self.assertEqual(self.failures(document, "S1-SN-2"), {"protocol:environment_mismatch"})
 
     def test_null_fixture_is_not_processed_unless_owner_reported_a_failure(self) -> None:
         self.fake.slot("S1-SN-1")["fixture_id"] = None
@@ -438,6 +497,16 @@ def slot_value(key: str, value: Any) -> Callable[[FakeStudy], None]:
     return apply
 
 
+def scale_value(key: str, value: Any) -> Callable[[FakeStudy], None]:
+    def apply(fake: FakeStudy) -> None:
+        fake.scale_patch["S1-SQ-1"] = lambda row: row.update({key: value})
+    return apply
+
+
+def unhashed_scale_row(fake: FakeStudy) -> None:
+    fake.scale_patch["S1-SQ-1"] = lambda row: [row.pop(key) for key in fake.hashes["S1-SQ-1"]]
+
+
 def skip_on_page(fake: FakeStudy) -> None:
     fake.clips["S1-SQ-1"]["in_record"] = False
     fake.records["sess-alpha"]["skipped"] = [fake.slot("S1-SQ-1")["original_name"]]
@@ -466,7 +535,7 @@ def method(field: str) -> str:
 DERIVED_CASES: list[tuple[str, Callable[[FakeStudy], None], set[str], bool]] = [
     ("skipped", skip_on_page, {"confirmation:skipped_on_session_page"}, False),
     ("not in record", clip_value("in_record", False), {"processing:clip_not_in_session_record"}, False),
-    ("exercise", clip_value("exercise", "snatch"), {"protocol:exercise_mismatch"}, True),
+    ("exercise", clip_value("exercise", "snatch"), {"processing:exercise_mismatch"}, False),
     ("policy", mutate_record("tracker_policy", "sam2-all-v1"), {method("tracker_policy")}, False),
     ("preset", mutate_record("preset", None), {method("preset")}, False),
     ("options", mutate_record("analyze_options", ["--filter", "raw"]), {method("analyze_options")}, False),
@@ -504,14 +573,18 @@ DERIVED_CASES: list[tuple[str, Callable[[FakeStudy], None], set[str], bool]] = [
     ("mechanical", patch_assessment(mechanical_invalid), {"assessment:mechanical_invalid"}, False),
     ("before freeze", creation("2026-10-01T10:00:00Z"), {"novelty:recorded_before_freeze"}, False),
     ("at freeze", creation("2026-10-09T17:20:54+02:00"), {"novelty:recorded_before_freeze"}, False),
-    ("no creation", creation(None), {"protocol:creation_time_unavailable"}, True),
-    ("garbage creation", creation("yesterday"), {"protocol:creation_time_unavailable"}, True),
-    ("naive creation", creation("2026-10-11T10:00:00"), {"protocol:creation_time_unavailable"}, True),
+    ("no creation", creation(None), {"novelty:creation_time_unavailable"}, False),
+    ("garbage creation", creation("yesterday"), {"novelty:creation_time_unavailable"}, False),
+    ("naive creation", creation("2026-10-11T10:00:00"), {"novelty:creation_time_unavailable"}, False),
     ("two reps", slot_value("attempted_rep_start_s", [2.0, 5.0]), {"protocol:attempted_reps_not_three"}, True),
     ("repeated rep", slot_value("attempted_rep_start_s", [2.0, 2.0, 5.0]), {"protocol:attempted_reps_not_three"}, True),
     ("negative rep", slot_value("attempted_rep_start_s", [-1.0, 2.0, 5.0]), {"protocol:attempted_reps_not_three"}, True),
     ("seed at rep", clip_value("seed_timestamp_s", 2.0), {"protocol:seed_not_before_first_rep"}, True),
     ("scale", clip_value("scale_row", False), {"reference:scale_reference_missing"}, True),
+    ("scale video", scale_value("source_video_sha256", "4" * 64), {"reference:scale_reference_unbound"}, True),
+    ("scale analysis", scale_value("analysis_sha256", None), {"reference:scale_reference_unbound"}, True),
+    ("scale click", scale_value("click_csv_sha256", "5" * 64), {"reference:scale_reference_unbound"}, True),
+    ("scale no hashes", unhashed_scale_row, {"reference:scale_reference_unbound"}, True),
     ("wl null", slot_value("wl_csv", None), {"wl_export:wl_csv_missing"}, False),
     ("wl absent", clip_value("wl", None), {"wl_export:wl_csv_missing"}, False),
     ("wl outside", slot_value("wl_csv", "../outside.csv"), {"wl_export:wl_csv_missing"}, False),
@@ -562,8 +635,7 @@ class DerivedFailureTests(InventoryTestCase):
         slots_path = self.fake.write()
         run = next((self.fake.private / "sessions/sess-alpha/analyses").glob("*0001.opencv-csrt.run-record.json"))
         run.write_bytes(run.read_bytes() + b"\n")
-        code, _, err = self.fake.main(["inventory", "--slots", str(slots_path),
-                                       "--output-dir", str(self.fake.study_dir / "out")])
+        code, _, err = self.fake.main(self.fake.argv(slots_path))
         self.assertEqual(code, 0, err)
         self.assertIn(method("run_record_sha256"), self.failures(self.fake.load(), "S1-SQ-1"))
 
@@ -571,41 +643,50 @@ class DerivedFailureTests(InventoryTestCase):
         slots_path = self.fake.write()
         analysis = next((self.fake.private / "sessions/sess-alpha/analyses").glob("*0001.opencv-csrt.analysis-v1.json"))
         analysis.write_bytes(b"{}\n")
-        code, _, err = self.fake.main(["inventory", "--slots", str(slots_path),
-                                       "--output-dir", str(self.fake.study_dir / "out")])
+        code, _, err = self.fake.main(self.fake.argv(slots_path))
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.failures(self.fake.load(), "S1-SQ-1"), {"processing:run_output_mismatch:analysis"})
+        # The scale row still binds the original analysis bytes (M5), so it is unbound too.
+        self.assertEqual(self.failures(self.fake.load(), "S1-SQ-1"),
+                         {"processing:run_output_mismatch:analysis", "reference:scale_reference_unbound"})
 
 
 class AbortAndInputTests(InventoryTestCase):
     def assert_nothing_written(self) -> None:
         self.assertFalse((self.fake.study_dir / "out").exists())
 
-    def test_exclusion_digest_mismatch_aborts_without_writing(self) -> None:
+    def test_exclusion_digest_mismatch_is_an_input_error(self) -> None:
         code, _, err = self.fake.run(exclusion_sha256="f" * 64)
-        self.assertEqual(code, 3)
+        self.assertEqual(code, 1)
         self.assertIn("exclusion", err)
         self.assert_nothing_written()
 
-    def test_missing_exclusion_list_aborts(self) -> None:
+    def test_missing_exclusion_list_is_an_input_error(self) -> None:
         slots_path = self.fake.write()
         (self.root / study.EXCLUSION_LIST).unlink()
-        code, _, _ = self.fake.main(["inventory", "--slots", str(slots_path), "--output-dir",
-                                     str(self.fake.study_dir / "out")], exclusion_sha256="f" * 64)
-        self.assertEqual(code, 3)
+        code, _, err = self.fake.main(self.fake.argv(slots_path), exclusion_sha256="f" * 64)
+        self.assertEqual(code, 1, err)
+        self.assertIn("exclusion", err)
+        self.assert_nothing_written()
+
+    def test_malformed_exclusion_list_is_an_input_error(self) -> None:
+        slots_path = self.fake.write()
+        path = self.root / study.EXCLUSION_LIST
+        path.write_bytes(b"not-a-digest  old.mp4\n")
+        code, _, err = self.fake.main(self.fake.argv(slots_path), exclusion_sha256=study.file_sha256(path))
+        self.assertEqual(code, 1, err)
         self.assert_nothing_written()
 
     def test_ffprobe_unavailable_aborts(self) -> None:
         def unavailable(_video: Path) -> str | None:
-            raise inventory.InfrastructureError("ffprobe could not be run")
+            raise study.StudyInfrastructureError("ffprobe could not be run")
         code, _, err = self.fake.run(probe=unavailable)
         self.assertEqual(code, 3)
         self.assertIn("ffprobe", err)
         self.assert_nothing_written()
 
     def test_status_unavailable_aborts(self) -> None:
-        def unavailable(_root: Path, _session: str) -> bool:
-            raise inventory.InfrastructureError("status could not be run")
+        def unavailable(_root: Path, _session: str) -> tuple[bool, str | None]:
+            raise study.StudyInfrastructureError("status could not be run")
         self.assertEqual(self.fake.run(status=unavailable)[0], 3)
         self.assert_nothing_written()
 
@@ -689,8 +770,7 @@ class AbortAndInputTests(InventoryTestCase):
     def test_duplicate_json_keys_are_rejected(self) -> None:
         slots_path = self.fake.write()
         slots_path.write_bytes(slots_path.read_bytes().replace(b'"format": ', b'"format": "x", "format": ', 1))
-        code, _, _ = self.fake.main(["inventory", "--slots", str(slots_path),
-                                     "--output-dir", str(self.fake.study_dir / "out")])
+        code, _, _ = self.fake.main(self.fake.argv(slots_path))
         self.assertEqual(code, 1)
 
 
@@ -743,10 +823,6 @@ class VerifyTests(InventoryTestCase):
         self.assertEqual(self.verify()[0], 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DataRootTests(InventoryTestCase):
     """The evidence checkout must be the clean pinned baseline; the tool checkout is recorded separately."""
 
@@ -763,8 +839,11 @@ class DataRootTests(InventoryTestCase):
 
     def test_root_option_selects_the_data_checkout(self) -> None:
         slots_path = self.fake.write()
-        argv = ["inventory", "--root", str(self.root), "--slots", str(slots_path),
-                "--output-dir", str(self.fake.study_dir / "via-option")]
+        argv = ["inventory", "--root", str(self.root), *self.fake.argv(slots_path, "via-option")[1:]]
         code, _, err = self.fake.main(argv, root=Path(self.root.anchor))
         self.assertEqual(code, 0, err)
         self.assertTrue((self.fake.study_dir / "via-option" / "inventory.json").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

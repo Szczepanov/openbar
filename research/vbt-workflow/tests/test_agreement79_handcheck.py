@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,7 +33,9 @@ PARSER_REPS = (
     {'startFrame': 12, 'endFrame': 14, 'startTimeS': 1.5, 'endTimeS': 1.75,
      'meanVelocityMps': 0.833, 'peakVelocityMps': 1.25, 'romCm': 25.0},
 )
-METRICS = ('meanVelocityMps', 'peakVelocityMps', 'romCm')
+METRICS = study.METRICS
+SLOT = study.HANDCHECK_SLOT
+TOOL_COMMIT = 'd' * 40
 
 
 def build_analysis(min_confidence: float = 0.5, kinematics_input: str = 'filtered') -> dict:
@@ -64,7 +65,7 @@ def parser_output(reps=PARSER_REPS) -> dict:
 def build_report(analysis_sha: str, reps=PARSER_REPS) -> dict:
     paired = []
     for index, rep in enumerate(reps):
-        row = {'label': handcheck.SLOT, 'wlIndex': index, 'openBarIndex': index, 'temporalIoU': 0.9}
+        row = {'label': SLOT, 'wlIndex': index, 'openBarIndex': index, 'temporalIoU': 0.9}
         for metric in METRICS:
             row[metric] = {'wl': rep[metric] + 0.01, 'openBar': rep[metric], 'difference': -0.01, 'magnitude': 1}
         paired.append(row)
@@ -72,7 +73,7 @@ def build_report(analysis_sha: str, reps=PARSER_REPS) -> dict:
             'wlParserVersion': study.WL_PARSER, 'openBarParserVersion': study.OPENBAR_PARSER,
             'minOverlap': study.MIN_OVERLAP, 'videos': [
                 {'label': 'S1-SQ-2', 'openBar': {'fileSha256': 'f' * 64}, 'paired': []},
-                {'label': handcheck.SLOT, 'openBar': {'fileSha256': analysis_sha}, 'paired': paired}]}
+                {'label': SLOT, 'openBar': {'fileSha256': analysis_sha}, 'paired': paired}]}
 
 
 class Fixture:
@@ -89,17 +90,24 @@ class Fixture:
         self.analyzable = True
         self.report = None
         self.parser = parser_output()
-        self.git = (study.CONSUMER_COMMIT, '')
+        self.git = (study.CONSUMER_COMMIT, True)
+        self.tool_root = root / 'tool'
+        self.tool_git = (TOOL_COMMIT, True)
+        self.pairs_file = True
+        self.git_calls: list[Path] = []
         self.bridge_calls = 0
 
     def write(self) -> None:
         self.analysis_path.parent.mkdir(parents=True, exist_ok=True)
         self.analysis_path.write_bytes(study.serialize(self.analysis))
         sha = study.file_sha256(self.analysis_path)
-        slot = {'slot': handcheck.SLOT, 'analyzable': self.analyzable, 'files': {'analysis': {
+        slot = {'slot': SLOT, 'analyzable': self.analyzable, 'files': {'analysis': {
             'path': self.analysis_path.relative_to(self.root).as_posix(), 'sha256': sha}}}
-        inventory = {'format': handcheck.INVENTORY_FORMAT, 'format_version': 1, 'study_id': study.STUDY_ID,
-                     'slots': [slot, {'slot': 'S1-SQ-2', 'analyzable': False, 'files': {}}]}
+        pairs = {'path': 'validation/private/vbt/study-79/lock/pairs-back_squat.json', 'sha256': 'c' * 64}
+        lifts = {'back_squat': {'pairs_file': pairs if self.pairs_file else None,
+                                **({} if self.pairs_file else {'reason': 'collection_in_progress'})}}
+        inventory = {'format': study.INVENTORY_FORMAT, 'format_version': 1, 'study_id': study.STUDY_ID,
+                     'slots': [slot, {'slot': 'S1-SQ-2', 'analyzable': False, 'files': {}}], 'lifts': lifts}
         self.inventory_path.parent.mkdir(parents=True, exist_ok=True)
         self.inventory_path.write_bytes(study.serialize(inventory))
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,11 +118,16 @@ class Fixture:
         self.bridge_calls += 1
         return copy.deepcopy(self.parser)
 
-    def run(self, pairing: str = 'confirmed', seed: str = 'confirmed', output: Path | None = None) -> int:
+    def git_state(self, path: Path) -> tuple[str, bool]:
+        self.git_calls.append(path)
+        return self.tool_git if path == self.tool_root else self.git
+
+    def run(self, pairing: str = 'confirmed', seed: str = 'confirmed', output: Path | None = None,
+            report: bool = True) -> int:
         argv = ['--inventory', str(self.inventory_path), '--consumer-app', str(self.root / 'consumer/app'),
-                '--report', str(self.report_path), '--pairing-review', pairing,
+                *(['--report', str(self.report_path)] if report else []), '--pairing-review', pairing,
                 '--seed-reference-review', seed, '--output', str(output or self.output)]
-        return handcheck.main(argv, root=self.root, bridge=self.bridge, git=lambda app: self.git)
+        return handcheck.main(argv, root=self.root, tool_root=self.tool_root, bridge=self.bridge, git=self.git_state)
 
     def result(self, output: Path | None = None) -> dict:
         return json.loads((output or self.output).read_text(encoding='utf-8'))
@@ -140,10 +153,11 @@ class HandcheckTests(unittest.TestCase):
     def test_three_paired_reps_pass(self) -> None:
         result = self.run_result()
         self.assertEqual((result['status'], result['reasons']), ('passed', []))
-        self.assertEqual(result['format'], handcheck.FORMAT)
+        self.assertEqual(result['format'], study.HANDCHECK_FORMAT)
         self.assertEqual(result['format_version'], 1)
         self.assertEqual(result['slot'], 'S1-SQ-1')
         self.assertEqual(result['consumer_commit'], study.CONSUMER_COMMIT)
+        self.assertEqual((result['tool_commit'], result['tool_tree_clean']), (TOOL_COMMIT, True))
         self.assertEqual(result['velocity_check'], {
             'samples': 15, 'null_count': 4, 'compared': 11, 'null_pattern_mismatches': 0,
             'max_abs_discrepancy_mps': 0.0, 'passed': True})
@@ -176,6 +190,77 @@ class HandcheckTests(unittest.TestCase):
         self.assertEqual((result['reps'], result['velocity_check']), ([], None))
         self.assertEqual(self.fx.bridge_calls, 0)
 
+    def test_report_may_be_absent_when_slot_not_analyzable(self) -> None:
+        self.fx.analyzable = False
+        self.fx.write()
+        self.assertEqual(self.fx.run(report=False), 0)
+        result = self.fx.result()
+        self.assertEqual((result['status'], result['reasons'], result['inputs']['report']),
+                         ('failed', ['slot_not_analyzable'], None))
+        self.assertEqual(self.fx.bridge_calls, 0)
+
+    def test_report_may_be_absent_when_back_squat_has_no_pairs_file(self) -> None:
+        self.fx.pairs_file = False
+        self.fx.write()
+        self.assertEqual(self.fx.run(report=False), 0)
+        result = self.fx.result()
+        self.assertEqual((result['status'], result['reasons'], result['inputs']['report']),
+                         ('failed', ['slot_not_analyzable'], None))
+        self.assertEqual(result['public']['values_compared'], 0)
+        self.assertEqual(self.fx.bridge_calls, 0)
+
+    def test_report_is_required_when_slot_is_analyzable(self) -> None:
+        self.fx.write()
+        self.assertEqual(self.fx.run(report=False), 1)
+        self.assertFalse(self.fx.output.exists())
+        self.assertEqual(self.fx.bridge_calls, 0)
+
+    def test_inventory_without_back_squat_lift_exits_1(self) -> None:
+        self.fx.write()
+        doc = json.loads(self.fx.inventory_path.read_text(encoding='utf-8'))
+        del doc['lifts']
+        self.fx.inventory_path.write_bytes(study.serialize(doc))
+        self.assertEqual(self.fx.run(), 1)
+
+    def test_consumer_state_is_read_from_the_app_parent_and_tool_state_from_tool_root(self) -> None:
+        self.run_result()
+        self.assertEqual(self.fx.git_calls, [self.fx.root / 'consumer/app' / '..', self.fx.tool_root])
+
+    def test_dirty_tool_tree_exits_1(self) -> None:
+        self.fx.write()
+        self.fx.tool_git = (TOOL_COMMIT, False)
+        self.assertEqual(self.fx.run(), 1)
+        self.assertFalse(self.fx.output.exists())
+        self.assertEqual(self.fx.bridge_calls, 0)
+
+    def test_tool_git_failure_aborts_with_exit_3(self) -> None:
+        self.fx.write()
+
+        def git(path: Path) -> tuple[str, bool]:
+            if path == self.fx.tool_root:
+                raise study.StudyInfrastructureError('git not runnable')
+            return self.fx.git
+        argv = ['--inventory', str(self.fx.inventory_path), '--consumer-app', 'app', '--report',
+                str(self.fx.report_path), '--pairing-review', 'confirmed', '--seed-reference-review', 'confirmed',
+                '--output', str(self.fx.output)]
+        self.assertEqual(handcheck.main(argv, root=self.fx.root, tool_root=self.fx.tool_root, bridge=self.fx.bridge,
+                                        git=git), 3)
+        self.assertFalse(self.fx.output.exists())
+
+    def test_rep_frame_count_must_equal_window_length(self) -> None:
+        parser = parser_output()
+        parser['reps'][1]['frameCount'] = 2
+        self.fx.parser = parser
+        self.assert_failed(self.run_result(), 'window_mismatch')
+
+    def test_bridge_rep_without_frame_count_aborts_with_exit_3(self) -> None:
+        parser = parser_output()
+        del parser['reps'][0]['frameCount']
+        self.fx.parser = parser
+        self.fx.write()
+        self.assertEqual(self.fx.run(), 3)
+        self.assertFalse(self.fx.output.exists())
+
     def test_review_flags_not_done_and_failed(self) -> None:
         result = self.run_result(pairing='not_done', seed='failed')
         self.assertEqual(result['reasons'], ['pairing_review_not_done', 'seed_reference_review_failed'])
@@ -189,14 +274,14 @@ class HandcheckTests(unittest.TestCase):
 
     def test_consumer_commit_mismatch_aborts_with_exit_3(self) -> None:
         self.fx.write()
-        self.fx.git = ('0' * 40, '')
+        self.fx.git = ('0' * 40, True)
         self.assertEqual(self.fx.run(), 3)
         self.assertFalse(self.fx.output.exists())
         self.assertEqual(self.fx.bridge_calls, 0)
 
     def test_dirty_consumer_checkout_aborts_with_exit_3(self) -> None:
         self.fx.write()
-        self.fx.git = (study.CONSUMER_COMMIT, ' M app/src/observations/openBarAnalysis.ts\n')
+        self.fx.git = (study.CONSUMER_COMMIT, False)
         self.assertEqual(self.fx.run(), 3)
         self.assertFalse(self.fx.output.exists())
 
@@ -204,11 +289,12 @@ class HandcheckTests(unittest.TestCase):
         self.fx.write()
 
         def broken(app: Path, analysis: Path) -> dict:
-            raise handcheck.InfrastructureError('node not runnable')
+            raise study.StudyInfrastructureError('node not runnable')
         argv = ['--inventory', str(self.fx.inventory_path), '--consumer-app', str(self.fx.root),
                 '--report', str(self.fx.report_path), '--pairing-review', 'confirmed',
                 '--seed-reference-review', 'confirmed', '--output', str(self.fx.output)]
-        self.assertEqual(handcheck.main(argv, root=self.fx.root, bridge=broken, git=lambda app: self.fx.git), 3)
+        self.assertEqual(handcheck.main(argv, root=self.fx.root, tool_root=self.fx.tool_root, bridge=broken,
+                                        git=self.fx.git_state), 3)
         self.assertFalse(self.fx.output.exists())
 
     def test_malformed_bridge_output_aborts_with_exit_3(self) -> None:
@@ -385,7 +471,8 @@ class HandcheckTests(unittest.TestCase):
                 '--consumer-app', 'consumer/app', '--report', str(self.fx.report_path),
                 '--pairing-review', 'confirmed', '--seed-reference-review', 'confirmed', '--output', str(self.fx.output)]
         elsewhere = self.fx.root / 'not-the-data-root'
-        self.assertEqual(handcheck.main(argv, root=elsewhere, bridge=bridge, git=lambda app: self.fx.git), 0)
+        self.assertEqual(handcheck.main(argv, root=elsewhere, tool_root=self.fx.tool_root, bridge=bridge,
+                                        git=self.fx.git_state), 0)
         self.assertEqual(self.fx.result()['status'], 'passed')
         self.assertEqual(seen, [(Path('consumer/app'), self.fx.analysis_path)])  # CLI path kept as given
 
@@ -394,8 +481,8 @@ class HandcheckTests(unittest.TestCase):
         argv = ['--root', str(self.fx.root / 'validation/private/vbt/sessions'), '--inventory', str(self.fx.inventory_path),
                 '--consumer-app', 'app', '--report', str(self.fx.report_path), '--pairing-review', 'confirmed',
                 '--seed-reference-review', 'confirmed', '--output', str(self.fx.output)]
-        self.assertEqual(handcheck.main(argv, root=self.fx.root, bridge=self.fx.bridge,
-                                        git=lambda app: self.fx.git), 1)
+        self.assertEqual(handcheck.main(argv, root=self.fx.root, tool_root=self.fx.tool_root, bridge=self.fx.bridge,
+                                        git=self.fx.git_state), 1)
         self.assertFalse(self.fx.output.exists())
 
     def test_report_outside_data_root_exits_1(self) -> None:
@@ -441,12 +528,13 @@ class HandcheckTests(unittest.TestCase):
     def test_git_runner_failure_aborts_with_exit_3(self) -> None:
         self.fx.write()
 
-        def git(app: Path) -> tuple[str, str]:
-            raise handcheck.InfrastructureError('git not runnable')
+        def git(app: Path) -> tuple[str, bool]:
+            raise study.StudyInfrastructureError('git not runnable')
         argv = ['--inventory', str(self.fx.inventory_path), '--consumer-app', 'app', '--report',
                 str(self.fx.report_path), '--pairing-review', 'confirmed', '--seed-reference-review', 'confirmed',
                 '--output', str(self.fx.output)]
-        self.assertEqual(handcheck.main(argv, root=self.fx.root, bridge=self.fx.bridge, git=git), 3)
+        self.assertEqual(handcheck.main(argv, root=self.fx.root, tool_root=self.fx.tool_root, bridge=self.fx.bridge,
+                                        git=git), 3)
         self.assertFalse(self.fx.output.exists())
 
     def test_analysis_without_kinematics_parameters_is_recorded_invalid(self) -> None:
@@ -538,25 +626,9 @@ class ProcessBoundaryTests(unittest.TestCase):
     def completed(self, returncode: int, stdout: bytes = b'', stderr: bytes = b''):
         return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
-    def test_git_state_reads_the_app_parent_checkout(self) -> None:
-        calls = []
-
-        def run(argv, **kwargs):
-            calls.append(argv)
-            return self.completed(0, f'{study.CONSUMER_COMMIT}\n'.encode() if 'rev-parse' in argv else b'')
-        with mock.patch.object(handcheck.subprocess, 'run', side_effect=run):
-            self.assertEqual(handcheck.consumer_git_state(Path('c/app')), (study.CONSUMER_COMMIT, ''))
-        self.assertEqual(calls[0][:3], ['git', '-C', str(Path('c/app') / '..')])
-        self.assertIn('--untracked-files=no', calls[1])
-
-    def test_git_state_failures_are_infrastructure(self) -> None:
-        for effect in (OSError('no git'), self.completed(128)):
-            with self.subTest(effect=effect):
-                patch = (mock.patch.object(handcheck.subprocess, 'run', side_effect=effect)
-                         if isinstance(effect, OSError) else
-                         mock.patch.object(handcheck.subprocess, 'run', return_value=effect))
-                with patch, self.assertRaises(handcheck.InfrastructureError):
-                    handcheck.consumer_git_state(Path('app'))
+    def test_default_git_state_is_the_shared_helper(self) -> None:
+        import inspect
+        self.assertIs(inspect.signature(handcheck.main).parameters['git'].default, study.git_state)
 
     def test_bridge_runs_node_with_strip_types_and_parses_last_line(self) -> None:
         line = json.dumps(parser_output()).encode()
@@ -571,7 +643,7 @@ class ProcessBoundaryTests(unittest.TestCase):
                 patch = (mock.patch.object(handcheck.subprocess, 'run', side_effect=effect)
                          if isinstance(effect, OSError) else
                          mock.patch.object(handcheck.subprocess, 'run', return_value=effect))
-                with patch, self.assertRaises(handcheck.InfrastructureError):
+                with patch, self.assertRaises(study.StudyInfrastructureError):
                     handcheck.consumer_reps(Path('app'), Path('a.json'))
 
     def test_bridge_script_imports_only_the_consumer_parser_modules(self) -> None:
@@ -606,8 +678,8 @@ class ConsumerBridgeIntegrationTests(unittest.TestCase):
             argv = ['--inventory', str(fx.inventory_path), '--consumer-app', str(app),
                     '--report', str(fx.report_path), '--pairing-review', 'confirmed',
                     '--seed-reference-review', 'confirmed', '--output', str(fx.output)]
-            git = lambda path: (study.CONSUMER_COMMIT, '')  # noqa: E731 - checkout state is not under test
-            self.assertEqual(handcheck.main(argv, root=fx.root, git=git), 0)
+            git = lambda path: (study.CONSUMER_COMMIT, True)  # noqa: E731 - checkout state is not under test
+            self.assertEqual(handcheck.main(argv, root=fx.root, tool_root=fx.tool_root, git=git), 0)
             result = fx.result()
             self.assertEqual((result['status'], result['reasons']), ('passed', []), result['reasons'])
             self.assertEqual((result['public']['values_compared'], result['public']['values_matched']), (36, 36))

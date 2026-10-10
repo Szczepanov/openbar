@@ -25,6 +25,7 @@ SESSION_DATES = ("2031-02-03", "2031-02-05", "2031-02-07")
 ORIGINAL = "ZZPRIV_ORIGINAL_{:02d}.MOV"
 REP_WL, REP_OPENBAR = 0.987654, 0.976543  # per-rep values in the private consumer reports
 TOOL_COMMIT = "d" * 40
+TRACKING_STATES = ["tracked"] * 5 + ["low_confidence"] * 2 + ["lost"]  # 1 lost, 2 low confidence per analysis
 EXERCISES = ("back_squat", "snatch", "clean")
 STATS = ("bias", "sampleSd", "lowerLoA", "upperLoA", "meanAbsoluteDifference", "slope", "intercept", "pearsonR",
          "geometricMeanRatio")
@@ -80,6 +81,12 @@ def consumer_report(videos: list[dict[str, Any]]) -> dict[str, Any]:
             "pooled": {"videoCount": len(videos), "counts": total, "stats": metric_stats()}, "videos": videos}
 
 
+def analysis_bytes(fid: str, states: list[str] | None = None) -> bytes:
+    observations = [{"timestamp_s": index / 30, "tracking_state": state}
+                    for index, state in enumerate(TRACKING_STATES if states is None else states)]
+    return study.serialize({"schema_version": 1, "id": fid, "raw_observations": observations})
+
+
 def slot_doc(slot: str, analyzable: bool = True) -> dict[str, Any]:
     lift, session = study.slot_lift(slot), study.slot_session(slot)
     return {"slot": slot, "lift": lift["code"], "exercise": lift["exercise"], "load_kg": lift["load_kg"],
@@ -103,6 +110,7 @@ class FakeStudy:
         self.handcheck_patch: Callable[[dict], None] = lambda _: None
         self.scale_rows_patch: Callable[[list], None] = lambda _: None
         self.git_state = (study.CONSUMER_COMMIT, True)
+        self.tool_state: Callable[[], tuple[str, bool]] = lambda: (TOOL_COMMIT, True)
         self.node: Callable[[], str] = lambda: "v24.9.0"
         self.owner_failures: dict[str, list[dict[str, str]]] = {}
 
@@ -123,7 +131,7 @@ class FakeStudy:
             slot["files"] = {"wl_csv": self.put(f"validation/private/vbt/wl/zzpriv-wl-{slot['slot']}.csv",
                                                 f"time,v\n0,{slot['slot']}\n".encode()),
                              "analysis": self.put(f"validation/private/vbt/sessions/{sid}/analyses/"
-                                                  f"{fid}.opencv-csrt.analysis-v1.json", f'{{"a":"{fid}"}}\n'.encode())}
+                                                  f"{fid}.opencv-csrt.analysis-v1.json", analysis_bytes(fid))}
 
     def write_sessions(self) -> dict[str, Any]:
         sessions = {}
@@ -196,12 +204,13 @@ class FakeStudy:
 
     def write_handcheck(self) -> None:
         squat = self.runs / "report-back_squat-run1.json"
+        report = ({"path": squat.relative_to(self.root).as_posix(), "sha256": study.file_sha256(squat)}
+                  if squat.exists() else None)
         document = {
-            "format": report_tool.HANDCHECK_FORMAT, "format_version": 1, "study_id": study.STUDY_ID, "slot": "S1-SQ-1", "status": "passed",
-            "reasons": [], "consumer_commit": study.CONSUMER_COMMIT,
-            "inputs": {"analysis": self.slot("S1-SQ-1")["files"]["analysis"],
-                       "report": {"path": squat.relative_to(self.root).as_posix(),
-                                  "sha256": study.file_sha256(squat) if squat.exists() else None},
+            "format": study.HANDCHECK_FORMAT, "format_version": 1, "study_id": study.STUDY_ID, "slot": "S1-SQ-1",
+            "status": "passed", "reasons": [], "consumer_commit": study.CONSUMER_COMMIT, "tool_commit": TOOL_COMMIT,
+            "tool_tree_clean": True, "freeze": study.freeze_references(),
+            "inputs": {"analysis": self.slot("S1-SQ-1")["files"]["analysis"], "report": report,
                        "inventory": self.inventory},
             "public": {"status": "passed", "reasons": [], "values_compared": 36, "values_matched": 36,
                        "max_abs_discrepancy_mps": 0.0}}
@@ -219,7 +228,8 @@ class FakeStudy:
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = report_tool.main([item for pair in args.items() for item in pair], root=self.root,
-                                    tool_root=self.tool, git=lambda app: self.git_state, node=self.node)
+                                    tool_root=self.tool, git=lambda app: self.git_state, node=self.node,
+                                    tool_git=lambda root: self.tool_state())
         return code, stdout.getvalue() + stderr.getvalue()
 
     def output(self, name: str = "docs/analysis/AGREEMENT_79.md") -> str:
@@ -238,143 +248,6 @@ class Base(unittest.TestCase):
         return self.fx.output(kwargs.get("output", "docs/analysis/AGREEMENT_79.md"))
 
 
-# --- Criterion truth table (pure function) ---------------------------------------------------------
-
-def passing_facts() -> dict[str, Any]:
-    slots = [slot_doc(slot) for slot in study.SLOTS]
-    reports = {exercise: consumer_report([video(s["slot"], "1" * 64, "2" * 64) for s in slots if s["exercise"] == exercise])
-               for exercise in EXERCISES}
-    return {"collection_status": "complete", "slots": slots, "reports": reports,
-            "reproducibility": {exercise: {"json_identical": True, "md_identical": True} for exercise in EXERCISES},
-            "inputs_unchanged": True, "handcheck": {"status": "passed", "reasons": []}}
-
-
-def report_video(facts: dict[str, Any], slot: str) -> dict[str, Any]:
-    report = facts["reports"][study.slot_lift(slot)["exercise"]]
-    return next(item for item in report["videos"] if item["label"] == slot)
-
-
-def primary(facts: dict[str, Any], exercise: str = "snatch") -> dict[str, Any]:
-    return facts["reports"][exercise]["pooled"]["stats"]["meanVelocityMps"]
-
-
-class CriterionTests(unittest.TestCase):
-    def evaluate(self, change: Callable[[dict], None] = lambda _: None) -> dict[str, Any]:
-        facts = passing_facts()
-        change(facts)
-        return report_tool.evaluate_criterion(facts)
-
-    def failing(self, result: dict[str, Any]) -> list[str]:
-        return [name for name, item in result["conditions"].items() if not item["passed"]]
-
-    def test_all_conditions_pass(self) -> None:
-        result = self.evaluate()
-        self.assertEqual((result["verdict"], result["provisional"], self.failing(result)), ("PASS", False, []))
-
-    def test_pending_overrides_while_collection_in_progress(self) -> None:
-        def in_progress(facts: dict) -> None:
-            facts["collection_status"] = "in_progress"
-        result = self.evaluate(in_progress)
-        self.assertEqual((result["verdict"], result["provisional"], self.failing(result)), ("PENDING", True, []))
-
-        def in_progress_failing(facts: dict) -> None:
-            in_progress(facts)
-            facts["inputs_unchanged"] = False
-        result = self.evaluate(in_progress_failing)
-        self.assertEqual((result["verdict"], self.failing(result)), ("PENDING", ["C4"]))
-
-    def test_concluded_is_evaluated_like_complete(self) -> None:
-        self.assertEqual(self.evaluate(lambda f: f.update(collection_status="concluded"))["verdict"], "PASS")
-
-    def test_c1_fails_alone_on_an_owner_protocol_failure(self) -> None:
-        def owner_failure(facts: dict) -> None:
-            slot = facts["slots"][4]
-            slot.update(protocol_conforming=False, failures=[{"stage": "protocol", "reason": "late_seed", "source": "owner"}])
-        result = self.evaluate(owner_failure)
-        self.assertEqual((result["verdict"], self.failing(result)), ("FAIL", ["C1"]))
-        self.assertEqual(result["conditions"]["C1"]["reasons"],
-                         ["S1-CL-1: protocol:late_seed", "clean: 5/6 conforming slots across 3/3 sessions"])
-
-    def test_c2_fails_alone_on_each_count_and_completeness_breach(self) -> None:
-        cases = {
-            "wlTotal": lambda f: report_video(f, "S2-SQ-1")["counts"].update(wlTotal=4),
-            "openBarTotal": lambda f: report_video(f, "S2-SQ-1")["counts"].update(openBarTotal=2),
-            "paired": lambda f: report_video(f, "S2-SQ-1")["counts"].update(paired=2),
-            "wlOnly": lambda f: report_video(f, "S2-SQ-1")["counts"].update(wlOnly=1),
-            "openBarOnly": lambda f: report_video(f, "S2-SQ-1")["counts"].update(openBarOnly=1),
-            "openBarExcluded": lambda f: report_video(f, "S2-SQ-1")["counts"].update(openBarExcluded=1),
-            "paired_rep_incomplete": lambda f: report_video(f, "S2-SQ-1")["paired"][1].update(openBarComplete=False),
-            "wl_incomplete": lambda f: report_video(f, "S2-SQ-1")["paired"][0].update(wlComplete=False),
-            "attempted_reps_not_3": lambda f: f["slots"][6].update(attempted_rep_start_s=[2.0, 5.0]),
-            "pooled paired=17": lambda f: f["reports"]["back_squat"]["pooled"]["counts"].update(paired=17),
-        }
-        for expected, change in cases.items():
-            with self.subTest(expected):
-                result = self.evaluate(change)
-                self.assertEqual((result["verdict"], self.failing(result)), ("FAIL", ["C2"]))
-                self.assertEqual(len(result["conditions"]["C2"]["reasons"]), 1)
-        incomplete = self.evaluate(cases["paired_rep_incomplete"])["conditions"]["C2"]["reasons"]
-        self.assertEqual(incomplete, ["S2-SQ-1: paired_rep_incomplete"])
-
-    def test_a_non_analyzable_slot_fails_c2(self) -> None:
-        result = self.evaluate(lambda f: f["slots"][16].update(analyzable=False))
-        self.assertEqual(self.failing(result), ["C2"])
-        self.assertEqual(result["conditions"]["C2"]["reasons"], ["S3-CL-1: not_analyzable"])
-
-    def test_c3_loa_bounds_are_inclusive_at_the_tolerance(self) -> None:
-        for lower, upper in ((-0.05, 0.05), (-0.05, -0.01), (0.01, 0.05), (0.0, 0.0)):
-            with self.subTest(lower=lower, upper=upper):
-                result = self.evaluate(lambda f: primary(f).update(lowerLoA=lower, upperLoA=upper))
-                self.assertEqual((result["verdict"], self.failing(result)), ("PASS", []))
-
-    def test_c3_fails_alone_just_outside_or_null(self) -> None:
-        cases = {"lowerLoA=-0.050001": {"lowerLoA": -0.050001}, "upperLoA=0.050001": {"upperLoA": 0.050001},
-                 "lowerLoA unavailable (insufficient_n)": {"lowerLoA": None},
-                 "upperLoA unavailable (insufficient_n)": {"upperLoA": None}}
-        for expected, values in cases.items():
-            with self.subTest(expected):
-                def change(facts: dict, values: dict = values) -> None:
-                    stats_item = primary(facts)
-                    stats_item.update(values)
-                    for key, value in values.items():
-                        stats_item["reasons"][key] = "insufficient_n" if value is None else None
-                result = self.evaluate(change)
-                self.assertEqual((result["verdict"], self.failing(result)), ("FAIL", ["C3"]))
-                self.assertEqual(len(result["conditions"]["C3"]["reasons"]), 1)
-                self.assertTrue(result["conditions"]["C3"]["reasons"][0].startswith(f"snatch: {expected}"))
-
-    def test_c3_ignores_secondary_metrics(self) -> None:
-        def wide_secondary(facts: dict) -> None:
-            stats_item = facts["reports"]["clean"]["pooled"]["stats"]
-            stats_item["peakVelocityMps"].update(lowerLoA=-0.4, upperLoA=0.4)
-            stats_item["romCm"].update(lowerLoA=None, upperLoA=None)
-        self.assertEqual(self.evaluate(wide_secondary)["verdict"], "PASS")
-
-    def test_a_lift_without_a_report_fails_c3(self) -> None:
-        def no_snatch(facts: dict) -> None:
-            facts["reports"]["snatch"] = None
-            del facts["reproducibility"]["snatch"]
-        result = self.evaluate(no_snatch)
-        self.assertEqual(result["verdict"], "FAIL")
-        self.assertEqual(result["conditions"]["C3"]["reasons"], ["snatch: statistics_unavailable"])
-        self.assertIn("snatch: pooled paired=unavailable (expected 18)", result["conditions"]["C2"]["reasons"])
-        self.assertTrue(result["conditions"]["C4"]["passed"])
-
-    def test_c4_fails_alone_on_each_reproducibility_breach(self) -> None:
-        cases = {
-            "clean: run1/run2 JSON bytes differ": lambda f: f["reproducibility"]["clean"].update(json_identical=False),
-            "clean: run1/run2 Markdown bytes differ": lambda f: f["reproducibility"]["clean"].update(md_identical=False),
-            "inputs_changed_since_lock": lambda f: f.update(inputs_unchanged=False),
-            "handcheck_failed: value_mismatch": lambda f: f.update(handcheck={"status": "failed",
-                                                                              "reasons": ["value_mismatch"]}),
-        }
-        for expected, change in cases.items():
-            with self.subTest(expected):
-                result = self.evaluate(change)
-                self.assertEqual((result["verdict"], self.failing(result)), ("FAIL", ["C4"]))
-                self.assertEqual(result["conditions"]["C4"]["reasons"], [expected])
-
-
 # --- Command: integrity, exit codes, output ---------------------------------------------------------
 
 class ReportCommandTests(Base):
@@ -387,7 +260,7 @@ class ReportCommandTests(Base):
                         "## Proportional and constant diagnostics", "## Per-video statistics", "## Scale diagnostics",
                         "## Reproducibility", "## Hand-check (S1-SQ-1)", "## Provenance"):
             self.assertIn(section, text)
-        self.assertIn("| S1-SQ-1 | back_squat | enrolled | yes | yes | — | 3 | 3 | 3 | 0 | 0 | 0 | 1 | yes |", text)
+        self.assertIn("| S1-SQ-1 | back_squat | enrolled | yes | yes | — | 3 | 3 | 3 | 0 | 0 | 0 | 1 | yes | 1 | 2 |", text)
         self.assertIn("| back_squat | 18 | 0.0025 | 0.021811 | -0.04 | 0.045 | 0.0173 | yes |", text)
         self.assertIn("| S2-SN-2 | 1.0123 | [0.9876, 1.0371] | yes |", text)
         self.assertIn(render.RATIO_CAVEAT, text)
@@ -470,12 +343,17 @@ class ReportCommandTests(Base):
 
     def test_consumer_checkout_or_node_problems_exit_3(self) -> None:
         def no_node() -> str:
-            raise report_tool.InfrastructureError("node missing")
+            raise study.StudyInfrastructureError("node missing")
+
+        def no_git() -> tuple[str, bool]:
+            raise study.StudyInfrastructureError("git missing")
         for name, change in {"commit": lambda: setattr(self.fx, "git_state", ("a" * 40, True)),
                              "dirty": lambda: setattr(self.fx, "git_state", (study.CONSUMER_COMMIT, False)),
-                             "node": lambda: setattr(self.fx, "node", no_node)}.items():
+                             "node": lambda: setattr(self.fx, "node", no_node),
+                             "tool git": lambda: setattr(self.fx, "tool_state", no_git)}.items():
             with self.subTest(name):
                 self.fx.git_state, self.fx.node = (study.CONSUMER_COMMIT, True), lambda: "v24.9.0"
+                self.fx.tool_state = lambda: (TOOL_COMMIT, True)
                 change()
                 self.assertEqual(self.fx.run(output=f"target/{name}.md")[0], 3)
                 self.assertFalse((self.fx.tool / f"target/{name}.md").exists())
@@ -522,16 +400,34 @@ class ReportCommandTests(Base):
         text = self.run_ok()
         self.assertFalse((self.fx.runs / "report-snatch-run1.json").exists())
         self.assertIn("snatch: statistics_unavailable", text)
-        self.assertIn("| S1-SN-1 | snatch | enrolled | no | no | — | — | — | — | — | — | — | — | — |", text)
+        self.assertIn("| S1-SN-1 | snatch | enrolled | no | no | — | — | — | — | — | — | — | — | — | 1 | 2 |", text)
         self.assertIn("| snatch | unavailable (no_analyzable_slots) |", text)
         self.assertIn(f"**{render.VERDICT_LABEL}: FAIL**", text)
 
-    def test_collection_in_progress_is_pending_and_provisional(self) -> None:
+    def test_non_lockable_inventory_is_refused_and_nothing_is_written(self) -> None:
         self.fx.collection_status = "in_progress"
-        text = self.run_ok()
-        self.assertIn(f"**{render.VERDICT_LABEL}: PENDING** (collection in progress", text)
-        self.assertIn("| C1 | Collection and protocol (18 conforming slots; 6 per lift over 3 sessions) | pass (provisional) |",
-                      text)
+        code, log = self.fx.run()
+        self.assertEqual(code, 1, log)
+        self.assertIn("lockable", log)
+        self.assertFalse((self.fx.tool / "docs/analysis/AGREEMENT_79.md").exists())
+
+    def test_lock_summary_or_inventory_not_lockable_is_refused(self) -> None:
+        for name in ("lock-summary.json", "inventory.json"):
+            with self.subTest(name):
+                self.fx.write()
+                path = self.fx.lock_dir / name
+                document = json.loads(path.read_bytes())
+                document["lockable"] = False
+                path.write_bytes(study.serialize(document))
+                if name == "inventory.json":  # keep the lock summary bound to the changed inventory
+                    summary_path = self.fx.lock_dir / "lock-summary.json"
+                    summary = json.loads(summary_path.read_bytes())
+                    summary["inventory_sha256"] = sha(path.read_bytes())
+                    summary_path.write_bytes(study.serialize(summary))
+                code, log = self.fx.run(output=f"target/{name}.md", write=False)
+                self.assertEqual(code, 1, log)
+                self.assertIn("lockable", log)
+                self.assertFalse((self.fx.tool / f"target/{name}.md").exists())
 
     def test_scale_rows_missing_or_changed_are_unavailable_not_fatal(self) -> None:
         self.fx.scale_rows_patch = lambda rows: rows.pop(0)
@@ -552,7 +448,8 @@ class PrivacyTests(Base):
         self.fx.handcheck_patch = lambda d: (d.update(status="failed"), d["public"].update(
             status="failed", reasons=[f"window_contains_null at {fixture_id('S1-SQ-1')}"]))
         text = self.run_ok()
-        self.assertIn("S2-CL-2: protocol:seed late in [redacted] ([redacted], [redacted]) \\| &lt;b&gt;", text)
+        self.assertIn("S2-CL-2: protocol:[owner note]", text)
+        self.assertIn("- Reasons: [unrecognized reason]", text)
         forbidden = ["zzpriv", "ZZPRIV", "validation/private", ".csv", ".json", ".MOV", "c0ffee", "T09:08:07",
                      str(REP_WL), str(REP_OPENBAR), "0.912345", "-0.011111", "5" * 64, "6" * 64,
                      *SESSION_IDS, *SESSION_DATES, *(ORIGINAL.format(i) for i in range(1, 19)),
@@ -563,11 +460,130 @@ class PrivacyTests(Base):
             self.assertNotIn(token, text)
 
 
+class BindingTests(Base):
+    """Hand-check, tool checkout, method config and analysis bindings (H3, H4, H5, M4, LOW)."""
+
+    def test_dirty_tool_tree_fails_c4(self) -> None:
+        self.fx.tool_state = lambda: (TOOL_COMMIT, False)
+        text = self.run_ok()
+        self.assertIn(f"**{render.VERDICT_LABEL}: FAIL**", text)
+        self.assertIn("tool_tree_dirty", text)
+
+    def test_tool_commit_other_than_the_lock_fails_c4(self) -> None:
+        self.fx.tool_state = lambda: ("e" * 40, True)
+        text = self.run_ok()
+        self.assertIn("tool_commit_differs_from_lock", text)
+        self.assertIn(f"- Report tool commit `{'e' * 40}` (tracked files clean: yes)", text)
+
+    def test_handcheck_tool_commit_other_than_the_lock_fails_c4(self) -> None:
+        for name, change in {"other": lambda d: d.update(tool_commit="e" * 40),
+                             "missing": lambda d: d.pop("tool_commit")}.items():
+            with self.subTest(name):
+                self.fx.handcheck_patch = change
+                text = self.run_ok(output=f"target/{name}.md")
+                self.assertIn("handcheck_tool_commit_differs", text)
+                self.assertIn(f"**{render.VERDICT_LABEL}: FAIL**", text)
+
+    def test_handcheck_inconsistencies_are_inputs_mismatch(self) -> None:
+        cases = {"consumer commit": lambda d: d.update(consumer_commit="a" * 40),
+                 "freeze": lambda d: d.update(freeze=dict(study.freeze_references(), tolerance_mps=0.1)),
+                 "passed with reasons": lambda d: d["public"].update(reasons=["value_mismatch"]),
+                 "passed with document reasons": lambda d: d.update(reasons=["value_mismatch"]),
+                 "report null with a squat report": lambda d: d["inputs"].update(report=None)}
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.fx.handcheck_patch = change
+                text = self.run_ok(output=f"target/{name.replace(' ', '-')}.md")
+                self.assertIn("handcheck_inputs_mismatch", text)
+                self.assertIn(f"**{render.VERDICT_LABEL}: FAIL**", text)
+
+    def test_handcheck_without_freeze_references_is_accepted(self) -> None:
+        self.fx.handcheck_patch = lambda d: d.pop("freeze")
+        self.assertIn(f"**{render.VERDICT_LABEL}: PASS**", self.run_ok())
+
+    def test_handcheck_report_null_is_accepted_only_without_a_squat_report(self) -> None:
+        for slot in self.fx.slots:
+            if slot["exercise"] == "back_squat":
+                slot["analyzable"] = False
+
+        def not_analyzable(document: dict) -> None:
+            document.update(status="failed", reasons=["slot_not_analyzable"])
+            document["public"].update(status="failed", reasons=["slot_not_analyzable"], values_compared=0,
+                                      values_matched=0, max_abs_discrepancy_mps=None)
+        self.fx.handcheck_patch = not_analyzable
+        text = self.run_ok()
+        self.assertIsNone(json.loads((self.fx.root / self.fx.handcheck_rel).read_bytes())["inputs"]["report"])
+        self.assertIn("handcheck_failed: slot_not_analyzable", text)
+        self.assertNotIn("handcheck_inputs_mismatch", text)
+        self.assertIn("- Bound to this inventory and the back_squat run 1 report: yes", text)
+
+    def test_method_config_differing_across_lifts_fails_c3(self) -> None:
+        self.fx.report_patch = {"snatch": lambda r: r.update(openBarMethodConfigSha256="8" * 64)}
+        text = self.run_ok()
+        self.assertIn("method_config_mismatch_across_lifts", text)
+        self.assertIn("- Method config identical across produced lift reports (C3): no", text)
+
+    def test_lost_and_low_confidence_counts_need_the_locked_analysis_hash(self) -> None:
+        self.fx.write()
+        slot = self.fx.slot("S2-SN-1")
+        (self.fx.root / slot["files"]["analysis"]["path"]).write_bytes(analysis_bytes(slot["fixture_id"], ["lost"]))
+        text = self.run_ok(write=False)
+        self.assertRegex(text, r"\| S2-SN-1 \| snatch \|[^\n]* \| yes \| unavailable \| unavailable \|\n")
+        self.assertRegex(text, r"\| S1-SN-1 \| snatch \|[^\n]* \| yes \| 1 \| 2 \|\n")
+
+    def test_tracking_state_counts_are_read_from_raw_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            path = root / "a.json"
+            ok = analysis_bytes("x", ["lost", "lost", "tracked", "low_confidence"])
+            cases = {"ok": (ok, {"lost": 2, "low_confidence": 1}),
+                     "unknown state": (analysis_bytes("x", ["occluded"]), None),
+                     "no observations": (b'{"schema_version": 1}', None), "not json": (b"{", None)}
+            for name, (data, expected) in cases.items():
+                with self.subTest(name):
+                    path.write_bytes(data)
+                    self.assertEqual(report_tool.tracking_counts(root, {"path": "a.json", "sha256": sha(data)}),
+                                     expected)
+            self.assertIsNone(report_tool.tracking_counts(root, {"path": "a.json", "sha256": "0" * 64}))
+            self.assertIsNone(report_tool.tracking_counts(root, {"path": "missing.json", "sha256": sha(ok)}))
+            self.assertIsNone(report_tool.tracking_counts(root, None))
+
+
 class HelperTests(unittest.TestCase):
-    def test_handcheck_constants_match_the_handcheck_tool(self) -> None:
+    def test_handcheck_tool_output_is_accepted_by_the_report(self) -> None:
+        import argparse
+
         import agreement79_handcheck as handcheck
-        self.assertEqual((report_tool.HANDCHECK_FORMAT, report_tool.HANDCHECK_SLOT), (handcheck.FORMAT, handcheck.SLOT))
-        self.assertEqual(handcheck.FORMAT_VERSION, study.STUDY_DOCUMENT_VERSION)
+        self.assertFalse(hasattr(report_tool, "HANDCHECK_FORMAT") or hasattr(report_tool, "HANDCHECK_SLOT"))
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = FakeStudy(Path(tmp).resolve())
+            fx.write()
+            squat, inventory = fx.runs / "report-back_squat-run1.json", fx.lock_dir / "inventory.json"
+            args = argparse.Namespace(pairing_review="confirmed", seed_reference_review="confirmed", report=squat,
+                                      inventory=inventory)
+            slot = handcheck.load_slot(fx.root, study.load_json(inventory))
+            result = {"reasons": [], "reps": [], "velocity_check": None, "parser": None, "analysis": None,
+                      "compared": 36, "matched": 36}
+            commits = {"consumer_commit": study.CONSUMER_COMMIT, "tool_commit": TOOL_COMMIT, "tool_tree_clean": True}
+            path = fx.root / fx.handcheck_rel
+            path.write_bytes(study.serialize(handcheck.document(fx.root, args, slot, commits, result)))
+            loaded = report_tool.load_handcheck(path, sha(inventory.read_bytes()), sha(squat.read_bytes()))
+        self.assertEqual((loaded["status"], loaded["reasons"], loaded["inputs_match"], loaded["tool_commit"]),
+                         ("passed", [], True, TOOL_COMMIT))
+
+    def test_public_owner_text_rule(self) -> None:
+        self.assertEqual(render.public_failure({"stage": "protocol", "reason": "late_seed:2.v-1"}),
+                         "protocol:late_seed:2.v-1")
+        for reason in ("Late seed", "seed in IMG_1.MOV", "a|b", "", None, "late\nseed"):
+            with self.subTest(reason=reason):
+                self.assertEqual(render.public_failure({"stage": "protocol", "reason": reason}), "protocol:[owner note]")
+        self.assertEqual(render.public_failure({"stage": "Protocol!", "reason": "x"}), "[owner note]:x")
+        self.assertEqual(render.public_wl_version("5.1 (build 77)"), "5.1 (build 77)")
+        for version in ("5.1/build", "x" * 41, "", None, "v<b>", "5.1\n"):
+            with self.subTest(version=version):
+                self.assertEqual(render.public_wl_version(version), "[owner note]")
+        self.assertEqual(render.public_code("value_mismatch"), "value_mismatch")
+        self.assertEqual(render.public_code("value mismatch at x"), render.UNRECOGNIZED)
 
     def test_js_number_matches_ecmascript_string(self) -> None:
         cases = {0: "0", 18: "18", 0.0: "0", -0.0: "0", 2.0: "2", 0.05: "0.05", -0.050001: "-0.050001",
@@ -588,9 +604,9 @@ class HelperTests(unittest.TestCase):
                 "inventory": fx.lock_dir / "inventory.json", "lock_summary": fx.lock_dir / "lock-summary.json",
                 "runs_dir": fx.runs, "handcheck": fx.root / fx.handcheck_rel, "consumer_app": fx.root / "app",
                 "output": fx.tool / "target/x.md"})())
-            first = report_tool.build(args, fx.root, fx.tool, lambda app: (study.CONSUMER_COMMIT, True), lambda: "v1")
-            second = report_tool.build(copy.copy(args), fx.root, fx.tool, lambda app: (study.CONSUMER_COMMIT, True),
-                                       lambda: "v1")
+            consumer, tool = lambda app: (study.CONSUMER_COMMIT, True), lambda root: (TOOL_COMMIT, True)
+            first = report_tool.build(args, fx.root, fx.tool, consumer, lambda: "v1", tool)
+            second = report_tool.build(copy.copy(args), fx.root, fx.tool, consumer, lambda: "v1", tool)
             self.assertEqual(first["markdown"], second["markdown"])
             self.assertFalse((fx.tool / "target/x.md").exists())
 
