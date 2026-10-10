@@ -17,7 +17,10 @@ accuracy are distinct. Its first slice only checks retained run binding and exis
 invariants; suitability remains unknown unless mechanically rejected, and accuracy remains
 not established. [#112's retained-input batch](../analysis/VBT_SUGGESTION_EVALUATION_RESULTS.md)
 compares eight owner-confirmed clips under frozen rules; identity/rejection labels are not derivable
-and no retained mechanical assessments establish eligibility. The owner's
+and no retained mechanical assessments establish eligibility. Assessment-backed suggestion-evaluation
+batches use `research/vbt-workflow/evaluate_suggestions_v2.py` under the
+[version 2 rules](../analysis/VBT_SUGGESTION_EVALUATION_RULES_V2.md) (#117); the published #112
+batch stays bound to v1. The owner's
 [recorded decision](../analysis/VBT_INITIALIZATION_DECISION.md) is to proceed with #113 within its
 bounded research scope. #114 depends on #111 alone; #79 remains parallel.
 Human confirmation and the existing M0 scope fence remain in force.
