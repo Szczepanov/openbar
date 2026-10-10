@@ -47,7 +47,8 @@ TRACKER = "csrt"
 TRACKER_IMPLEMENTATION = "opencv-csrt"
 TRACKER_POLICY = "csrt-all-v1"
 PRESET = "vbt-sg-0.15s-v1"
-ANALYZE_OPTIONS = list(workflow.PRESETS[PRESET])
+ANALYZE_OPTIONS = ["--filter", "savitzky-golay", "--filter-window-s", "0.15", "--filter-polynomial-order", "2",
+                   "--filter-max-gap-s", "0.2", "--kinematics-max-gap-s", "0.2", "--kinematics-min-confidence", "0"]
 STICK_LENGTH_M = 1.30
 
 # Frozen consumer contract and decision rule.

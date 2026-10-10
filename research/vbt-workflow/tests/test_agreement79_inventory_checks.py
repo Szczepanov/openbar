@@ -205,5 +205,11 @@ class MalformedInputTests(InventoryTestCase):
         self.assertIn("cannot read inventory", err)
 
 
+class FrozenOptionsTests(unittest.TestCase):
+    def test_frozen_analyze_options_equal_the_workflow_preset(self) -> None:
+        """The literal frozen list must not drift from the preset the workflow runs."""
+        self.assertEqual(study.ANALYZE_OPTIONS, list(study.workflow.PRESETS[study.PRESET]))
+
+
 if __name__ == "__main__":
     unittest.main()

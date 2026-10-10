@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -122,10 +123,15 @@ def load_slot(root: Path, inventory: Any) -> dict[str, Any]:
     entries = [entry for entry in slots if isinstance(entry, dict) and entry.get("slot") == slot]
     require(len(entries) == 1, f"inventory must hold exactly one {slot} entry")
     entry = entries[0]
+    require(inventory.get("lockable") is True, "the inventory is not lockable; run the hand-check on the locked inventory")
     require(isinstance(entry.get("analyzable"), bool), f"inventory {slot} analyzable must be a boolean")
     pairs = squat["pairs_file"] is not None
+    lock_tool = inventory.get("tool_commit")
+    require(isinstance(lock_tool, str) and study.COMMIT_RE.fullmatch(lock_tool) is not None,
+            "inventory tool_commit is missing or invalid")
     if not entry["analyzable"]:
-        return {"analyzable": False, "pairs_file": pairs, "path": None, "recorded": None, "sha256": None}
+        return {"analyzable": False, "pairs_file": pairs, "path": None, "recorded": None, "sha256": None,
+                "lock_tool_commit": lock_tool}
     files = entry.get("files")
     binding = files.get("analysis") if isinstance(files, dict) else None
     require(isinstance(binding, dict), f"analyzable {slot} has no inventory analysis binding")
@@ -134,7 +140,8 @@ def load_slot(root: Path, inventory: Any) -> dict[str, Any]:
     require(path is not None, f"inventory {slot} analysis path is not a canonical path inside {root}")
     require(isinstance(sha, str) and study.SHA256_RE.fullmatch(sha) is not None,
             f"inventory {slot} analysis sha256 is invalid")
-    return {"analyzable": True, "pairs_file": pairs, "path": path, "recorded": binding["path"], "sha256": sha}
+    return {"analyzable": True, "pairs_file": pairs, "path": path, "recorded": binding["path"], "sha256": sha,
+            "lock_tool_commit": lock_tool}
 
 
 def report_expected(slot: dict[str, Any]) -> bool:
@@ -163,8 +170,13 @@ def report_rows(report: Any) -> list[dict[str, Any]] | None:
     return rows
 
 
+def snake_case(key: str) -> str:
+    """Public reason codes are lowercase tokens; the consumer's camelCase keys become snake_case."""
+    return re.sub(r"(?<=[a-z0-9])([A-Z])", lambda match: "_" + match.group(1).lower(), key)
+
+
 def report_checks(report: dict[str, Any], analysis_sha: str) -> list[str]:
-    reasons = [f"report_contract_mismatch:{key}" for key, expected in REPORT_CONTRACT
+    reasons = [f"report_contract_mismatch:{snake_case(key)}" for key, expected in REPORT_CONTRACT
                if report.get(key) != expected or type(report.get(key)) is not type(expected)]
     videos = slot_videos(report)
     if not videos:
@@ -469,6 +481,9 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT, tool_root: Path = 
         report = load_report(args, slot)
         consumer_commit = verify_consumer(args.consumer_app, git)
         tool_commit, tool_clean = verify_tool(tool_root, git)
+        require(tool_commit == slot["lock_tool_commit"],
+                f"the hand-check must run from the tool commit recorded in the lock ({slot['lock_tool_commit']}); "
+                f"this checkout is at {tool_commit}")
         result = evaluate(root, slot, report, args.consumer_app, bridge)
         commits = {"consumer_commit": consumer_commit, "tool_commit": tool_commit, "tool_tree_clean": tool_clean}
         output = document(root, args, slot, commits, result)

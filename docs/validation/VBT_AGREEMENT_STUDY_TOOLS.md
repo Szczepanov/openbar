@@ -22,6 +22,14 @@ and read that checkout through `--root`. The inventory refuses a data checkout t
 baseline, and records both commits. Paths recorded in evidence must be canonical repository-relative
 POSIX spellings under `--root`; absolute, escaping, `./` or backslash spellings are refused.
 
+**One tool commit for the whole run.** The lock summary records the commit of the tool checkout that
+ran the inventory (`tool_commit`), and that checkout must be tracked-clean. The hand-check refuses to
+run, and the report fails condition C4 (`tool_commit_differs_from_lock`,
+`handcheck_tool_commit_differs`, `tool_tree_dirty`), unless it runs from a tracked-clean checkout at
+exactly that commit. Committing the collection-lock note to the tool branch moves `HEAD`, so run the
+hand-check and report from a detached worktree of the locked `tool_commit` (git-ignored paths and the
+data checkout are unaffected) and commit the note and the final report from another checkout.
+
 ## 1. Inventory, pairs files and collection lock
 
 ```powershell
@@ -125,7 +133,12 @@ npm run evidence:velocity-agreement -- --pairs <lock>/pairs-back_squat.json `
   --output <runs>/report-back_squat-run2 --segmentation concentric-segmentation-v2 --min-overlap 0.5
 ```
 
-Repeat for `snatch` and `clean`. Keep `<runs>` under the data checkout's
+Repeat for `snatch` and `clean`. The consumer can still stop a whole lift after the inventory's parse
+preflight succeeded (mixed method fingerprints or parser versions within one lift, or a rep with equal
+start and end times). That writes no report, so the report tool exits 1 for lack of input. This is a
+mechanical failure of that lift, not a retry opportunity: infrastructure retries may repeat unchanged
+inputs with the pinned tools only; the failed consumer message is recorded under #79 as a **FAIL** of
+the study (statistics unavailable), never repaired by editing inputs. Keep `<runs>` under the data checkout's
 `validation/private/vbt/study-79/`.
 
 ## 3. S1-SQ-1 hand-check
@@ -159,7 +172,9 @@ It passes only when there are three paired reps, every value matches, and both h
 `--report` is optional only when `S1-SQ-1` was not paired: the slot is not analyzable in the
 inventory, or the back_squat lift has no pairs file. The tool then writes status `failed` with
 `slot_not_analyzable` and `inputs.report: null`. If `S1-SQ-1` is analyzable and back_squat has a
-pairs file, `--report` is required (exit 1 without it).
+pairs file, `--report` is required (exit 1 without it). The hand-check also refuses (exit 1) an inventory
+that is not lockable, and a tool checkout that is dirty or not at the lock summary's `tool_commit`.
+Report contract mismatches are recorded as snake_case codes such as `report_contract_mismatch:min_overlap`.
 
 It verifies that the consumer checkout is the clean pinned commit (exit 3 otherwise), and records the
 tool checkout's `tool_commit` and `tool_tree_clean`. A tool checkout with tracked changes is refused

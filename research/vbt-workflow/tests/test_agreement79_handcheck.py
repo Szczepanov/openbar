@@ -107,7 +107,8 @@ class Fixture:
         lifts = {'back_squat': {'pairs_file': pairs if self.pairs_file else None,
                                 **({} if self.pairs_file else {'reason': 'collection_in_progress'})}}
         inventory = {'format': study.INVENTORY_FORMAT, 'format_version': 1, 'study_id': study.STUDY_ID,
-                     'slots': [slot, {'slot': 'S1-SQ-2', 'analyzable': False, 'files': {}}], 'lifts': lifts}
+                     'slots': [slot, {'slot': 'S1-SQ-2', 'analyzable': False, 'files': {}}], 'lifts': lifts,
+                     'lockable': True, 'tool_commit': TOOL_COMMIT}
         self.inventory_path.parent.mkdir(parents=True, exist_ok=True)
         self.inventory_path.write_bytes(study.serialize(inventory))
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,6 +226,26 @@ class HandcheckTests(unittest.TestCase):
     def test_consumer_state_is_read_from_the_app_parent_and_tool_state_from_tool_root(self) -> None:
         self.run_result()
         self.assertEqual(self.fx.git_calls, [self.fx.root / 'consumer/app' / '..', self.fx.tool_root])
+
+    def test_non_lockable_inventory_exits_1(self) -> None:
+        self.fx.write()
+        doc = json.loads(self.fx.inventory_path.read_text(encoding='utf-8'))
+        doc['lockable'] = False
+        self.fx.inventory_path.write_bytes(study.serialize(doc))
+        self.assertEqual(self.fx.run(), 1)
+        self.assertFalse(self.fx.output.exists())
+
+    def test_tool_commit_must_equal_the_lock_commit(self) -> None:
+        self.fx.write()
+        self.fx.tool_git = ('e' * 40, True)
+        self.assertEqual(self.fx.run(), 1)
+        self.assertFalse(self.fx.output.exists())
+        self.assertEqual(self.fx.bridge_calls, 0)
+
+    def test_contract_reason_codes_are_lowercase_tokens(self) -> None:
+        self.assertEqual(handcheck.snake_case('segmentationRule'), 'segmentation_rule')
+        self.assertEqual(handcheck.snake_case('openBarParserVersion'), 'open_bar_parser_version')
+        self.assertEqual(handcheck.snake_case('schemaVersion'), 'schema_version')
 
     def test_dirty_tool_tree_exits_1(self) -> None:
         self.fx.write()
@@ -437,8 +458,8 @@ class HandcheckTests(unittest.TestCase):
         report['minOverlap'] = 0.6
         report['segmentationRule'] = 'concentric-segmentation-v1'
         self.fx.report = report
-        self.assert_failed(self.run_result(), 'report_contract_mismatch:minOverlap',
-                           'report_contract_mismatch:segmentationRule')
+        self.assert_failed(self.run_result(), 'report_contract_mismatch:min_overlap',
+                           'report_contract_mismatch:segmentation_rule')
 
     def test_report_bound_to_other_analysis(self) -> None:
         self.fx.report = build_report('e' * 64)
@@ -678,7 +699,7 @@ class ConsumerBridgeIntegrationTests(unittest.TestCase):
             argv = ['--inventory', str(fx.inventory_path), '--consumer-app', str(app),
                     '--report', str(fx.report_path), '--pairing-review', 'confirmed',
                     '--seed-reference-review', 'confirmed', '--output', str(fx.output)]
-            git = lambda path: (study.CONSUMER_COMMIT, True)  # noqa: E731 - checkout state is not under test
+            git = lambda path: ((TOOL_COMMIT if path == fx.tool_root else study.CONSUMER_COMMIT), True)  # noqa: E731
             self.assertEqual(handcheck.main(argv, root=fx.root, tool_root=fx.tool_root, git=git), 0)
             result = fx.result()
             self.assertEqual((result['status'], result['reasons']), ('passed', []), result['reasons'])
