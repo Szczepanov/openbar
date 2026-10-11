@@ -559,7 +559,10 @@ and freezes the owner-delegated threshold and protocol before formal pairing.
 The tested consumer compatibility commit is pinned there. Execution waits for the
 newly recorded, human-confirmed cohort and its input lock; earlier trial/development
 videos are excluded.
-Step 4 remains pending. A study PASS still requires a reviewed consumer policy
+Step 4 remains pending. [Execution status](../analysis/VBT_AGREEMENT_STUDY_STATUS.md)
+(2026-10-10): PENDING, 0/18 slots recorded; pinned tools are prepared and the owner
+collection checklist lists every missing slot.
+A study PASS still requires a reviewed consumer policy
 before any source switch or eligible live-trial write.
 
 1. **Pre-register before pairing any results:**
