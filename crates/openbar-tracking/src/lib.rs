@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 mod contrast;
+mod csrt;
 mod template;
 
 pub use contrast::{LocalContrastConfig, LocalContrastTracker};
