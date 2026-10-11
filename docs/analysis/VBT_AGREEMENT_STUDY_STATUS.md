@@ -24,6 +24,7 @@ PASS, a FAIL or a partial result.
 | Consumer agreement CLI and parsers | ready | `evidence:velocity-agreement` present; versions `openbar-analysis-v2` (parameterized tracker), `wl-analysis-csv-v2`, `concentric-segmentation-v2`, report `velocity-agreement-v1`; default `--min-overlap` 0.5 |
 | FFmpeg / ffprobe | ready | 9.0.2 (gyan.dev full build) |
 | Novelty exclusion set | ready (private) | 34 unique SHA-256: 13 retained development videos hashed (all already recorded in manifests), 28 recorded development manifest hashes, 6 recorded #57 held-out manifest hashes. Held-out media were **not opened**; their files were skipped by name. Digest of the sorted, newline-terminated hash list: `2c8cbc0275b11b94a5e89494d0190ec9a121d7c43c38fdd0679a2f26176894ea` |
+| Study-execution tools | ready (not yet exercised on study data) | Inventory and collection lock, `S1-SQ-1` hand-check, and aggregate report and criterion, landed in #169 as `fc5e3f0`. Usage and guarantees: [VBT_AGREEMENT_STUDY_TOOLS.md](../validation/VBT_AGREEMENT_STUDY_TOOLS.md). They need recorded slots as input and produce no outcome on their own |
 | Plate physical diameter measured and locked | **missing** | No measurement is on record. Owner action before session 1 |
 | Stick marker separation verified at 1.30 m | **missing** | No verification with resolution and repeated checks is on record. Owner action before session 1 |
 | Fixed camera setup recorded | **missing** | Model, mode, height and plate-plane distance not recorded. Owner action before session 1 |
@@ -162,7 +163,10 @@ additional protocol. A private, git-ignored log template with these fields is in
 ## 4. Remaining execution, in order
 
 Once collection is complete or explicitly concluded, the following steps run exactly as the
-preregistration specifies. Nothing here changes them:
+preregistration specifies. Nothing here changes them. Steps 1 to 3 use the inventory tool, step 5
+the hand-check tool and step 6 the report tool, all described in
+[VBT_AGREEMENT_STUDY_TOOLS.md](../validation/VBT_AGREEMENT_STUDY_TOOLS.md). Step 4 stays the pinned
+consumer's own agreement CLI. The tools are ready, but the study remains PENDING.
 
 1. Write the per-lift pairs files from analyzable slots only. If a lift has no analyzable slot, do
    not invoke the CLI for it; record unavailable statistics and all six slots as failures.
