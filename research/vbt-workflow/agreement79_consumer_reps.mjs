@@ -13,7 +13,8 @@
 // does for concentric-segmentation-v2 (strict UTF-8, parseWlAnalysisCsv(text, WL_ANALYSIS_CSV_PARSER_V2),
 // parseOpenBarAnalysis(text, CONCENTRIC_SEGMENTATION_V2)) and writes ONLY whether each was accepted:
 // {"openbar":{"accepted":bool,"error":string|null},"wl":{"accepted":bool,"error":string|null}}.
-// It never writes reps, counts or values. A module that cannot be loaded exits 1 (infrastructure).
+// It never writes reps, counts or values. A module that cannot be loaded or a file that cannot be read
+// exits 1 (infrastructure); only strict decoding and parsing are reported as a rejection.
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,9 +23,12 @@ async function consumerModule(appDir, name) {
     return import(pathToFileURL(resolve(appDir, 'src', 'observations', name)).href);
 }
 
-async function decodeFile(path) {
-    const bytes = await readFile(resolve(path));
+function decode(bytes) {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+}
+
+async function decodeFile(path) {
+    return decode(await readFile(resolve(path)));
 }
 
 async function reps(appDir, analysisPath) {
@@ -41,9 +45,10 @@ async function reps(appDir, analysisPath) {
     };
 }
 
-async function verdict(parse) {
+// Only strict decoding and parsing can reject; the consumer CLI refuses the same bytes the same way.
+function verdict(parse) {
     try {
-        await parse();
+        parse();
         return { accepted: true, error: null };
     } catch (error) {
         const message = error instanceof Error && error.message ? error.message : 'parser rejected the file';
@@ -55,12 +60,15 @@ async function preflight(appDir, analysisPath, wlCsvPath) {
     const openBarParser = await consumerModule(appDir, 'openBarAnalysis.ts');
     const wlParser = await consumerModule(appDir, 'wlAnalysisCsv.ts');
     const segmentation = await consumerModule(appDir, 'concentricSegmentation.ts');
-    const openbar = await verdict(async () => {
-        const text = await decodeFile(analysisPath);
+    // Read outside verdict(): an unreadable file is infrastructure (exit 1), never a parser rejection.
+    const analysisBytes = await readFile(resolve(analysisPath));
+    const wlBytes = await readFile(resolve(wlCsvPath));
+    const openbar = verdict(() => {
+        const text = decode(analysisBytes);
         openBarParser.parseOpenBarAnalysis(text, segmentation.CONCENTRIC_SEGMENTATION_V2);
     });
-    const wl = await verdict(async () => {
-        const text = await decodeFile(wlCsvPath);
+    const wl = verdict(() => {
+        const text = decode(wlBytes);
         wlParser.parseWlAnalysisCsv(text, wlParser.WL_ANALYSIS_CSV_PARSER_V2);
     });
     return { openbar, wl };

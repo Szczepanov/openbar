@@ -105,18 +105,22 @@ def consumer_preflight(app: Path, analysis: Path, wl_csv: Path) -> dict[str, Any
 
 
 def ffprobe_creation_time(video: Path) -> str | None:
-    """Container creation_time tag as text; None when ffprobe reports none for this file."""
+    """Container creation_time tag as text; None only when ffprobe exits 0 and reports no such tag.
+
+    A non-zero exit or output that is not JSON means ffprobe itself could not answer: infrastructure.
+    """
     argv = ["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time", "-of", "json", str(video)]
     try:
         result = subprocess.run(argv, capture_output=True, check=False)
     except OSError as error:
         raise study.StudyInfrastructureError(f"ffprobe could not be run: {error}") from error
     if result.returncode != 0:
-        return None
+        detail = last_line(result.stderr) or f"exit {result.returncode}"
+        raise study.StudyInfrastructureError(f"ffprobe failed on a bound video: {detail}")
     try:
         value = dig(json.loads(result.stdout.decode("utf-8")), "format", "tags", "creation_time")
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise study.StudyInfrastructureError("ffprobe wrote no JSON") from error
     return value if isinstance(value, str) else None
 
 
@@ -135,10 +139,15 @@ def is_number(value: Any) -> bool:
 
 
 def hashed(root: Path, path: Path | None) -> dict[str, str] | None:
+    """{path, sha256} of a bound file; None when absent. A file resolving outside ``root`` is invalid input."""
     if path is None or not path.is_file():
         return None
     try:
-        return {"path": study.repo_relative(path, root), "sha256": study.file_sha256(path)}
+        relative = study.repo_relative(path, root)
+    except (ValueError, workflow.WorkflowError) as error:  # e.g. a symlink escaping the data checkout
+        raise study.StudyInputError(f"bound file {path} resolves outside the data checkout {root}") from error
+    try:
+        return {"path": relative, "sha256": study.file_sha256(path)}
     except OSError:
         return None
 
@@ -345,7 +354,10 @@ def run_method(run: Any, fixture_id: str, plate: float) -> list[tuple[str, bool]
              or dig(run, "configuration", "plate_diameter_m") != plate),
             ("openbar_cli_sha256", dig(run, "environment", "openbar_cli", "sha256") != study.OPENBAR_CLI_SHA256),
             ("openbar_git_commit", dig(run, "openbar", "git_commit") != study.OPENBAR_BASELINE_COMMIT),
-            ("openbar_tracked_changes", dig(run, "openbar", "tracked_changes") is not False)]
+            ("openbar_tracked_changes", dig(run, "openbar", "tracked_changes") is not False),
+            # Untracked files under crates/, apps/ or research/ also leave the commit short of the run's source.
+            ("openbar_untracked_source_files", type(dig(run, "openbar", "untracked_source_files")) is not int
+             or dig(run, "openbar", "untracked_source_files") != 0)]
 
 
 def run_evidence(root: Path, entry: dict[str, Any], clip: dict[str, Any], context: dict[str, Any],

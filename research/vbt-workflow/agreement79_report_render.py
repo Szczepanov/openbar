@@ -2,12 +2,13 @@
 """Deterministic, aggregate-only Markdown for the #79 report (agreement79_report.py builds the context).
 
 Never rendered: file paths or names, fixture ids, original names, timestamps, session ids or dates, input
-file hashes or per-rep values. Slot ids (S1-SQ-1 ...) are public. Owner free text is rendered only when it
-has a code shape: a failure renders `stage:reason` only when each matches ``^[a-z0-9_:.-]+$`` (otherwise
-`[owner note]`), hand-check reasons likewise (otherwise `[unrecognized reason]`), and the WL Analysis version
-only when it matches ``^[A-Za-z0-9 ._()+-]{1,40}$``. Every cell is additionally redacted against the
-inventory's private strings (defence in depth) and Markdown-escaped. Numbers render as the consumer renders its
-rounded JSON (ECMAScript ``String``).
+file hashes or per-rep values. Slot ids (S1-SQ-1 ...) are public. A failure renders its stage only when it is
+a frozen failure stage and its reason only when `stage:reason` is on the closed allow-list of codes the
+inventory derives (``KNOWN_FAILURES``); any other owner reason, code-shaped or not, renders `[owner note]`.
+Hand-check reasons render only when they have a code shape ``^[a-z0-9_:.-]+$`` (otherwise
+`[unrecognized reason]`), and the WL Analysis version only when it matches ``^[A-Za-z0-9 ._()+-]{1,40}$``.
+Every cell is additionally redacted, case-insensitively, against the inventory's private strings (defence in
+depth) and Markdown-escaped. Numbers render as the consumer renders its rounded JSON (ECMAScript ``String``).
 """
 from __future__ import annotations
 
@@ -46,17 +47,46 @@ SECONDARY = study.METRICS[1:]
 COUNT_COLUMNS = (("wlTotal", "WL total"), ("openBarTotal", "OpenBar total"), ("paired", "Paired"),
                  ("wlOnly", "WL only"), ("openBarOnly", "OpenBar only"), ("openBarExcluded", "OpenBar excluded"))
 
+# Closed allow-list: every derived failure the inventory (agreement79_inventory.py, agreement79_slot_evidence.py)
+# can record, per stage. A reason outside it never renders, whoever wrote it.
+METHOD_FIELDS = ("tracker_policy", "preset", "analyze_options", "plate_diameter_m", "stick_length_m", "clip_tracker",
+                 "run_record_sha256", "run_record_format", "run_fixture_id", "run_tracker", "tracker_implementation",
+                 "run_preset", "run_analyze_options", "run_plate_diameter_m", "openbar_cli_sha256",
+                 "openbar_git_commit", "openbar_tracked_changes", "openbar_untracked_source_files")
+DERIVED_REASONS: dict[str, tuple[str, ...]] = {
+    "novelty": ("session_date_before_freeze", "duplicate_of_excluded_clip", "creation_time_unavailable",
+                "recorded_before_freeze", *(f"duplicate_of_slot:{slot}" for slot in study.SLOTS)),
+    "confirmation": ("skipped_on_session_page",),
+    "processing": ("not_processed", "session_status_failed", "clip_not_in_session_record", "exercise_mismatch",
+                   "openbar_parser_rejected", *(f"method_mismatch:{field}" for field in METHOD_FIELDS),
+                   "run_output_mismatch:prediction", "run_output_mismatch:analysis"),
+    "assessment": ("assessment_missing", "assessment_invalid", "assessment_unbound", "processing_incomplete",
+                   "processing_unknown", "mechanical_invalid", "mechanical_unknown"),
+    "reference": ("scale_reference_missing", "scale_reference_unbound"),
+    "wl_export": ("wl_csv_missing", "wl_parser_rejected"),
+    "protocol": ("attempted_reps_not_three", "seed_not_before_first_rep", "environment_mismatch",
+                 "session_has_unenrolled_clip", "slot_order_violation", "session_dates_not_distinct"),
+}
+KNOWN_FAILURES = frozenset((stage, reason) for stage, reasons in DERIVED_REASONS.items() for reason in reasons)
+
 
 # --- Public text ---------------------------------------------------------------------------------
 
 def public_code(value: Any, placeholder: str = UNRECOGNIZED) -> str:
-    """A tool or owner code shown as-is only when it has a code shape; free text becomes ``placeholder``."""
+    """A tool code shown as-is only when it has a code shape; free text becomes ``placeholder``."""
     return value if isinstance(value, str) and CODE_RE.fullmatch(value) else placeholder
 
 
 def public_failure(item: Any) -> str:
-    """`stage:reason` of an inventory failure with owner free text replaced by `[owner note]`."""
-    return f"{public_code(dig(item, 'stage'), OWNER_NOTE)}:{public_code(dig(item, 'reason'), OWNER_NOTE)}"
+    """`stage:reason` of an inventory failure; only allow-listed codes render, owner text never does.
+
+    An unlisted reason is `[owner note]` for an owner failure and `[unrecognized reason]` for a derived one.
+    """
+    stage, reason = dig(item, "stage"), dig(item, "reason")
+    shown_stage = stage if isinstance(stage, str) and stage in study.FAILURE_STAGES else OWNER_NOTE
+    if isinstance(stage, str) and isinstance(reason, str) and (stage, reason) in KNOWN_FAILURES:
+        return f"{shown_stage}:{reason}"
+    return f"{shown_stage}:{UNRECOGNIZED if dig(item, 'source') == 'derived' else OWNER_NOTE}"
 
 
 def public_wl_version(value: Any) -> str:
@@ -85,15 +115,16 @@ def js_number(value: Any) -> str:
 
 
 class Cells:
-    """Redaction plus Markdown escaping for every input-derived string."""
+    """Case-insensitive redaction plus Markdown escaping for every input-derived string."""
 
     def __init__(self, tokens: list[str]) -> None:
-        self.tokens = tokens
+        ordered = sorted(set(tokens), key=lambda token: (-len(token), token))  # longest match wins
+        self.pattern = re.compile("|".join(map(re.escape, ordered)), re.IGNORECASE) if ordered else None
 
     def text(self, value: Any) -> str:
         text = str(value)
-        for token in self.tokens:
-            text = text.replace(token, REDACTED)
+        if self.pattern is not None:
+            text = self.pattern.sub(REDACTED, text)
         text = " ".join(text.splitlines())
         return text.replace("|", "\\|").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -271,9 +302,13 @@ def reproducibility_section(context: dict[str, Any], cells: Cells) -> list[str]:
                      f"`{hashes['run1_md']}`", f"`{hashes['run2_md']}`", yes_no(lift["md_identical"])])
     verification = context["verification"]
     unchanged = verification["checked"] - verification["mismatch_count"]
+    # A lift whose consumer run aborted: only the hash of the retained (private) message is public.
+    aborted = [f"- {exercise}: consumer aborted; retained message SHA-256 `{lift['consumer_failure_sha256']}` "
+               "(message not rendered)" for exercise in lift_names()
+               if (lift := context["lifts"][exercise]).get("consumer_failure_sha256")]
     return ["## Reproducibility", "",
             *table(["Lift", "Run 1 JSON SHA-256", "Run 2 JSON SHA-256", "JSON identical", "Run 1 Markdown SHA-256",
-                    "Run 2 Markdown SHA-256", "Markdown identical"], rows), "",
+                    "Run 2 Markdown SHA-256", "Markdown identical"], rows), "", *aborted, *([""] if aborted else []),
             f"Input rehash: {unchanged}/{verification['checked']} recorded inputs unchanged "
             f"({verification['mismatch_count']} mismatches); inputs unchanged: {yes_no(verification['inputs_unchanged'])}."]
 

@@ -68,15 +68,28 @@ class CriterionTests(unittest.TestCase):
             slot.update(protocol_conforming=False, failures=[{"stage": "protocol", "reason": "late_seed", "source": "owner"}])
         result = self.evaluate(owner_failure)
         self.assertEqual((result["verdict"], self.failing(result)), ("FAIL", ["C1"]))
+        # An owner code outside the closed allow-list renders as a placeholder, even when it is code-shaped.
         self.assertEqual(result["conditions"]["C1"]["reasons"],
-                         ["S1-CL-1: protocol:late_seed", "clean: 5/6 conforming slots across 3/3 sessions"])
+                         ["S1-CL-1: protocol:[owner note]", "clean: 5/6 conforming slots across 3/3 sessions"])
 
-    def test_c1_owner_free_text_reason_is_replaced_by_a_placeholder(self) -> None:
-        def owner_failure(facts: dict) -> None:
-            facts["slots"][4].update(protocol_conforming=False, failures=[
-                {"stage": "protocol", "reason": "Seed late in IMG_0042.MOV", "source": "owner"}])
-        reasons = self.evaluate(owner_failure)["conditions"]["C1"]["reasons"]
-        self.assertEqual(reasons[0], "S1-CL-1: protocol:[owner note]")
+    def test_c1_owner_reason_renders_only_when_allow_listed(self) -> None:
+        for reason, shown in (("Seed late in IMG_0042.MOV", "[owner note]"), ("img_0042", "[owner note]"),
+                              ("seed_not_before_first_rep", "seed_not_before_first_rep")):
+            with self.subTest(reason):
+                def owner_failure(facts: dict, reason: str = reason) -> None:
+                    facts["slots"][4].update(protocol_conforming=False, failures=[
+                        {"stage": "protocol", "reason": reason, "source": "owner"}])
+                reasons = self.evaluate(owner_failure)["conditions"]["C1"]["reasons"]
+                self.assertEqual(reasons[0], f"S1-CL-1: protocol:{shown}")
+
+    def test_session_dates_not_distinct_fails_c1(self) -> None:
+        def same_day(facts: dict) -> None:
+            for slot in facts["slots"][:12]:
+                slot.update(protocol_conforming=False, failures=[
+                    {"stage": "protocol", "reason": "session_dates_not_distinct", "source": "derived"}])
+        result = self.evaluate(same_day)
+        self.assertEqual((result["verdict"], self.failing(result)), ("FAIL", ["C1"]))
+        self.assertIn("S2-CL-2: protocol:session_dates_not_distinct", result["conditions"]["C1"]["reasons"])
 
     def test_c2_fails_alone_on_each_count_and_completeness_breach(self) -> None:
         cases = {

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 from datetime import datetime
@@ -24,7 +25,7 @@ TOOL_VERSION = 1
 
 # Freeze references.
 PREREGISTRATION_COMMIT = "75bc5f16853987469b76b1996894ec220726ff2d"
-PREREGISTRATION_MAIN_COMMIT = "c6a58b5"
+PREREGISTRATION_MAIN_COMMIT = "c6a58b5649ceb089cd4c3d8c180c0996b2f4b33f"
 FREEZE_INSTANT = datetime.fromisoformat("2026-10-09T17:20:54+02:00")
 OPENBAR_BASELINE_COMMIT = "742225dc21d0d947db0ddf472218cd4dc442dc24"
 OPENBAR_CLI_SHA256 = "8561b1c1e1f9099e8a53b3ece1578192d73a94c5c2f0d5c80e7a7f0d6d1d7cc6"
@@ -106,6 +107,8 @@ SLOTS_FORMAT = "owner-vbt-agreement-79-slots"
 INVENTORY_FORMAT = "owner-vbt-agreement-79-inventory"
 LOCK_SUMMARY_FORMAT = "owner-vbt-agreement-79-lock-summary"
 STUDY_DOCUMENT_VERSION = 1
+# The two consumer runs of a lift (report-<exercise>-<suffix>); a lift the consumer aborted has none of them.
+CONSUMER_RUN_FILES = ("run1.json", "run2.json", "run1.md", "run2.md")
 
 
 def freeze_references() -> dict[str, Any]:
@@ -132,17 +135,43 @@ def recorded_path(root: Path, value: object) -> Path | None:
     """Resolve a canonical repository-relative POSIX path recorded in evidence; None when it is not one.
 
     Mirrors ``assess_clip.recorded_repo_path`` for an explicit root: absolute, escaping or non-canonical
-    spellings (``./``, ``..``, backslashes) are refused instead of being normalised.
+    spellings (``./``, ``..``, backslashes, other letter case) are refused instead of being normalised. An
+    absent file keeps its path (callers record it as missing). A path that is, or lies behind, a symlink or
+    junction raises StudyInputError: it is a broken input, not a missing one.
     """
     if not isinstance(value, str) or not value or "\0" in value or "\\" in value or Path(value).is_absolute():
         return None
+    if any(part in ("", ".", "..") for part in value.split("/")):
+        return None
+    plain = workflow.safe_resolve(root) / value
     try:
-        resolved = workflow.safe_resolve(root / value)
-    except workflow.WorkflowError:
-        return None
-    if not workflow.is_within(resolved, root) or repo_relative(resolved, root) != value:
-        return None
-    return resolved
+        resolved = workflow.safe_resolve(plain)
+    except workflow.WorkflowError as error:
+        raise StudyInputError(f"recorded path {value} cannot be resolved (link loop?): {error}") from error
+    if resolved == plain:
+        return resolved
+    if os.path.normcase(str(resolved)) == os.path.normcase(str(plain)):
+        return None  # same file spelled in another letter case: non-canonical
+    raise StudyInputError(f"recorded path {value} is, or lies behind, a symlink or junction resolving to another "
+                          "location; study inputs must be plain files inside the data checkout")
+
+
+def bound_file_hashes(document: Any) -> frozenset[str]:
+    """Every SHA-256 an inventory binds to a file (each nested {path, sha256} record); tolerant of any shape."""
+    found: set[str] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if isinstance(value.get("path"), str) and isinstance(value.get("sha256"), str):
+                found.add(value["sha256"])
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(document)
+    return frozenset(found)
 
 
 def slot_lift(slot: str) -> dict[str, Any]:

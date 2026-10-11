@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -159,6 +160,57 @@ class PreflightBridgeBoundaryTests(unittest.TestCase):
                      "frameCount: parsed.frames.length", "reps: parsed.reps",
                      "parseWlAnalysisCsv(", "WL_ANALYSIS_CSV_PARSER_V2", "new TextDecoder('utf-8', { fatal: true })"):
             self.assertIn(text, source)
+
+
+FAKE_MODULES = {
+    "openBarAnalysis.ts": "export function parseOpenBarAnalysis(text, rule) {\n"
+                          "    if (text.includes('reject')) { throw new Error('fake OpenBar rejection'); }\n"
+                          "    return { parserVersion: 'x', segmentationRule: rule, frames: [], breaks: [], reps: [] };\n}\n",
+    "wlAnalysisCsv.ts": "export const WL_ANALYSIS_CSV_PARSER_V2 = 'wl-analysis-csv-v2';\n"
+                        "export function parseWlAnalysisCsv(text, version) {\n"
+                        "    if (text.includes('reject')) { throw new Error('fake WL rejection'); }\n    return {};\n}\n",
+    "concentricSegmentation.ts": "export const CONCENTRIC_SEGMENTATION_V2 = 'concentric-segmentation-v2';\n",
+}
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not on PATH")
+class BridgeReadFailureTests(unittest.TestCase):
+    """L4: the real bridge against stub consumer modules; an unreadable file is infrastructure, not a rejection."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name).resolve()
+        self.app = self.dir / "app"
+        (self.app / "src/observations").mkdir(parents=True)
+        (self.app / "package.json").write_bytes(b'{"type": "module"}\n')
+        for name, source in FAKE_MODULES.items():
+            (self.app / "src/observations" / name).write_bytes(source.encode("utf-8"))
+        self.analysis, self.wl = self.dir / "analysis.json", self.dir / "wl.csv"
+        self.analysis.write_bytes(b"{}")
+        self.wl.write_bytes(b"time\n")
+
+    def preflight(self) -> dict[str, Any]:
+        return evidence.consumer_preflight(self.app, self.analysis, self.wl)
+
+    def test_parser_throws_are_rejections(self) -> None:
+        self.assertEqual(self.preflight(), {"openbar": ACCEPTED, "wl": ACCEPTED})
+        self.wl.write_bytes(b"reject\n")
+        self.assertEqual(self.preflight(), {"openbar": ACCEPTED, "wl": {"accepted": False, "error": "fake WL rejection"}})
+
+    def test_invalid_utf8_is_a_rejection_like_the_consumer_cli(self) -> None:
+        self.analysis.write_bytes(b'{"x": "\xff"}')
+        result = self.preflight()
+        self.assertFalse(result["openbar"]["accepted"])
+        self.assertEqual(result["wl"], ACCEPTED)
+
+    def test_unreadable_file_is_infrastructure(self) -> None:
+        for name in ("analysis", "wl"):
+            with self.subTest(name):
+                missing = self.dir / f"missing-{name}"
+                paths = {"analysis": self.analysis, "wl": self.wl, name: missing}
+                with self.assertRaises(study.StudyInfrastructureError):
+                    evidence.consumer_preflight(self.app, paths["analysis"], paths["wl"])
 
 
 def analysis_document() -> dict[str, Any]:
