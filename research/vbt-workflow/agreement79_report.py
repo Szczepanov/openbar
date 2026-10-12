@@ -8,6 +8,8 @@ target/ of this checkout. No parser, segmenter, pairing or statistic is reimplem
 from the consumer's serialized JSON. The verdict is a mechanical evaluation of the frozen criterion; the
 reviewed decision is recorded separately. Only a lockable inventory (collection complete or concluded) is
 reported; statistics are never rendered for a collection in progress. The tool checkout's git state enters C4.
+A lift the consumer aborted is accepted only with its retained message (`--consumer-failure`, hashed, never read
+into the report) and renders as statistics_unavailable; missing reports without one stay invalid input.
 Exit 0 written, 1 invalid or inconsistent input (including a non-lockable inventory), 3 infrastructure (consumer
 checkout not the pinned clean commit, git or node unavailable). Standard library only.
 """
@@ -30,7 +32,7 @@ from agreement79_slot_evidence import dig, is_number
 ROOT = workflow.ROOT
 HANDCHECK_STATUSES = ("passed", "failed")
 EXERCISES = tuple(lift["exercise"] for lift in study.LIFTS.values())
-REPORT_FILES = (("run1_json", "run1.json"), ("run2_json", "run2.json"), ("run1_md", "run1.md"), ("run2_md", "run2.md"))
+REPORT_FILES = tuple((suffix.replace(".", "_"), suffix) for suffix in study.CONSUMER_RUN_FILES)  # (run1_json, ...)
 OUTPUT_DIRS = ("docs/analysis", "target")
 COUNT_KEYS = ("wlTotal", "openBarTotal", "paired", "wlOnly", "openBarOnly", "openBarExcluded")
 UNMATCHED_KEYS = ("wlOnly", "openBarOnly", "openBarExcluded")
@@ -41,6 +43,7 @@ STAT_REASONS = frozenset({"insufficient_n", "constant_magnitudes", "zero_varianc
                           "non_finite_result"})
 PAIRS_PER_LIFT = study.VIDEOS_PER_LIFT * study.PLANNED_REPS_PER_VIDEO
 REDACTION_MIN_CHARS = 4
+OWNER_NAMED_ROLES = ("video", "wl_csv")
 GitState = Callable[[Path], "tuple[str, bool]"]
 NodeVersion = Callable[[], str]
 ReportInputError = study.StudyInputError
@@ -202,15 +205,55 @@ def pairs_labels(root: Path, exercise: str, lift: dict[str, Any]) -> list[str]:
     return labels
 
 
-def load_lift(root: Path, runs_dir: Path, exercise: str, inventory: dict[str, Any]) -> dict[str, Any]:
+def consumer_failures(root: Path, values: list[str] | None, inventory: dict[str, Any]) -> dict[str, Path]:
+    """``--consumer-failure <exercise>=<file>``: the retained message of a consumer run that aborted a lift.
+
+    Only a lift with a pairs file can have one (the consumer never ran otherwise), at most once per lift.
+    """
+    records: dict[str, Path] = {}
+    for value in values or []:
+        exercise, separator, raw = value.partition("=")
+        require(bool(separator) and exercise in EXERCISES,
+                f"--consumer-failure must be <exercise>=<file> with exercise one of {', '.join(EXERCISES)}")
+        require(exercise not in records, f"--consumer-failure is given twice for {exercise}")
+        require(inventory["lifts"][exercise].get("pairs_file") is not None,
+                f"{exercise} has no pairs file, so no consumer ran; --consumer-failure does not apply")
+        path = workflow.safe_resolve(Path(raw))
+        require(workflow.is_within(path, root), f"--consumer-failure {exercise} must be inside the data checkout {root}")
+        require(path.is_file(), f"--consumer-failure {exercise} {path} is not a file")
+        records[exercise] = path
+    return records
+
+
+def failed_lift(runs_dir: Path, exercise: str, failure: Path, bound: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """A lift the consumer aborted: no report may exist; the message is hashed, never read into the report."""
+    present = [f"report-{exercise}-{suffix}" for _, suffix in REPORT_FILES
+               if (runs_dir / f"report-{exercise}-{suffix}").exists()]
+    require(not present, f"--consumer-failure {exercise} conflicts with existing consumer reports: {', '.join(present)}")
+    try:
+        data = failure.read_bytes()
+    except OSError as error:
+        raise ReportInputError(f"--consumer-failure {exercise} is unreadable: {error}") from error
+    require(bool(data), f"--consumer-failure {exercise} is empty; retain the consumer's message unchanged")
+    digest = hashlib.sha256(data).hexdigest()
+    require(digest not in bound, f"--consumer-failure {exercise} is byte-identical to a bound study input; its hash "
+                                 "would be published, so pass the consumer's message, not an input file")
+    return {"report": None, "reason": "consumer_failed", "consumer_failure_sha256": digest}
+
+
+def load_lift(root: Path, runs_dir: Path, exercise: str, inventory: dict[str, Any],
+              failure: Path | None = None) -> dict[str, Any]:
     lift = inventory["lifts"][exercise]
     if lift.get("pairs_file") is None:
         return {"report": None, "reason": lift.get("reason") or "no_analyzable_slots"}
     labels = pairs_labels(root, exercise, lift)
+    if failure is not None:
+        return failed_lift(runs_dir, exercise, failure, study.bound_file_hashes(inventory))
     data = {}
     for key, suffix in REPORT_FILES:
         path = runs_dir / f"report-{exercise}-{suffix}"
-        require(path.is_file(), f"required consumer report report-{exercise}-{suffix} is missing")
+        require(path.is_file(), f"required consumer report report-{exercise}-{suffix} is missing; if the consumer "
+                                f"aborted this lift, pass its retained message as --consumer-failure {exercise}=<file>")
         try:
             data[key] = path.read_bytes()
         except OSError as error:
@@ -223,11 +266,28 @@ def load_lift(root: Path, runs_dir: Path, exercise: str, inventory: dict[str, An
             "json_identical": data["run1_json"] == data["run2_json"], "md_identical": data["run1_md"] == data["run2_md"]}
 
 
-def handcheck_consistent(document: dict[str, Any], inventory_sha: str, squat_report_sha: str | None) -> bool:
-    """Bound to this inventory and squat report (null only without one), pinned consumer, frozen refs, coherent status."""
+def handcheck_consistent(document: dict[str, Any], inventory_sha: str, squat_report_sha: str | None,
+                         slot_analyzable: bool = True, squat_failure_sha: str | None = None,
+                         runs_dir: str | None = None) -> bool:
+    """Bound to this inventory and squat report (or consumer failure), pinned consumer, frozen refs, coherent status.
+
+    The report may be null when there is no squat report or S1-SQ-1 was not analyzable (never paired); a
+    recorded report must be the squat run 1 report. A recorded consumer failure must be the very message this
+    report received for back_squat, from the same runs folder, and a paired S1-SQ-1 of a failed back_squat
+    lift must record it.
+    """
     recorded_report = dig(document, "inputs", "report")
-    report_bound = (recorded_report is None if squat_report_sha is None
-                    else dig(recorded_report, "sha256") == squat_report_sha)
+    if recorded_report is None:
+        report_bound = squat_report_sha is None or not slot_analyzable
+    else:
+        report_bound = squat_report_sha is not None and dig(recorded_report, "sha256") == squat_report_sha
+    recorded_failure = dig(document, "inputs", "consumer_failure")
+    if recorded_failure is None:
+        report_bound = report_bound and (squat_failure_sha is None or not slot_analyzable)
+    else:
+        report_bound = (report_bound and squat_failure_sha is not None
+                        and dig(recorded_failure, "sha256") == squat_failure_sha
+                        and runs_dir is not None and dig(recorded_failure, "runs_dir") == runs_dir)
     public = document["public"]
     coherent = public["status"] != "passed" or (not public["reasons"] and not document.get("reasons"))
     return (dig(document, "inputs", "inventory", "sha256") == inventory_sha and report_bound
@@ -235,7 +295,9 @@ def handcheck_consistent(document: dict[str, Any], inventory_sha: str, squat_rep
             and ("freeze" not in document or document["freeze"] == study.freeze_references()) and coherent)
 
 
-def load_handcheck(path: Path, inventory_sha: str, squat_report_sha: str | None) -> dict[str, Any]:
+def load_handcheck(path: Path, inventory_sha: str, squat_report_sha: str | None,
+                   slot_analyzable: bool = True, squat_failure_sha: str | None = None,
+                   runs_dir: str | None = None) -> dict[str, Any]:
     """The only reader of the hand-check document; uses its `public` sub-object and recorded input hashes.
 
     Reasons are reduced to public tool codes; any inconsistency adds `handcheck_inputs_mismatch` (status failed).
@@ -255,7 +317,8 @@ def load_handcheck(path: Path, inventory_sha: str, squat_report_sha: str | None)
         require(type(public.get(key)) is int and public[key] >= 0, f"hand-check public {key} must be a count")
     discrepancy = public.get("max_abs_discrepancy_mps")
     require(discrepancy is None or is_number(discrepancy), "hand-check max_abs_discrepancy_mps must be a number or null")
-    inputs_match = handcheck_consistent(document, inventory_sha, squat_report_sha)
+    inputs_match = handcheck_consistent(document, inventory_sha, squat_report_sha, slot_analyzable, squat_failure_sha,
+                                        runs_dir)
     reasons = [render.public_code(item) for item in public["reasons"]]
     reasons += [] if inputs_match else ["handcheck_inputs_mismatch"]
     tool_commit = document.get("tool_commit")
@@ -332,14 +395,20 @@ def load_scale_rows(root: Path, item: Any) -> list[Any] | str:
 
 
 def private_tokens(root: Path, inventory: dict[str, Any]) -> list[str]:
-    """Private strings that must never reach the Markdown; any free text containing one is redacted."""
+    """Private strings that must never reach the Markdown; any free text containing one is redacted.
+
+    Owner-chosen names (original names, the video and WL CSV files) also count without their extension.
+    Tool-chosen file names do not, so generic words such as `slots` or `session-record` stay readable.
+    """
     tokens: set[str] = set()
 
     def add_files(files: Any) -> None:
-        for item in files.values() if isinstance(files, dict) else []:
+        for role, item in files.items() if isinstance(files, dict) else []:
             path = dig(item, "path")
             if isinstance(path, str):
                 tokens.update({path, Path(path).name, Path(path).parent.as_posix()})
+                if role in OWNER_NAMED_ROLES:
+                    tokens.add(Path(path).name.rsplit(".", 1)[0])
             if isinstance(dig(item, "sha256"), str):
                 tokens.add(item["sha256"])
 
@@ -361,8 +430,22 @@ def private_tokens(root: Path, inventory: dict[str, Any]) -> list[str]:
         owner = None
     for entry in dig(owner, "slots") or []:
         if isinstance(dig(entry, "original_name"), str):
-            tokens.add(entry["original_name"])
-    return sorted((token for token in tokens if len(token) >= REDACTION_MIN_CHARS), key=lambda token: (-len(token), token))
+            tokens.update({entry["original_name"], entry["original_name"].rsplit(".", 1)[0]})
+    return sorted((token for token in tokens if len(token) >= REDACTION_MIN_CHARS and not public_word(token)),
+                  key=lambda token: (-len(token), token))
+
+
+# Public vocabulary the report itself prints: an owner name equal to, or inside, one of these words is not
+# redacted, so a WL CSV named S1-SQ-1.csv or a video named squat.mp4 never blanks `S1-SQ-1` or `back_squat`.
+PUBLIC_VOCABULARY = tuple(sorted({word.lower() for word in (
+    *study.SLOTS, *EXERCISES, *study.FAILURE_STAGES, *(f"{stage}:{reason}" for stage, reason in render.KNOWN_FAILURES),
+    "statistics_unavailable", "consumer_failed", "no_analyzable_slots", "not_analyzable", "report_video_missing",
+    "paired_rep_incomplete", "handcheck_inputs_mismatch", "slot_not_checkable", "slot_not_analyzable")}))
+
+
+def public_word(token: str) -> bool:
+    lowered = token.lower()
+    return any(lowered in word for word in PUBLIC_VOCABULARY)
 
 
 # --- Criterion (pure) ----------------------------------------------------------------------------
@@ -523,9 +606,13 @@ def build(args: argparse.Namespace, root: Path, tool_root: Path, git: GitState, 
     inventory_sha = hashlib.sha256(inventory_data).hexdigest()
     summary, _ = read_json(args.lock_summary, "lock summary")
     check_lock_summary(summary, inventory_sha)
-    lifts = {exercise: load_lift(root, args.runs_dir, exercise, inventory) for exercise in EXERCISES}
+    failures = consumer_failures(root, getattr(args, "consumer_failure", None), inventory)
+    lifts = {exercise: load_lift(root, args.runs_dir, exercise, inventory, failures.get(exercise))
+             for exercise in EXERCISES}
     squat = lifts["back_squat"]
-    handcheck = load_handcheck(args.handcheck, inventory_sha, dig(squat, "hashes", "run1_json"))
+    slot = inventory["slots"][study.SLOTS.index(study.HANDCHECK_SLOT)]
+    handcheck = load_handcheck(args.handcheck, inventory_sha, dig(squat, "hashes", "run1_json"), slot["analyzable"],
+                               squat.get("consumer_failure_sha256"), study.repo_relative(args.runs_dir, root))
     tool_commit, tool_clean = tool_git(tool_root)
     tool = {"commit": tool_commit, "tree_clean": tool_clean, "lock_commit": summary.get("tool_commit"),
             "handcheck_commit": handcheck["tool_commit"]}
@@ -560,6 +647,8 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT, tool_root: Path = 
     parser.add_argument("--runs-dir", type=Path, required=True,
                         help="folder with report-<exercise>-run1/run2 .json and .md per lift with a pairs file")
     parser.add_argument("--handcheck", type=Path, required=True, help="private S1-SQ-1 hand-check JSON")
+    parser.add_argument("--consumer-failure", action="append", metavar="EXERCISE=FILE",
+                        help="retained message of a consumer run that aborted that lift (no reports); repeatable")
     parser.add_argument("--consumer-app", type=Path, required=True, help="pinned consumer app/ folder")
     parser.add_argument("--output", type=Path, required=True, help="new .md under docs/analysis/ or target/")
     args = parser.parse_args(argv)

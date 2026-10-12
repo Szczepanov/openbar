@@ -1,9 +1,11 @@
-"""#79 inventory: tool-tree lock rule, session status boundary, session/order checks, malformed inputs."""
+"""#79 inventory: tool-tree lock rule, process boundaries, session/order/date checks, inputs, verify."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,9 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import agreement79_inventory as inventory  # noqa: E402
+import agreement79_report_render as render  # noqa: E402
 import agreement79_slot_evidence as evidence  # noqa: E402
 import agreement79_study as study  # noqa: E402
-from test_agreement79_inventory import COMMIT, SESSION_IDS, InventoryTestCase  # noqa: E402
+from test_agreement79_inventory import (  # noqa: E402
+    COMMIT, DERIVED_CASES, SESSION_DATES, SESSION_IDS, InventoryTestCase)
 
 
 class ToolTreeTests(InventoryTestCase):
@@ -167,6 +171,178 @@ class SlotOrderTests(InventoryTestCase):
         self.assertEqual(self.order_flagged(self.inventory_ok()), set())
 
 
+class SessionDateTests(InventoryTestCase):
+    """H1: sessions sharing a day are non-conforming (C1 fails), never an abort; the inventory still locks."""
+
+    FLAG = "protocol:session_dates_not_distinct"
+
+    def test_two_sessions_on_one_day_flag_both_sessions_and_still_lock(self) -> None:
+        for slot in study.SLOTS[6:12]:
+            self.fake.slot(slot)["session_date"] = SESSION_DATES[0]
+        document = self.inventory_ok()
+        for slot in study.SLOTS:
+            entry = self.slot_of(document, slot)
+            self.assertEqual(self.FLAG in self.failures(document, slot), not slot.startswith("S3-"), slot)
+            self.assertTrue(entry["analyzable"], slot)
+            self.assertEqual(entry["protocol_conforming"], slot.startswith("S3-"), slot)
+        self.assertEqual({item["source"] for item in self.slot_of(document, "S2-SQ-1")["failures"]}, {"derived"})
+        self.assertTrue(document["lockable"])
+        self.assertEqual(document["counts"]["protocol_conforming"], 6)
+        out = self.fake.study_dir / "out"
+        self.assertEqual(sorted(path.name for path in out.iterdir()),
+                         ["inventory.json", "lock-summary.json", "pairs-back_squat.json", "pairs-clean.json",
+                          "pairs-snatch.json"])
+
+    def test_three_sessions_on_one_day_flag_every_enrolled_slot(self) -> None:
+        for slot in study.SLOTS:
+            self.fake.slot(slot)["session_date"] = SESSION_DATES[0]
+        self.fake.slot("S3-CL-2").update(fixture_id=None, protocol_failures=[{"stage": "transfer", "reason": "lost"}])
+        self.fake.clips["S3-CL-2"]["fixture_id"] = None
+        self.fake.slots_doc["slots"][study.SLOTS.index("S2-SN-2")] = {
+            "slot": "S2-SN-2", "status": "not_recorded", "protocol_failures": [{"stage": "recording", "reason": "x"}]}
+        document = self.inventory_ok()
+        for slot in study.SLOTS:
+            self.assertEqual(self.FLAG in self.failures(document, slot), slot != "S2-SN-2", slot)
+        self.assertEqual(document["counts"]["protocol_conforming"], 0)
+
+    def test_distinct_days_are_not_flagged(self) -> None:
+        document = self.inventory_ok()
+        self.assertFalse(any(self.FLAG in self.failures(document, slot) for slot in study.SLOTS))
+
+
+class CreationTimeProbeTests(unittest.TestCase):
+    """M3: only ffprobe exit 0 without the tag is a recorded failure; any other outcome is exit 3."""
+
+    def probe(self, result: subprocess.CompletedProcess | Exception) -> str | None:
+        effect = result if isinstance(result, Exception) else None
+        with mock.patch.object(evidence.subprocess, "run", side_effect=effect, return_value=result) as run:
+            value = evidence.ffprobe_creation_time(Path("/v.mp4"))
+        self.assertEqual(run.call_args.args[0][0], "ffprobe")
+        return value
+
+    def test_tag_is_returned(self) -> None:
+        stdout = b'{"format": {"tags": {"creation_time": "2026-10-11T10:00:00.000000Z"}}}\n'
+        self.assertEqual(self.probe(completed(0, stdout)), "2026-10-11T10:00:00.000000Z")
+
+    def test_exit_zero_without_the_tag_is_none(self) -> None:
+        for stdout in (b'{"format": {}}', b'{"format": {"tags": {}}}', b"{}", b"[]",
+                       b'{"format": {"tags": {"creation_time": 5}}}'):
+            with self.subTest(stdout):
+                self.assertIsNone(self.probe(completed(0, stdout)))
+
+    def test_non_zero_exit_is_infrastructure(self) -> None:
+        for code in (1, 2, -9):
+            with self.subTest(code), self.assertRaises(study.StudyInfrastructureError):
+                self.probe(completed(code, b"", b"v.mp4: Invalid data found when processing input\n"))
+
+    def test_undecodable_output_or_no_ffprobe_is_infrastructure(self) -> None:
+        for result in (completed(0, b"{oops"), completed(0, b"\xff"), OSError("no ffprobe")):
+            with self.subTest(result), self.assertRaises(study.StudyInfrastructureError):
+                self.probe(result)
+
+
+class EscapingFileTests(InventoryTestCase):
+    """SEC2: a bound file resolving outside --root is a clean input error (exit 1), never a traceback."""
+
+    def test_hashed_file_outside_the_root_is_an_input_error(self) -> None:
+        with tempfile.TemporaryDirectory() as other:
+            outside = Path(other).resolve() / "x.json"
+            outside.write_bytes(b"{}")
+            with self.assertRaises(study.StudyInputError):
+                evidence.hashed(self.root, outside)
+
+    def test_symlinked_run_output_escaping_the_root_exits_1(self) -> None:
+        slots_path = self.fake.write()
+        analysis = next((self.fake.private / "sessions/sess-alpha/analyses").glob("*0001.opencv-csrt.analysis-v1.json"))
+        with tempfile.TemporaryDirectory() as other:
+            outside = Path(other).resolve() / "analysis.json"
+            outside.write_bytes(analysis.read_bytes())
+            analysis.unlink()
+            try:
+                analysis.symlink_to(outside)
+            except OSError as error:  # Windows without the symlink privilege (WinError 1314)
+                self.skipTest(f"symlinks unavailable: {error}")
+            code, _, err = self.fake.main(self.fake.argv(slots_path))
+        self.assertEqual(code, 1, err)
+        self.assertIn("outside", err)
+        self.assertNotIn("Traceback", err)
+        self.assertFalse((self.fake.study_dir / "out").exists())
+
+
+class DerivedCodeAllowListTests(unittest.TestCase):
+    """L6: every derived failure code the inventory emits is on the report's closed allow-list."""
+
+    CROSS_SLOT = {"novelty:duplicate_of_slot:S3-CL-2", "processing:session_status_failed",
+                  "processing:not_processed", "processing:openbar_parser_rejected", "wl_export:wl_parser_rejected",
+                  "protocol:environment_mismatch", "protocol:session_has_unenrolled_clip",
+                  "protocol:slot_order_violation", "protocol:session_dates_not_distinct",
+                  "novelty:session_date_before_freeze", "processing:method_mismatch:run_record_sha256",
+                  "processing:run_output_mismatch:analysis", "processing:run_output_mismatch:prediction",
+                  "assessment:processing_unknown", "assessment:mechanical_unknown"}
+
+    def test_derived_codes_render_verbatim(self) -> None:
+        codes = {code for _, _, expected, _ in DERIVED_CASES for code in expected} | self.CROSS_SLOT
+        for code in sorted(codes):
+            stage, reason = code.split(":", 1)
+            with self.subTest(code):
+                self.assertEqual(render.public_failure({"stage": stage, "reason": reason, "source": "derived"}), code)
+
+
+class LinkedInputTests(InventoryTestCase):
+    """Review M1: a recorded input behind a symlink or junction is invalid input (exit 1), never 'missing'."""
+
+    def make_dir_link(self, link: Path, target: Path) -> None:
+        """A directory link (Windows junction, else symlink), removed before the temporary tree is deleted."""
+        try:
+            if sys.platform == "win32":
+                import _winapi
+                _winapi.CreateJunction(str(target), str(link))
+            else:
+                os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError) as error:
+            self.skipTest(f"directory links not permitted here: {error}")
+        self.addCleanup(lambda: os.path.lexists(link) and (os.rmdir if sys.platform == "win32" else os.unlink)(link))
+
+    def relink_wl(self, relative: str) -> tuple[int, str]:
+        self.fake.slot("S1-SQ-1")["wl_csv"] = relative
+        slots_path = self.fake.study_dir / "slots.json"
+        slots_path.write_bytes(json.dumps(self.fake.slots_doc, indent=2).encode("utf-8"))
+        code, _, err = self.fake.main(self.fake.argv(slots_path))
+        return code, err
+
+    def test_recorded_path_contract_for_plain_absent_and_non_canonical_spellings(self) -> None:
+        self.fake.write()
+        for value in ("validation/private/vbt/wl/./S1-SQ-1.csv", "../outside.csv", "validation\\private\\x.csv",
+                      "", None):
+            with self.subTest(value):
+                self.assertIsNone(study.recorded_path(self.root, value))
+        for value in ("validation/private/vbt/wl/S1-SQ-1.csv", "validation/private/vbt/wl/absent.csv"):
+            with self.subTest(value):  # an absent file keeps its path; callers record it as missing
+                self.assertEqual(study.recorded_path(self.root, value), self.root / value)
+
+    def test_input_behind_a_junction_is_refused_even_inside_the_root(self) -> None:
+        self.fake.write()
+        self.make_dir_link(self.fake.private / "wl-link", self.fake.private / "wl")
+        with self.assertRaises(study.StudyInputError):
+            study.recorded_path(self.root, "validation/private/vbt/wl-link/S1-SQ-1.csv")
+        code, err = self.relink_wl("validation/private/vbt/wl-link/S1-SQ-1.csv")
+        self.assertEqual(code, 1, err)
+        self.assertIn("link", err)
+        self.assertNotIn("Traceback", err)
+        self.assertFalse((self.fake.study_dir / "out").exists())
+
+    def test_input_that_is_a_file_symlink_is_refused(self) -> None:
+        self.fake.write()
+        link = self.fake.private / "wl" / "linked.csv"
+        try:
+            link.symlink_to(self.fake.private / "wl" / "S1-SQ-1.csv")
+        except OSError as error:  # Windows without the symlink privilege (WinError 1314)
+            self.skipTest(f"symlinks unavailable: {error}")
+        code, err = self.relink_wl("validation/private/vbt/wl/linked.csv")
+        self.assertEqual(code, 1, err)
+        self.assertIn("link", err)
+
+
 class MalformedInputTests(InventoryTestCase):
     """M6: unresolvable paths and malformed inventories are clean input errors (exit 1)."""
 
@@ -209,6 +385,82 @@ class FrozenOptionsTests(unittest.TestCase):
     def test_frozen_analyze_options_equal_the_workflow_preset(self) -> None:
         """The literal frozen list must not drift from the preset the workflow runs."""
         self.assertEqual(study.ANALYZE_OPTIONS, list(study.workflow.PRESETS[study.PRESET]))
+
+    def test_preregistration_main_commit_is_a_full_commit(self) -> None:
+        """L2: the merge commit of #166 on main, spelled in full like every other recorded commit."""
+        self.assertEqual(study.PREREGISTRATION_MAIN_COMMIT, "c6a58b5649ceb089cd4c3d8c180c0996b2f4b33f")
+        self.assertIsNotNone(study.COMMIT_RE.fullmatch(study.freeze_references()["preregistration_main_commit"]))
+
+
+class VerifyTests(InventoryTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.inventory_ok()
+        self.out = self.fake.study_dir / "out"
+
+    def verify(self, *extra: str) -> tuple[int, str, str]:
+        return self.fake.main(["verify", "--inventory", str(self.out / "inventory.json"), *extra])
+
+    def test_untouched_inputs_verify(self) -> None:
+        result = inventory.verify(self.out / "inventory.json", root=self.root)
+        self.assertTrue(result["inputs_unchanged"])
+        self.assertTrue(result["inventory_matches_lock_summary"])
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["mismatches"], result["mismatch_count"]), ([], 0))
+        self.assertEqual(result["checked"], 18 * 9 + 3 * 6 + 1 + 3 + 1)
+        code, out, _ = self.verify("--lock-summary", str(self.out / "lock-summary.json"))
+        self.assertEqual(code, 0)
+        self.assertIn("ok", out)
+
+    def test_modified_input_file_is_detected(self) -> None:
+        wl = self.root / "validation/private/vbt/wl/S2-CL-1.csv"
+        wl.write_bytes(wl.read_bytes() + b"1,2\n")
+        result = inventory.verify(self.out / "inventory.json", root=self.root)
+        self.assertFalse(result["ok"] or result["inputs_unchanged"])
+        self.assertEqual([item["path"] for item in result["mismatches"]], ["validation/private/vbt/wl/S2-CL-1.csv"])
+        code, out, _ = self.verify()
+        self.assertEqual(code, 1)
+        self.assertIn("S2-CL-1.csv", out)
+
+    def test_deleted_input_file_is_detected(self) -> None:
+        (self.out / "pairs-clean.json").unlink()
+        result = inventory.verify(self.out / "inventory.json", root=self.root)
+        self.assertEqual(result["mismatches"][0]["actual"], None)
+        self.assertFalse(result["ok"])
+
+    def test_modified_inventory_is_detected(self) -> None:
+        path = self.out / "inventory.json"
+        path.write_bytes(path.read_bytes().replace(b'"lockable": true', b'"lockable": false'))
+        result = inventory.verify(path, root=self.root)
+        self.assertTrue(result["inputs_unchanged"])
+        self.assertFalse(result["inventory_matches_lock_summary"] or result["ok"])
+        self.assertEqual(self.verify()[0], 1)
+
+    def test_missing_lock_summary_fails(self) -> None:
+        (self.out / "lock-summary.json").unlink()
+        self.assertEqual(self.verify()[0], 1)
+
+
+class DataRootTests(InventoryTestCase):
+    """The evidence checkout must be the clean pinned baseline; the tool checkout is recorded separately."""
+
+    def test_data_root_at_other_commit_is_refused(self) -> None:
+        code, _, err = self.fake.run(git=lambda root: ("e" * 40, True))
+        self.assertEqual(code, 1)
+        self.assertIn("pinned baseline", err)
+        self.assertFalse((self.fake.study_dir / "out").exists())
+
+    def test_dirty_data_root_is_refused(self) -> None:
+        code, _, err = self.fake.run(git=lambda root: (study.OPENBAR_BASELINE_COMMIT, False))
+        self.assertEqual(code, 1)
+        self.assertIn("tracked files clean: False", err)
+
+    def test_root_option_selects_the_data_checkout(self) -> None:
+        slots_path = self.fake.write()
+        argv = ["inventory", "--root", str(self.root), *self.fake.argv(slots_path, "via-option")[1:]]
+        code, _, err = self.fake.main(argv, root=Path(self.root.anchor))
+        self.assertEqual(code, 0, err)
+        self.assertTrue((self.fake.study_dir / "via-option" / "inventory.json").exists())
 
 
 if __name__ == "__main__":

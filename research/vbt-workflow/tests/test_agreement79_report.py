@@ -219,7 +219,8 @@ class FakeStudy:
 
     handcheck_rel = "validation/private/vbt/study-79/handcheck-zzpriv.json"
 
-    def run(self, output: str = "docs/analysis/AGREEMENT_79.md", write: bool = True, **argv: str) -> tuple[int, str]:
+    def run(self, output: str = "docs/analysis/AGREEMENT_79.md", write: bool = True, extra: tuple[str, ...] = (),
+            **argv: str) -> tuple[int, str]:
         if write:
             self.write()
         args = {"--inventory": str(self.lock_dir / "inventory.json"), "--lock-summary": str(self.lock_dir / "lock-summary.json"),
@@ -227,7 +228,7 @@ class FakeStudy:
                 "--consumer-app": str(self.root.parent / "consumer/app"), "--output": str(self.tool / output), **argv}
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = report_tool.main([item for pair in args.items() for item in pair], root=self.root,
+            code = report_tool.main([*(item for pair in args.items() for item in pair), *extra], root=self.root,
                                     tool_root=self.tool, git=lambda app: self.git_state, node=self.node,
                                     tool_git=lambda root: self.tool_state())
         return code, stdout.getvalue() + stderr.getvalue()
@@ -444,11 +445,13 @@ class ReportCommandTests(Base):
 class PrivacyTests(Base):
     def test_markdown_carries_no_private_strings(self) -> None:
         self.fx.owner_failures = {"S2-CL-2": [{"stage": "protocol", "reason":
-                                               f"seed late in {ORIGINAL.format(16)} ({SESSION_IDS[1]}, {SESSION_DATES[1]}) | <b>"}]}
+                                               f"seed late in {ORIGINAL.format(16)} ({SESSION_IDS[1]}, {SESSION_DATES[1]}) | <b>"}],
+                                  "S3-SN-1": [{"stage": "reference", "reason": "zzpriv_original_07_stick_moved"}]}
         self.fx.handcheck_patch = lambda d: (d.update(status="failed"), d["public"].update(
             status="failed", reasons=[f"window_contains_null at {fixture_id('S1-SQ-1')}"]))
         text = self.run_ok()
         self.assertIn("S2-CL-2: protocol:[owner note]", text)
+        self.assertIn("S3-SN-1: reference:[owner note]", text)
         self.assertIn("- Reasons: [unrecognized reason]", text)
         forbidden = ["zzpriv", "ZZPRIV", "validation/private", ".csv", ".json", ".MOV", "c0ffee", "T09:08:07",
                      str(REP_WL), str(REP_OPENBAR), "0.912345", "-0.011111", "5" * 64, "6" * 64,
@@ -517,6 +520,27 @@ class BindingTests(Base):
         self.assertNotIn("handcheck_inputs_mismatch", text)
         self.assertIn("- Bound to this inventory and the back_squat run 1 report: yes", text)
 
+    def test_handcheck_report_null_is_accepted_whenever_the_slot_is_not_analyzable(self) -> None:
+        # L1: back_squat still has a pairs file and reports, but S1-SQ-1 itself was never paired.
+        self.fx.slot("S1-SQ-1")["analyzable"] = False
+
+        def not_analyzable(document: dict) -> None:
+            document.update(status="failed", reasons=["slot_not_analyzable"])
+            document["inputs"]["report"] = None
+            document["public"].update(status="failed", reasons=["slot_not_analyzable"], values_compared=0,
+                                      values_matched=0, max_abs_discrepancy_mps=None)
+        self.fx.handcheck_patch = not_analyzable
+        text = self.run_ok()
+        self.assertTrue((self.fx.runs / "report-back_squat-run1.json").exists())
+        self.assertIn("handcheck_failed: slot_not_analyzable", text)
+        self.assertNotIn("handcheck_inputs_mismatch", text)
+        self.assertIn("- Bound to this inventory and the back_squat run 1 report: yes", text)
+
+    def test_handcheck_report_of_a_non_analyzable_slot_must_still_match_when_recorded(self) -> None:
+        self.fx.slot("S1-SQ-1")["analyzable"] = False
+        self.fx.handcheck_patch = lambda d: d["inputs"]["report"].update(sha256="0" * 64)
+        self.assertIn("handcheck_inputs_mismatch", self.run_ok())
+
     def test_method_config_differing_across_lifts_fails_c3(self) -> None:
         self.fx.report_patch = {"snatch": lambda r: r.update(openBarMethodConfigSha256="8" * 64)}
         text = self.run_ok()
@@ -571,13 +595,19 @@ class HelperTests(unittest.TestCase):
         self.assertEqual((loaded["status"], loaded["reasons"], loaded["inputs_match"], loaded["tool_commit"]),
                          ("passed", [], True, TOOL_COMMIT))
 
-    def test_public_owner_text_rule(self) -> None:
-        self.assertEqual(render.public_failure({"stage": "protocol", "reason": "late_seed:2.v-1"}),
-                         "protocol:late_seed:2.v-1")
-        for reason in ("Late seed", "seed in IMG_1.MOV", "a|b", "", None, "late\nseed"):
-            with self.subTest(reason=reason):
-                self.assertEqual(render.public_failure({"stage": "protocol", "reason": reason}), "protocol:[owner note]")
-        self.assertEqual(render.public_failure({"stage": "Protocol!", "reason": "x"}), "[owner note]:x")
+    def test_public_failure_renders_only_allow_listed_codes(self) -> None:
+        def owner(stage: Any, reason: Any) -> str:
+            return render.public_failure({"stage": stage, "reason": reason, "source": "owner"})
+        self.assertEqual(owner("protocol", "environment_mismatch"), "protocol:environment_mismatch")
+        for reason in ("late_seed", "late_seed:2.v-1", "img_0042_moved", "ENVIRONMENT_MISMATCH", "Late seed",
+                       "seed in IMG_1.MOV", "a|b", "", None, "late\nseed", "slot_order_violation"):
+            with self.subTest(reason=reason):  # slot_order_violation is a protocol code, not a reference one
+                self.assertEqual(owner("reference", reason), "reference:[owner note]")
+        self.assertEqual(owner("Protocol!", "environment_mismatch"), "[owner note]:[owner note]")
+        derived = {"stage": "novelty", "reason": "duplicate_of_slot:S1-SQ-2", "source": "derived"}
+        self.assertEqual(render.public_failure(derived), "novelty:duplicate_of_slot:S1-SQ-2")
+        self.assertEqual(render.public_failure(dict(derived, stage="processing", reason="method_mismatch:x")),
+                         f"processing:{render.UNRECOGNIZED}")
         self.assertEqual(render.public_wl_version("5.1 (build 77)"), "5.1 (build 77)")
         for version in ("5.1/build", "x" * 41, "", None, "v<b>", "5.1\n"):
             with self.subTest(version=version):
@@ -593,8 +623,45 @@ class HelperTests(unittest.TestCase):
                 self.assertEqual(render.js_number(value), expected)
 
     def test_redaction_and_escaping(self) -> None:
-        cells = render.Cells(["secret-session"])
+        cells = render.Cells(["secret-session", "a.b"])
         self.assertEqual(cells.text("a|b <c>\nsecret-session"), "a\\|b &lt;c&gt; [redacted]")
+        self.assertEqual(cells.text("Secret-SESSION, A.B and axb"), "[redacted], [redacted] and axb")
+
+    def test_private_tokens_include_owner_file_names_without_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = FakeStudy(Path(tmp).resolve())
+            fx.write()
+            tokens = report_tool.private_tokens(fx.root, study.load_json(fx.lock_dir / "inventory.json"))
+        self.assertIn("ZZPRIV_ORIGINAL_16", tokens)
+        self.assertIn("zzpriv-wl-S1-SQ-1", tokens)
+        for generic in ("session-record", "scale-reference-v1", "slots", "pairs-snatch"):
+            self.assertNotIn(generic, tokens)  # tool-named files stay readable in codes and reasons
+        self.assertEqual(render.Cells(tokens).text("seen zzpriv_original_16 twice"), "seen [redacted] twice")
+
+    def test_public_vocabulary_is_never_a_redaction_token(self) -> None:
+        # Review M2: owner names equal to (or inside) slot ids, lift names, stages or codes must not blank them.
+        with tempfile.TemporaryDirectory() as tmp:
+            fx = FakeStudy(Path(tmp).resolve())
+            fx.write()
+            inventory = study.load_json(fx.lock_dir / "inventory.json")
+            files = inventory["slots"][0]["files"]
+            files["wl_csv"]["path"] = "validation/private/vbt/wl/S1-SQ-1.csv"
+            files["video"] = {"path": "validation/private/vbt/media/squat.mp4", "sha256": "9" * 64}
+            inventory["slots"][1]["files"]["video"] = {"path": "validation/private/vbt/media/Clean.MOV",
+                                                       "sha256": "8" * 64}
+            owner = {"slots": [{"slot": "S1-SQ-1", "original_name": "clean.mov"},
+                               {"slot": "S1-SQ-2", "original_name": "IMG_0042.MOV"},
+                               {"slot": "S1-SN-1", "original_name": "Protocol.mov"}]}
+            (fx.root / inventory["slots_file"]["path"]).write_bytes(study.serialize(owner))
+            tokens = report_tool.private_tokens(fx.root, inventory)
+        lowered = {token.lower() for token in tokens}
+        for public in ("s1-sq-1", "squat", "clean", "protocol"):
+            self.assertNotIn(public, lowered)
+        self.assertIn("IMG_0042", tokens)
+        self.assertIn("squat.mp4", tokens)  # the full file name still is private
+        text = "back_squat: S1-SQ-1: protocol:environment_mismatch; clean: IMG_0042 img_0042.mov"
+        self.assertEqual(render.Cells(tokens).text(text),
+                         "back_squat: S1-SQ-1: protocol:environment_mismatch; clean: [redacted] [redacted]")
 
     def test_render_is_pure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

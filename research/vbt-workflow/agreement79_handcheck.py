@@ -10,7 +10,9 @@ window, and compares the rounded values exactly to the parser and to the back_sq
 
 Recorded inventory paths resolve against `--root` (the pinned data checkout); command-line paths are used
 as given. `--report` may be omitted only when S1-SQ-1 was not paired (not analyzable, or no back_squat
-pairs file); the result is then `failed` with `slot_not_analyzable`. The tool checkout's commit is
+pairs file); the result is then `failed` with `slot_not_analyzable`. If the consumer aborted back_squat, its
+retained message (`--consumer-failure back_squat=<file>`, hashed only) replaces `--report`, and a paired
+S1-SQ-1 is recorded `failed` with `slot_not_checkable:consumer_failed`. The tool checkout's commit is
 recorded and must be tracked-clean. The output is private and written once. Exit 0 written (passed or
 failed), 1 invalid input (including a dirty tool checkout), 3 infrastructure (consumer checkout not the
 clean pinned commit, git/node/bridge unavailable; nothing written).
@@ -246,8 +248,11 @@ def consumer_metrics(velocities: list[float], y_start_m: float, y_end_m: float, 
     for velocity in velocities:  # explicit loop: Python's sum() of floats is compensated, JS reduce is not
         total += velocity
     rom_cm = (y_end_m - y0_m) * 100 - (y_start_m - y0_m) * 100
-    return {"meanVelocityMps": study.js_round(total / len(velocities), 1000),
-            "peakVelocityMps": study.js_round(max(velocities), 1000), "romCm": study.js_round(rom_cm, 100)}
+    try:
+        return {"meanVelocityMps": study.js_round(total / len(velocities), 1000),
+                "peakVelocityMps": study.js_round(max(velocities), 1000), "romCm": study.js_round(rom_cm, 100)}
+    except ValueError as error:  # finite inputs whose sum or scaling overflows: unusable analysis (exit 1)
+        raise study.StudyInputError(f"window metrics cannot be rounded: {error}") from error
 
 
 def velocity_check(series: dict[str, Any]) -> tuple[dict[str, Any], list[float | None] | None, list[str]]:
@@ -360,10 +365,16 @@ def hashed_input(root: Path, path: Path) -> dict[str, str]:
 
 
 def evaluate(root: Path, slot: dict[str, Any], report: dict[str, Any] | None, app: Path,
-             bridge: Bridge) -> dict[str, Any]:
-    """Every check after the inputs are valid; the bridge runs only for a paired, hash-bound analysis."""
+             bridge: Bridge, consumer_failed: bool = False) -> dict[str, Any]:
+    """Every check after the inputs are valid; the bridge runs only for a paired, hash-bound analysis.
+
+    A paired slot whose consumer run aborted is recorded as not checkable: no values, never a substitute slot.
+    """
     result: dict[str, Any] = {"reasons": [], "reps": [], "velocity_check": None, "parser": None,
                               "analysis": None, "compared": 0, "matched": 0}
+    if report_expected(slot) and consumer_failed:
+        result["reasons"].append("slot_not_checkable:consumer_failed")
+        return result
     if not report_expected(slot) or report is None:
         result["reasons"].append("slot_not_analyzable")
         return result
@@ -405,7 +416,7 @@ def evaluate(root: Path, slot: dict[str, Any], report: dict[str, Any] | None, ap
 
 
 def document(root: Path, args: argparse.Namespace, slot: dict[str, Any], commits: dict[str, Any],
-             result: dict[str, Any]) -> dict[str, Any]:
+             result: dict[str, Any], consumer_failure: dict[str, str] | None = None) -> dict[str, Any]:
     reasons = list(result["reasons"])
     reasons += [f"pairing_review_{args.pairing_review}"] if args.pairing_review != "confirmed" else []
     reasons += ([f"seed_reference_review_{args.seed_reference_review}"]
@@ -421,7 +432,7 @@ def document(root: Path, args: argparse.Namespace, slot: dict[str, Any], commits
         "reviews": {"pairing": args.pairing_review, "seed_reference": args.seed_reference_review},
         **commits, "freeze": study.freeze_references(), "vy_tolerance_mps": VY_TOLERANCE_MPS,
         "inputs": {"analysis": analysis, "report": None if args.report is None else hashed_input(root, args.report),
-                   "inventory": hashed_input(root, args.inventory)},
+                   "inventory": hashed_input(root, args.inventory), "consumer_failure": consumer_failure},
         "parser": result["parser"], "velocity_check": check, "reps": result["reps"],
         "public": {"status": status, "reasons": reasons, "values_compared": result["compared"],
                    "values_matched": result["matched"], "max_abs_discrepancy_mps": worst},
@@ -450,6 +461,10 @@ def parse_args(argv: list[str] | None, root: Path) -> argparse.Namespace:
     parser.add_argument("--consumer-app", type=Path, required=True, help="pinned consumer app/ directory")
     parser.add_argument("--report", type=Path,
                         help="back_squat run-1 velocity-agreement JSON (required when S1-SQ-1 was paired)")
+    parser.add_argument("--consumer-failure", metavar="back_squat=FILE",
+                        help="retained message of a consumer run that aborted back_squat (instead of --report)")
+    parser.add_argument("--runs-dir", type=Path,
+                        help="consumer runs folder; with --consumer-failure it must hold no back_squat report")
     parser.add_argument("--pairing-review", choices=REVIEWS, required=True,
                         help="pairing of the three reps verified against the video")
     parser.add_argument("--seed-reference-review", choices=REVIEWS, required=True,
@@ -458,11 +473,45 @@ def parse_args(argv: list[str] | None, root: Path) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def load_consumer_failure(root: Path, args: argparse.Namespace, slot: dict[str, Any],
+                          inventory: Any = None) -> dict[str, str] | None:
+    """``--consumer-failure back_squat=<file>``: the retained message of a consumer run that aborted back_squat.
+
+    Mirrors the report tool: a non-empty file inside the data checkout that is not a bound study input, only
+    for a back_squat pairs file, and only when ``--runs-dir`` holds none of that lift's run files. It replaces
+    ``--report``; its path, hash and the runs folder are recorded so the report can bind the same run.
+    """
+    if args.consumer_failure is None:
+        require(args.runs_dir is None, "--runs-dir only applies together with --consumer-failure")
+        return None
+    require(args.report is None, "--report and --consumer-failure exclude each other: an aborted lift has no report")
+    exercise, separator, raw = args.consumer_failure.partition("=")
+    require(bool(separator) and exercise == "back_squat",
+            f"--consumer-failure must be back_squat=<file>: {study.HANDCHECK_SLOT} is a back_squat slot")
+    require(slot["pairs_file"], "back_squat has no pairs file, so no consumer ran; --consumer-failure does not apply")
+    require(args.runs_dir is not None, "--consumer-failure needs --runs-dir to confirm back_squat has no reports")
+    runs_dir = workflow.safe_resolve(args.runs_dir)
+    require(workflow.is_within(runs_dir, root) and runs_dir.is_dir(),
+            f"--runs-dir must be a folder inside the data checkout {root}")
+    present = [f"report-back_squat-{suffix}" for suffix in study.CONSUMER_RUN_FILES
+               if (runs_dir / f"report-back_squat-{suffix}").exists()]
+    require(not present, f"--consumer-failure conflicts with existing consumer reports: {', '.join(present)}")
+    path = workflow.safe_resolve(Path(raw))
+    require(workflow.is_within(path, root), f"--consumer-failure must be inside the data checkout {root}")
+    require(path.is_file(), f"--consumer-failure {path} is not a file")
+    require(path.stat().st_size > 0, "--consumer-failure is empty; retain the consumer's message unchanged")
+    record = hashed_input(root, path)
+    require(record["sha256"] not in study.bound_file_hashes(inventory),
+            "--consumer-failure is byte-identical to a bound study input; pass the consumer's message, not an input")
+    return {**record, "runs_dir": study.repo_relative(runs_dir, root)}
+
+
 def load_report(args: argparse.Namespace, slot: dict[str, Any]) -> dict[str, Any] | None:
     """The back_squat run-1 report; it may be absent only when S1-SQ-1 was not paired."""
     if args.report is None:
         require(not report_expected(slot), f"--report is required: {study.HANDCHECK_SLOT} is analyzable and "
-                                           "back_squat has a pairs file")
+                                           "back_squat has a pairs file (if the consumer aborted back_squat, pass "
+                                           "--consumer-failure back_squat=<file> --runs-dir <runs> instead)")
         return None
     report = load_document(args.report, "report")
     report_rows(report)
@@ -477,16 +526,18 @@ def main(argv: list[str] | None = None, *, root: Path = ROOT, tool_root: Path = 
         args.inventory, args.output = workflow.safe_resolve(args.inventory), workflow.safe_resolve(args.output)
         args.report = None if args.report is None else workflow.safe_resolve(args.report)
         check_paths(root, args)
-        slot = load_slot(root, load_document(args.inventory, "inventory"))
-        report = load_report(args, slot)
+        inventory = load_document(args.inventory, "inventory")
+        slot = load_slot(root, inventory)
+        failure = load_consumer_failure(root, args, slot, inventory)
+        report = None if failure is not None else load_report(args, slot)
         consumer_commit = verify_consumer(args.consumer_app, git)
         tool_commit, tool_clean = verify_tool(tool_root, git)
         require(tool_commit == slot["lock_tool_commit"],
                 f"the hand-check must run from the tool commit recorded in the lock ({slot['lock_tool_commit']}); "
                 f"this checkout is at {tool_commit}")
-        result = evaluate(root, slot, report, args.consumer_app, bridge)
+        result = evaluate(root, slot, report, args.consumer_app, bridge, failure is not None)
         commits = {"consumer_commit": consumer_commit, "tool_commit": tool_commit, "tool_tree_clean": tool_clean}
-        output = document(root, args, slot, commits, result)
+        output = document(root, args, slot, commits, result, failure)
         study.write_new(args.output, study.serialize(output))
     except (study.StudyInputError, workflow.WorkflowError, FileExistsError) as error:
         print(f"error: {error}", file=sys.stderr)

@@ -1,7 +1,9 @@
 """#79 S1-SQ-1 hand-check: synthetic temp-dir data only; bridge and git checker are injected."""
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -190,6 +192,18 @@ class HandcheckTests(unittest.TestCase):
         self.assert_failed(result)
         self.assertEqual((result['reps'], result['velocity_check']), ([], None))
         self.assertEqual(self.fx.bridge_calls, 0)
+
+    def test_window_sum_overflowing_to_infinity_exits_1_cleanly(self) -> None:
+        # L5: finite vy whose left-to-right sum overflows cannot be rounded; invalid input, not a traceback.
+        for sample in self.fx.analysis['derived']['kinematics']['samples'][1:4]:
+            sample['vy_mps'] = 1.7e308
+        self.fx.write()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.fx.run(), 1)
+        self.assertIn('error:', stderr.getvalue())
+        self.assertIn('cannot be rounded', stderr.getvalue())
+        self.assertFalse(self.fx.output.exists())
 
     def test_report_may_be_absent_when_slot_not_analyzable(self) -> None:
         self.fx.analyzable = False

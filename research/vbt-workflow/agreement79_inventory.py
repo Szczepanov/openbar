@@ -114,18 +114,22 @@ def valid_date(value: Any) -> bool:
     return True
 
 
-def check_sessions(slots: list[dict[str, Any]]) -> None:
-    """Slots of session k share one id and date; the sessions' ids and dates are distinct."""
-    identities = {}
+def session_identities(slots: list[dict[str, Any]]) -> dict[int, tuple[str, str]]:
+    """(session_id, session_date) per session number; inconsistent or shared ids are invalid input.
+
+    Shared dates are not an input error: they are a recorded protocol failure (see ``session_dates``).
+    """
+    identities: dict[int, set[tuple[str, str]]] = {}
     for entry in slots:
         if entry["status"] == "enrolled":
             identities.setdefault(study.slot_session(entry["slot"]), set()).add(
                 (entry["session_id"], entry["session_date"]))
     for session, values in identities.items():
         require(len(values) == 1, f"session {session}: enrolled slots must share one session_id and session_date")
-    chosen = [next(iter(values)) for values in identities.values()]
-    require(len({identity for identity, _ in chosen}) == len(chosen), "the three sessions need distinct session_ids")
-    require(len({day for _, day in chosen}) == len(chosen), "the three sessions need distinct session_dates")
+    chosen = {session: next(iter(values)) for session, values in identities.items()}
+    require(len({identity for identity, _ in chosen.values()}) == len(chosen),
+            "the three sessions need distinct session_ids")
+    return chosen
 
 
 def parse_slots(root: Path, data: bytes) -> dict[str, Any]:
@@ -151,7 +155,7 @@ def parse_slots(root: Path, data: bytes) -> dict[str, Any]:
     slots = document["slots"]
     require(isinstance(slots, list) and len(slots) == len(study.SLOTS), f"slots must list exactly {len(study.SLOTS)}")
     parsed = [parse_slot(expected, entry) for expected, entry in zip(study.SLOTS, slots)]
-    check_sessions(parsed)
+    session_identities(parsed)
     return document
 
 
@@ -242,6 +246,19 @@ def slot_order(document: dict[str, Any], results: list[evidence.SlotEvidence | N
         if earlier is not None and not instant > earlier:
             result.fail("protocol", "slot_order_violation")
         previous[entry["session_id"]] = instant
+
+
+def session_dates(document: dict[str, Any], results: list[evidence.SlotEvidence | None]) -> None:
+    """The preregistration requires distinct days: every enrolled slot of a session sharing its day is flagged.
+
+    Non-blocking: the slots stay analyzable but are non-conforming, so C1 fails and accounting still renders.
+    """
+    days = session_identities(document["slots"])
+    shared = {session for session, (_, day) in days.items()
+              if sum(other == day for _, other in days.values()) > 1}
+    for entry, result in zip(document["slots"], results):
+        if entry["status"] == "enrolled" and result is not None and study.slot_session(entry["slot"]) in shared:
+            result.fail("protocol", "session_dates_not_distinct")
 
 
 def blocked(result: evidence.SlotEvidence) -> bool:
@@ -368,6 +385,7 @@ def derive(root: Path, document: dict[str, Any], context: dict[str, Any], status
     results, sessions = derive_all(root, document, context, status)
     environment = reference_environment(results)
     session_membership(document, results, sessions)
+    session_dates(document, results)
     slot_order(document, results)
     parser_preflight(root, app, results, preflight)
     return results, sessions, environment

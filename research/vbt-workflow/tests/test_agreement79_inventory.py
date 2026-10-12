@@ -137,7 +137,8 @@ class FakeStudy:
                               "analyze_options": list(study.ANALYZE_OPTIONS)},
             "outputs": {"prediction": {"file": prediction.name, "sha256": prediction_sha},
                         "analysis": {"file": analysis.name, "sha256": analysis_sha}},
-            "openbar": {"git_commit": study.OPENBAR_BASELINE_COMMIT, "tracked_changes": False},
+            "openbar": {"git_commit": study.OPENBAR_BASELINE_COMMIT, "tracked_changes": False,
+                        "untracked_source_files": 0},
             "environment": {"python": "3.12.7", "ffmpeg": "ffmpeg version 8.0", "ffprobe": "ffprobe version 8.0",
                             "openbar_cli": {"path": "target/release/openbar-cli.exe", "sha256": study.OPENBAR_CLI_SHA256},
                             "opencv_version": "4.12.0", "numpy_version": "2.2.6"}}
@@ -560,6 +561,10 @@ DERIVED_CASES: list[tuple[str, Callable[[FakeStudy], None], set[str], bool]] = [
     ("commit", patch_run(lambda run: run["openbar"].update(git_commit="d" * 40)), {method("openbar_git_commit")}, False),
     ("dirty", patch_run(lambda run: run["openbar"].update(tracked_changes=True)),
      {method("openbar_tracked_changes")}, False),
+    ("untracked", patch_run(lambda run: run["openbar"].update(untracked_source_files=2)),
+     {method("openbar_untracked_source_files")}, False),
+    ("untracked unrecorded", patch_run(lambda run: run["openbar"].pop("untracked_source_files")),
+     {method("openbar_untracked_source_files")}, False),
     ("assessment missing", clip_value("assessment", False), {"assessment:assessment_missing"}, False),
     ("assessment invalid", patch_assessment(lambda a: a.update(accuracy={"status": "established", "reasons": []})),
      {"assessment:assessment_invalid"}, False),
@@ -713,10 +718,6 @@ class AbortAndInputTests(InventoryTestCase):
             for entry in doc["slots"][6:12]:
                 entry["session_id"] = SESSION_IDS[0]
 
-        def same_date_across(doc: dict) -> None:
-            for entry in doc["slots"][6:12]:
-                entry["session_date"] = SESSION_DATES[0]
-
         cases: dict[str, Callable[[dict], None]] = {
             "order": swap,
             "count": lambda doc: doc["slots"].pop(),
@@ -746,7 +747,6 @@ class AbortAndInputTests(InventoryTestCase):
             "session id within": lambda doc: doc["slots"][2].update(session_id="sess-other"),
             "session date within": lambda doc: doc["slots"][2].update(session_date="2026-10-12"),
             "session id across": same_id_across,
-            "session date across": same_date_across,
             "bad date": lambda doc: doc["slots"][0].update(session_date="2026-02-30"),
             "unsafe session id": lambda doc: [entry.update(session_id="../x") for entry in doc["slots"][:6]],
             "fixture id": lambda doc: doc["slots"][0].update(fixture_id="VBT-1"),
@@ -772,77 +772,6 @@ class AbortAndInputTests(InventoryTestCase):
         slots_path.write_bytes(slots_path.read_bytes().replace(b'"format": ', b'"format": "x", "format": ', 1))
         code, _, _ = self.fake.main(self.fake.argv(slots_path))
         self.assertEqual(code, 1)
-
-
-class VerifyTests(InventoryTestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.inventory_ok()
-        self.out = self.fake.study_dir / "out"
-
-    def verify(self, *extra: str) -> tuple[int, str, str]:
-        return self.fake.main(["verify", "--inventory", str(self.out / "inventory.json"), *extra])
-
-    def test_untouched_inputs_verify(self) -> None:
-        result = inventory.verify(self.out / "inventory.json", root=self.root)
-        self.assertTrue(result["inputs_unchanged"])
-        self.assertTrue(result["inventory_matches_lock_summary"])
-        self.assertTrue(result["ok"])
-        self.assertEqual((result["mismatches"], result["mismatch_count"]), ([], 0))
-        self.assertEqual(result["checked"], 18 * 9 + 3 * 6 + 1 + 3 + 1)
-        code, out, _ = self.verify("--lock-summary", str(self.out / "lock-summary.json"))
-        self.assertEqual(code, 0)
-        self.assertIn("ok", out)
-
-    def test_modified_input_file_is_detected(self) -> None:
-        wl = self.root / "validation/private/vbt/wl/S2-CL-1.csv"
-        wl.write_bytes(wl.read_bytes() + b"1,2\n")
-        result = inventory.verify(self.out / "inventory.json", root=self.root)
-        self.assertFalse(result["ok"] or result["inputs_unchanged"])
-        self.assertEqual([item["path"] for item in result["mismatches"]], ["validation/private/vbt/wl/S2-CL-1.csv"])
-        code, out, _ = self.verify()
-        self.assertEqual(code, 1)
-        self.assertIn("S2-CL-1.csv", out)
-
-    def test_deleted_input_file_is_detected(self) -> None:
-        (self.out / "pairs-clean.json").unlink()
-        result = inventory.verify(self.out / "inventory.json", root=self.root)
-        self.assertEqual(result["mismatches"][0]["actual"], None)
-        self.assertFalse(result["ok"])
-
-    def test_modified_inventory_is_detected(self) -> None:
-        path = self.out / "inventory.json"
-        path.write_bytes(path.read_bytes().replace(b'"lockable": true', b'"lockable": false'))
-        result = inventory.verify(path, root=self.root)
-        self.assertTrue(result["inputs_unchanged"])
-        self.assertFalse(result["inventory_matches_lock_summary"] or result["ok"])
-        self.assertEqual(self.verify()[0], 1)
-
-    def test_missing_lock_summary_fails(self) -> None:
-        (self.out / "lock-summary.json").unlink()
-        self.assertEqual(self.verify()[0], 1)
-
-
-class DataRootTests(InventoryTestCase):
-    """The evidence checkout must be the clean pinned baseline; the tool checkout is recorded separately."""
-
-    def test_data_root_at_other_commit_is_refused(self) -> None:
-        code, _, err = self.fake.run(git=lambda root: ("e" * 40, True))
-        self.assertEqual(code, 1)
-        self.assertIn("pinned baseline", err)
-        self.assertFalse((self.fake.study_dir / "out").exists())
-
-    def test_dirty_data_root_is_refused(self) -> None:
-        code, _, err = self.fake.run(git=lambda root: (study.OPENBAR_BASELINE_COMMIT, False))
-        self.assertEqual(code, 1)
-        self.assertIn("tracked files clean: False", err)
-
-    def test_root_option_selects_the_data_checkout(self) -> None:
-        slots_path = self.fake.write()
-        argv = ["inventory", "--root", str(self.root), *self.fake.argv(slots_path, "via-option")[1:]]
-        code, _, err = self.fake.main(argv, root=Path(self.root.anchor))
-        self.assertEqual(code, 0, err)
-        self.assertTrue((self.fake.study_dir / "via-option" / "inventory.json").exists())
 
 
 if __name__ == "__main__":
