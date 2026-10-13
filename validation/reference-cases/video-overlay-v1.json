@@ -1,0 +1,2779 @@
+{
+  "schema_version": 1,
+  "case_set_id": "video-overlay-v1",
+  "status": "reference_expectations_not_produced_by_an_openbar_implementation",
+  "description": "Synthetic reference cases for the video playback and bar-path overlay design contract (docs/validation/VIDEO_OVERLAY_CONTRACT.md): display transform, timeline binding and frame lookup, path runs, and rep navigation. Expectations are hand-derived engineering references, not produced by an OpenBar implementation and not accuracy evidence.",
+  "constants": {
+    "timeline_binding_tolerance_us": 1,
+    "raster_tolerance_px": 1
+  },
+  "transform_cases": [
+    {
+      "id": "landscape-exact-fit-half-scale",
+      "description": "1920x1080 analysis drawn into a 960x540 view: scale 0.5, no bars. The frame corners are geometry probes (the outer edges of the first and last pixel), not valid observations.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1920,
+        "raster_height_px": 1080,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 960,
+        "height_px": 540,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 960,
+        "height_px": 540
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "display_px": [1919, 1079],
+          "probe": "observation",
+          "screen_px": [959.75, 539.75]
+        },
+        {
+          "display_px": [960, 540],
+          "probe": "observation",
+          "screen_px": [480.25, 270.25]
+        },
+        {
+          "display_px": [-0.5, -0.5],
+          "probe": "geometry_probe",
+          "screen_px": [0, 0]
+        },
+        {
+          "display_px": [1919.5, 1079.5],
+          "probe": "geometry_probe",
+          "screen_px": [960, 540]
+        }
+      ]
+    },
+    {
+      "id": "landscape-in-portrait-view-letterbox",
+      "description": "Landscape analysis in a 1080x2400 portrait view: width-limited scale 0.5625, bars above and below.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1920,
+        "raster_height_px": 1080,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 1080,
+        "height_px": 2400,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5625,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 896.25,
+        "width_px": 1080,
+        "height_px": 607.5
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.28125, 896.53125]
+        },
+        {
+          "display_px": [1919, 1079],
+          "probe": "observation",
+          "screen_px": [1079.71875, 1503.46875]
+        },
+        {
+          "display_px": [960, 540],
+          "probe": "observation",
+          "screen_px": [540.28125, 1200.28125]
+        }
+      ]
+    },
+    {
+      "id": "portrait-in-landscape-view-pillarbox",
+      "description": "Portrait analysis in a 1920x1080 landscape view: height-limited scale 0.5625, bars left and right.",
+      "analysis": {
+        "display_width_px": 1080,
+        "display_height_px": 1920,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1080,
+        "coded_height_px": 1920,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1080,
+        "raster_height_px": 1920,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 1920,
+        "height_px": 1080,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5625,
+      "expected_content_rect": {
+        "left_px": 656.25,
+        "top_px": 0,
+        "width_px": 607.5,
+        "height_px": 1080
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [656.53125, 0.28125]
+        },
+        {
+          "display_px": [1079, 1919],
+          "probe": "observation",
+          "screen_px": [1263.46875, 1079.71875]
+        },
+        {
+          "display_px": [540, 960],
+          "probe": "observation",
+          "screen_px": [960.28125, 540.28125]
+        }
+      ]
+    },
+    {
+      "id": "portrait-native-no-rotation",
+      "description": "720x1280 coded portrait recording with no rotation metadata, 360x640 view: scale 0.5.",
+      "analysis": {
+        "display_width_px": 720,
+        "display_height_px": 1280,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 720,
+        "coded_height_px": 1280,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 720,
+        "raster_height_px": 1280,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 360,
+        "height_px": 640,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 360,
+        "height_px": 640
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "display_px": [719, 1279],
+          "probe": "observation",
+          "screen_px": [359.75, 639.75]
+        },
+        {
+          "display_px": [360, 640],
+          "probe": "observation",
+          "screen_px": [180.25, 320.25]
+        }
+      ]
+    },
+    {
+      "id": "rotation-90-coded-landscape",
+      "description": "1280x720 coded raster with source_rotation_deg 90: S1 is 720x1280. Coded pixels map through (cy, Wc-1-cx).",
+      "analysis": {
+        "display_width_px": 720,
+        "display_height_px": 1280,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 90,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 720,
+        "raster_height_px": 1280,
+        "applied_rotation_deg": 90,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 360,
+        "height_px": 640,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 360,
+        "height_px": 640
+      },
+      "points": [
+        {
+          "coded_px": [1279, 0],
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "coded_px": [0, 0],
+          "display_px": [0, 1279],
+          "probe": "observation",
+          "screen_px": [0.25, 639.75]
+        },
+        {
+          "coded_px": [0, 719],
+          "display_px": [719, 1279],
+          "probe": "observation",
+          "screen_px": [359.75, 639.75]
+        },
+        {
+          "coded_px": [1279, 719],
+          "display_px": [719, 0],
+          "probe": "observation",
+          "screen_px": [359.75, 0.25]
+        }
+      ]
+    },
+    {
+      "id": "rotation-180-coded-landscape",
+      "description": "1280x720 coded raster with source_rotation_deg 180: S1 stays 1280x720, 640x360 view. Coded pixels map through (Wc-1-cx, Hc-1-cy).",
+      "analysis": {
+        "display_width_px": 1280,
+        "display_height_px": 720,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 180,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1280,
+        "raster_height_px": 720,
+        "applied_rotation_deg": 180,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 640,
+        "height_px": 360,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 640,
+        "height_px": 360
+      },
+      "points": [
+        {
+          "coded_px": [0, 0],
+          "display_px": [1279, 719],
+          "probe": "observation",
+          "screen_px": [639.75, 359.75]
+        },
+        {
+          "coded_px": [1279, 0],
+          "display_px": [0, 719],
+          "probe": "observation",
+          "screen_px": [0.25, 359.75]
+        },
+        {
+          "coded_px": [0, 719],
+          "display_px": [1279, 0],
+          "probe": "observation",
+          "screen_px": [639.75, 0.25]
+        },
+        {
+          "coded_px": [1279, 719],
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        }
+      ]
+    },
+    {
+      "id": "rotation-270-coded-landscape",
+      "description": "1280x720 coded raster with source_rotation_deg 270: S1 is 720x1280. Coded pixels map through (Hc-1-cy, cx).",
+      "analysis": {
+        "display_width_px": 720,
+        "display_height_px": 1280,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 270,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 720,
+        "raster_height_px": 1280,
+        "applied_rotation_deg": 270,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 360,
+        "height_px": 640,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 360,
+        "height_px": 640
+      },
+      "points": [
+        {
+          "coded_px": [0, 0],
+          "display_px": [719, 0],
+          "probe": "observation",
+          "screen_px": [359.75, 0.25]
+        },
+        {
+          "coded_px": [1279, 0],
+          "display_px": [719, 1279],
+          "probe": "observation",
+          "screen_px": [359.75, 639.75]
+        },
+        {
+          "coded_px": [0, 719],
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "coded_px": [1279, 719],
+          "display_px": [0, 1279],
+          "probe": "observation",
+          "screen_px": [0.25, 639.75]
+        }
+      ]
+    },
+    {
+      "id": "player-downscaled-surface",
+      "description": "The player decodes a 1080x1920 clip at 540x960. The scale comes from the analysis raster, so the overlay lands where it would on a full-size surface.",
+      "analysis": {
+        "display_width_px": 1080,
+        "display_height_px": 1920,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1080,
+        "coded_height_px": 1920,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 540,
+        "raster_height_px": 960,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 540,
+        "height_px": 960,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 540,
+        "height_px": 960
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "display_px": [1079, 1919],
+          "probe": "observation",
+          "screen_px": [539.75, 959.75]
+        },
+        {
+          "display_px": [540, 960],
+          "probe": "observation",
+          "screen_px": [270.25, 480.25]
+        }
+      ]
+    },
+    {
+      "id": "raster-tolerance-accept-1px",
+      "description": "Player raster 959x540 for a 1920x1080 analysis: both raster differences are at most 1 player pixel, so it is accepted.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 959,
+        "raster_height_px": 540,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 960,
+        "height_px": 540,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 960,
+        "height_px": 540
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "display_px": [960, 540],
+          "probe": "observation",
+          "screen_px": [480.25, 270.25]
+        }
+      ]
+    },
+    {
+      "id": "zoom-and-pan",
+      "description": "Zoom 2 and pan (-100, 50) view pixels applied after the base transform: u' = Vw/2 + z*(u - Vw/2) + pan_x. The inverse undoes zoom and pan exactly.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1920,
+        "raster_height_px": 1080,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 960,
+        "height_px": 540,
+        "zoom": 2,
+        "pan_x_px": -100,
+        "pan_y_px": 50
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 960,
+        "height_px": 540
+      },
+      "points": [
+        {
+          "display_px": [960, 540],
+          "probe": "observation",
+          "unzoomed_screen_px": [480.25, 270.25],
+          "screen_px": [380.5, 320.5]
+        },
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "unzoomed_screen_px": [0.25, 0.25],
+          "screen_px": [-579.5, -219.5]
+        },
+        {
+          "display_px": [1919, 1079],
+          "probe": "observation",
+          "unzoomed_screen_px": [959.75, 539.75],
+          "screen_px": [1339.5, 859.5]
+        }
+      ]
+    },
+    {
+      "id": "refuse-non-square-pixels",
+      "description": "Sample aspect ratio 4:3 is not supported (1:1 or unknown 0:1 only).",
+      "analysis": {
+        "display_width_px": 1440,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1440,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [4, 3]
+      },
+      "player": {
+        "raster_width_px": 1440,
+        "raster_height_px": 1080,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 720,
+        "height_px": 540,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "unsupported_sample_aspect_ratio"
+    },
+    {
+      "id": "refuse-transposed-player-raster",
+      "description": "Analysis 1080x1920 but the player presents 1920x1080.",
+      "analysis": {
+        "display_width_px": 1080,
+        "display_height_px": 1920,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1080,
+        "coded_height_px": 1920,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1920,
+        "raster_height_px": 1080,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 1080,
+        "height_px": 1920,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "raster_mismatch"
+    },
+    {
+      "id": "refuse-padded-decoder-raster",
+      "description": "Player raster 1920x1088 (padded decoder surface) for a 1920x1080 analysis.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1920,
+        "raster_height_px": 1088,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 960,
+        "height_px": 540,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "raster_mismatch"
+    },
+    {
+      "id": "refuse-wrong-applied-rotation",
+      "description": "Dimensions match (720x1280) but the player reports it applied 270 degrees where the file says 90.",
+      "analysis": {
+        "display_width_px": 720,
+        "display_height_px": 1280,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 90,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 720,
+        "raster_height_px": 1280,
+        "applied_rotation_deg": 270,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 360,
+        "height_px": 640,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "orientation_mismatch"
+    },
+    {
+      "id": "refuse-source-hash-absent",
+      "description": "The Analysis has no identity.source_sha256, so it cannot be tied to the file being played. Everything else is valid; this is a refusal, not a pass.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": false
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 1920,
+        "raster_height_px": 1080,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 960,
+        "height_px": 540,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "source_unverifiable"
+    },
+    {
+      "id": "refuse-orientation-not-reportable",
+      "description": "The player cannot report the rotation it applied (null) and no conformance pass is recorded for the device class.",
+      "analysis": {
+        "display_width_px": 720,
+        "display_height_px": 1280,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 90,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 720,
+        "raster_height_px": 1280,
+        "applied_rotation_deg": null,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 360,
+        "height_px": 640,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "orientation_unverifiable"
+    },
+    {
+      "id": "orientation-unreportable-with-conformance-pass",
+      "description": "The player cannot report the rotation it applied, but a conformance pass is recorded for the device class: accepted.",
+      "analysis": {
+        "display_width_px": 720,
+        "display_height_px": 1280,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 90,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 720,
+        "raster_height_px": 1280,
+        "applied_rotation_deg": null,
+        "conformance_pass": true
+      },
+      "view": {
+        "width_px": 360,
+        "height_px": 640,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "accepted",
+      "expected_scale": 0.5,
+      "expected_content_rect": {
+        "left_px": 0,
+        "top_px": 0,
+        "width_px": 360,
+        "height_px": 640
+      },
+      "points": [
+        {
+          "display_px": [0, 0],
+          "probe": "observation",
+          "screen_px": [0.25, 0.25]
+        },
+        {
+          "display_px": [719, 1279],
+          "probe": "observation",
+          "screen_px": [359.75, 639.75]
+        }
+      ]
+    },
+    {
+      "id": "refuse-raster-tolerance-2px",
+      "description": "Player raster 958x540 for a 1920x1080 analysis: the width differs from the proportional 960 by 2.",
+      "analysis": {
+        "display_width_px": 1920,
+        "display_height_px": 1080,
+        "source_sha256_present": true
+      },
+      "video": {
+        "coded_width_px": 1920,
+        "coded_height_px": 1080,
+        "source_rotation_deg": 0,
+        "sample_aspect_ratio": [1, 1]
+      },
+      "player": {
+        "raster_width_px": 958,
+        "raster_height_px": 540,
+        "applied_rotation_deg": 0,
+        "conformance_pass": false
+      },
+      "view": {
+        "width_px": 960,
+        "height_px": 540,
+        "zoom": 1,
+        "pan_x_px": 0,
+        "pan_y_px": 0
+      },
+      "expected_status": "raster_mismatch"
+    }
+  ],
+  "timeline_cases": [
+    {
+      "id": "nonzero-start-player-rebased",
+      "description": "Container start_pts 126000 at time base 1/90000 with frames every 3000 ticks. The player rebases to zero at the first frame, so its timestamps equal the canonical ones and the binding offset is 0.",
+      "stream": {
+        "time_base": [1, 90000],
+        "start_pts": 126000,
+        "frame_pts": [126000, 129000, 132000, 135000, 138000, 141000, 144000, 147000, 150000, 153000]
+      },
+      "player_frame_timestamps_us": [0, 33333, 66667, 100000, 133333, 166667, 200000, 233333, 266667, 300000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.03333333333333333,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.06666666666666667,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.1,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.13333333333333333,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.16666666666666666,
+          "tracking_state": "low_confidence",
+          "x_px": 140,
+          "y_px": 480.25
+        },
+        {
+          "frame_index": 6,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 148,
+          "y_px": 476.25
+        },
+        {
+          "frame_index": 7,
+          "timestamp_s": 0.23333333333333334,
+          "tracking_state": "tracked",
+          "x_px": 156,
+          "y_px": 472.25
+        },
+        {
+          "frame_index": 8,
+          "timestamp_s": 0.26666666666666666,
+          "tracking_state": "tracked",
+          "x_px": 164,
+          "y_px": 468.25
+        },
+        {
+          "frame_index": 9,
+          "timestamp_s": 0.3,
+          "tracking_state": "tracked",
+          "x_px": 172,
+          "y_px": 464.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [0, 33333, 66667, 100000, 133333, 166667, 200000, 233333, 266667, 300000],
+        "offsets_us": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      },
+      "clock_queries": [
+        {
+          "canonical_position_us": -1,
+          "player_position_us": -1,
+          "expected_frame_index": null,
+          "expected_marker_state": "none",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 0,
+          "player_position_us": 0,
+          "expected_frame_index": 0,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [100, 500.25]
+        },
+        {
+          "canonical_position_us": 33332,
+          "player_position_us": 33332,
+          "expected_frame_index": 0,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [100, 500.25]
+        },
+        {
+          "canonical_position_us": 33333,
+          "player_position_us": 33333,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25]
+        },
+        {
+          "canonical_position_us": 99999,
+          "player_position_us": 99999,
+          "expected_frame_index": 2,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [116, 492.25]
+        },
+        {
+          "canonical_position_us": 100000,
+          "player_position_us": 100000,
+          "expected_frame_index": 3,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [124, 488.25]
+        },
+        {
+          "canonical_position_us": 299999,
+          "player_position_us": 299999,
+          "expected_frame_index": 8,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [164, 468.25]
+        },
+        {
+          "canonical_position_us": 300000,
+          "player_position_us": 300000,
+          "expected_frame_index": 9,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [172, 464.25]
+        },
+        {
+          "canonical_position_us": 1000000,
+          "player_position_us": 1000000,
+          "expected_frame_index": 9,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [172, 464.25]
+        }
+      ]
+    },
+    {
+      "id": "nonzero-start-player-absolute",
+      "description": "Same stream, but the player keeps absolute presentation times offset by 1,400,000 us. The binding offset is 1,400,000 and every lookup resolves exactly as in the rebased case.",
+      "stream": {
+        "time_base": [1, 90000],
+        "start_pts": 126000,
+        "frame_pts": [126000, 129000, 132000, 135000, 138000, 141000, 144000, 147000, 150000, 153000]
+      },
+      "player_frame_timestamps_us": [1400000, 1433333, 1466667, 1500000, 1533333, 1566667, 1600000, 1633333, 1666667, 1700000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.03333333333333333,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.06666666666666667,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.1,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.13333333333333333,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.16666666666666666,
+          "tracking_state": "low_confidence",
+          "x_px": 140,
+          "y_px": 480.25
+        },
+        {
+          "frame_index": 6,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 148,
+          "y_px": 476.25
+        },
+        {
+          "frame_index": 7,
+          "timestamp_s": 0.23333333333333334,
+          "tracking_state": "tracked",
+          "x_px": 156,
+          "y_px": 472.25
+        },
+        {
+          "frame_index": 8,
+          "timestamp_s": 0.26666666666666666,
+          "tracking_state": "tracked",
+          "x_px": 164,
+          "y_px": 468.25
+        },
+        {
+          "frame_index": 9,
+          "timestamp_s": 0.3,
+          "tracking_state": "tracked",
+          "x_px": 172,
+          "y_px": 464.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 1400000,
+        "canonical_us": [0, 33333, 66667, 100000, 133333, 166667, 200000, 233333, 266667, 300000],
+        "offsets_us": [1400000, 1400000, 1400000, 1400000, 1400000, 1400000, 1400000, 1400000, 1400000, 1400000]
+      },
+      "clock_queries": [
+        {
+          "canonical_position_us": -1,
+          "player_position_us": 1399999,
+          "expected_frame_index": null,
+          "expected_marker_state": "none",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 0,
+          "player_position_us": 1400000,
+          "expected_frame_index": 0,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [100, 500.25]
+        },
+        {
+          "canonical_position_us": 33332,
+          "player_position_us": 1433332,
+          "expected_frame_index": 0,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [100, 500.25]
+        },
+        {
+          "canonical_position_us": 33333,
+          "player_position_us": 1433333,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25]
+        },
+        {
+          "canonical_position_us": 99999,
+          "player_position_us": 1499999,
+          "expected_frame_index": 2,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [116, 492.25]
+        },
+        {
+          "canonical_position_us": 100000,
+          "player_position_us": 1500000,
+          "expected_frame_index": 3,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [124, 488.25]
+        },
+        {
+          "canonical_position_us": 299999,
+          "player_position_us": 1699999,
+          "expected_frame_index": 8,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [164, 468.25]
+        },
+        {
+          "canonical_position_us": 300000,
+          "player_position_us": 1700000,
+          "expected_frame_index": 9,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [172, 464.25]
+        },
+        {
+          "canonical_position_us": 1000000,
+          "player_position_us": 2400000,
+          "expected_frame_index": 9,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [172, 464.25]
+        }
+      ]
+    },
+    {
+      "id": "rotated-portrait-vfr-nonzero-start",
+      "description": "Phone-style clip: 1280x720 coded with source_rotation_deg 90 (display 720x1280), time base 1/90000, start_pts 126000, frame spacing 3000, 3300, 2700, 3600, 3000, 2400 ticks, and an absolute-PTS player (offset 1,400,000 us). Observations start at the seed frame 1 (frame 0 has none) and frame 3 is lost. The clock selects frames by floor; round(pos * 30) picks frame 2 where frame 1 is on screen at 69999 us.",
+      "stream": {
+        "time_base": [1, 90000],
+        "start_pts": 126000,
+        "frame_pts": [126000, 129000, 132300, 135000, 138600, 141600, 144000]
+      },
+      "player_frame_timestamps_us": [1400000, 1433333, 1470000, 1500000, 1540000, 1573333, 1600000],
+      "probed_frame_count": 7,
+      "video": {
+        "coded_width_px": 1280,
+        "coded_height_px": 720,
+        "source_rotation_deg": 90,
+        "display_width_px": 720,
+        "display_height_px": 1280
+      },
+      "metadata_nominal_fps": 30,
+      "observations": [
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.03333333333333333,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.07,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.1,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.14,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.17333333333333334,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 1400000,
+        "canonical_us": [33333, 70000, 100000, 140000, 173333],
+        "offsets_us": [1400000, 1400000, 1400000, 1400000, 1400000]
+      },
+      "clock_queries": [
+        {
+          "canonical_position_us": -1,
+          "player_position_us": 1399999,
+          "expected_frame_index": null,
+          "expected_marker_state": "none",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 0
+        },
+        {
+          "canonical_position_us": 0,
+          "player_position_us": 1400000,
+          "expected_frame_index": 0,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 0
+        },
+        {
+          "canonical_position_us": 33332,
+          "player_position_us": 1433332,
+          "expected_frame_index": 0,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 1
+        },
+        {
+          "canonical_position_us": 33333,
+          "player_position_us": 1433333,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25],
+          "naive_nominal_fps_index": 1
+        },
+        {
+          "canonical_position_us": 69999,
+          "player_position_us": 1469999,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25],
+          "naive_nominal_fps_index": 2
+        },
+        {
+          "canonical_position_us": 70000,
+          "player_position_us": 1470000,
+          "expected_frame_index": 2,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [116, 492.25],
+          "naive_nominal_fps_index": 2
+        },
+        {
+          "canonical_position_us": 100000,
+          "player_position_us": 1500000,
+          "expected_frame_index": 3,
+          "expected_marker_state": "lost",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 3
+        },
+        {
+          "canonical_position_us": 139999,
+          "player_position_us": 1539999,
+          "expected_frame_index": 3,
+          "expected_marker_state": "lost",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 4
+        },
+        {
+          "canonical_position_us": 140000,
+          "player_position_us": 1540000,
+          "expected_frame_index": 4,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [132, 484.25],
+          "naive_nominal_fps_index": 4
+        },
+        {
+          "canonical_position_us": 200000,
+          "player_position_us": 1600000,
+          "expected_frame_index": 6,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 6
+        },
+        {
+          "canonical_position_us": 5000000,
+          "player_position_us": 6400000,
+          "expected_frame_index": 6,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 150
+        }
+      ]
+    },
+    {
+      "id": "irregular-vfr-lookup",
+      "description": "Variable frame rate stream (time base 1/1000, frames at 0, 33, 75, 100, 141, 166 and 200 ms) whose metadata nominal_fps is 30. The playback clock selects the last frame at or before the position (floor); round(pos * nominal_fps) picks a different frame at 120000 us. naive_nominal_fps_index is informational only.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 33, 75, 100, 141, 166, 200]
+      },
+      "player_frame_timestamps_us": [0, 33000, 75000, 100000, 141000, 166000, 200000],
+      "probed_frame_count": 7,
+      "metadata_nominal_fps": 30,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.033,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.075,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.1,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.141,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.166,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        },
+        {
+          "frame_index": 6,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 148,
+          "y_px": 476.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [0, 33000, 75000, 100000, 141000, 166000, 200000],
+        "offsets_us": [0, 0, 0, 0, 0, 0, 0]
+      },
+      "clock_queries": [
+        {
+          "canonical_position_us": -1,
+          "player_position_us": -1,
+          "expected_frame_index": null,
+          "expected_marker_state": "none",
+          "expected_marker_px": null,
+          "naive_nominal_fps_index": 0
+        },
+        {
+          "canonical_position_us": 0,
+          "player_position_us": 0,
+          "expected_frame_index": 0,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [100, 500.25],
+          "naive_nominal_fps_index": 0
+        },
+        {
+          "canonical_position_us": 32999,
+          "player_position_us": 32999,
+          "expected_frame_index": 0,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [100, 500.25],
+          "naive_nominal_fps_index": 1
+        },
+        {
+          "canonical_position_us": 33000,
+          "player_position_us": 33000,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25],
+          "naive_nominal_fps_index": 1
+        },
+        {
+          "canonical_position_us": 74999,
+          "player_position_us": 74999,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25],
+          "naive_nominal_fps_index": 2
+        },
+        {
+          "canonical_position_us": 75000,
+          "player_position_us": 75000,
+          "expected_frame_index": 2,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [116, 492.25],
+          "naive_nominal_fps_index": 2
+        },
+        {
+          "canonical_position_us": 120000,
+          "player_position_us": 120000,
+          "expected_frame_index": 3,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [124, 488.25],
+          "naive_nominal_fps_index": 4
+        },
+        {
+          "canonical_position_us": 200000,
+          "player_position_us": 200000,
+          "expected_frame_index": 6,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [148, 476.25],
+          "naive_nominal_fps_index": 6
+        },
+        {
+          "canonical_position_us": 5000000,
+          "player_position_us": 5000000,
+          "expected_frame_index": 6,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [148, 476.25],
+          "naive_nominal_fps_index": 150
+        }
+      ]
+    },
+    {
+      "id": "trimmed-analysis-range",
+      "description": "Ten-frame stream at 32 Hz with observations only for frames 3 to 6 (the analysed range). Frames outside it are not_analysed, including frames reached by the hold-last rule after the end of the stream.",
+      "stream": {
+        "time_base": [1, 32],
+        "start_pts": 0,
+        "frame_pts": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      },
+      "player_frame_timestamps_us": [0, 31250, 62500, 93750, 125000, 156250, 187500, 218750, 250000, 281250],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.09375,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.125,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.15625,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        },
+        {
+          "frame_index": 6,
+          "timestamp_s": 0.1875,
+          "tracking_state": "tracked",
+          "x_px": 148,
+          "y_px": 476.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [93750, 125000, 156250, 187500],
+        "offsets_us": [0, 0, 0, 0]
+      },
+      "clock_queries": [
+        {
+          "canonical_position_us": -1,
+          "player_position_us": -1,
+          "expected_frame_index": null,
+          "expected_marker_state": "none",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 0,
+          "player_position_us": 0,
+          "expected_frame_index": 0,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 62500,
+          "player_position_us": 62500,
+          "expected_frame_index": 2,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 93750,
+          "player_position_us": 93750,
+          "expected_frame_index": 3,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [124, 488.25]
+        },
+        {
+          "canonical_position_us": 187500,
+          "player_position_us": 187500,
+          "expected_frame_index": 6,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [148, 476.25]
+        },
+        {
+          "canonical_position_us": 188000,
+          "player_position_us": 188000,
+          "expected_frame_index": 6,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [148, 476.25]
+        },
+        {
+          "canonical_position_us": 218750,
+          "player_position_us": 218750,
+          "expected_frame_index": 7,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 281250,
+          "player_position_us": 281250,
+          "expected_frame_index": 9,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 10000000,
+          "player_position_us": 10000000,
+          "expected_frame_index": 9,
+          "expected_marker_state": "not_analysed",
+          "expected_marker_px": null
+        }
+      ]
+    },
+    {
+      "id": "lost-frame-no-coordinate",
+      "description": "Six-frame stream at 32 Hz where frame 2 is lost: the observation exists but has no coordinate, so the state is lost and no marker is drawn (not not_analysed). Neighbouring frames keep their markers.",
+      "stream": {
+        "time_base": [1, 32],
+        "start_pts": 0,
+        "frame_pts": [0, 1, 2, 3, 4, 5]
+      },
+      "player_frame_timestamps_us": [0, 31250, 62500, 93750, 125000, 156250],
+      "probed_frame_count": 6,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.03125,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.0625,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.09375,
+          "tracking_state": "low_confidence",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.125,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.15625,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [0, 31250, 62500, 93750, 125000, 156250],
+        "offsets_us": [0, 0, 0, 0, 0, 0]
+      },
+      "clock_queries": [
+        {
+          "canonical_position_us": 31250,
+          "player_position_us": 31250,
+          "expected_frame_index": 1,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [108, 496.25]
+        },
+        {
+          "canonical_position_us": 62500,
+          "player_position_us": 62500,
+          "expected_frame_index": 2,
+          "expected_marker_state": "lost",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 78125,
+          "player_position_us": 78125,
+          "expected_frame_index": 2,
+          "expected_marker_state": "lost",
+          "expected_marker_px": null
+        },
+        {
+          "canonical_position_us": 93750,
+          "player_position_us": 93750,
+          "expected_frame_index": 3,
+          "expected_marker_state": "low_confidence",
+          "expected_marker_px": [124, 488.25]
+        },
+        {
+          "canonical_position_us": 100000,
+          "player_position_us": 100000,
+          "expected_frame_index": 3,
+          "expected_marker_state": "low_confidence",
+          "expected_marker_px": [124, 488.25]
+        },
+        {
+          "canonical_position_us": 156250,
+          "player_position_us": 156250,
+          "expected_frame_index": 5,
+          "expected_marker_state": "tracked",
+          "expected_marker_px": [140, 480.25]
+        }
+      ]
+    },
+    {
+      "id": "seek-presented-frame-wins",
+      "description": "A seek is requested at 85000 us, between the frames at 75000 us (frame 2) and 100000 us (frame 3). The player lands on the earlier keyframe, frame 1 (33000 us). While pending the marker is hidden (seeking); on completion the marker follows the presented frame 1, not the requested position.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 33, 75, 100, 141, 166, 200]
+      },
+      "player_frame_timestamps_us": [0, 33000, 75000, 100000, 141000, 166000, 200000],
+      "probed_frame_count": 7,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.033,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.075,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.1,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.141,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.166,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        },
+        {
+          "frame_index": 6,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 148,
+          "y_px": 476.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [0, 33000, 75000, 100000, 141000, 166000, 200000],
+        "offsets_us": [0, 0, 0, 0, 0, 0, 0]
+      },
+      "seek_queries": [
+        {
+          "requested_position_us": 85000,
+          "presented_frame_index": null,
+          "requested_floor_frame_index": 2,
+          "expected_marker_state": "seeking",
+          "expected_observation_frame_index": null,
+          "expected_marker_px": null
+        },
+        {
+          "requested_position_us": 85000,
+          "presented_frame_index": 1,
+          "requested_floor_frame_index": 2,
+          "expected_marker_state": "tracked",
+          "expected_observation_frame_index": 1,
+          "expected_marker_px": [108, 496.25]
+        }
+      ]
+    },
+    {
+      "id": "exact-seek-to-sample",
+      "description": "Navigation to the sample at canonical t = 0.100 s (frame 3) needs a frame-exact seek. Success is reported only when the presented frame is the target; landing on frame 2 is seek_not_exact.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 33, 75, 100, 141, 166, 200]
+      },
+      "player_frame_timestamps_us": [0, 33000, 75000, 100000, 141000, 166000, 200000],
+      "probed_frame_count": 7,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.033,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.075,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.1,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.141,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.166,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        },
+        {
+          "frame_index": 6,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 148,
+          "y_px": 476.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [0, 33000, 75000, 100000, 141000, 166000, 200000],
+        "offsets_us": [0, 0, 0, 0, 0, 0, 0]
+      },
+      "exact_seek_checks": [
+        {
+          "target_timestamp_s": 0.1,
+          "target_frame_index": 3,
+          "presented_frame_index": 2,
+          "expected_status": "seek_not_exact"
+        },
+        {
+          "target_timestamp_s": 0.1,
+          "target_frame_index": 3,
+          "presented_frame_index": 3,
+          "expected_status": "ok"
+        }
+      ]
+    },
+    {
+      "id": "binding-frame-2ms-off",
+      "description": "One frame's player timestamp is 2 ms away from its canonical time (a re-muxed copy or a moved edit list): the offsets disagree by 2000 us.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": [0, 40000, 80000, 120000, 160000, 202000, 240000, 280000, 320000, 360000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "timeline_mismatch",
+        "canonical_us": [0, 40000, 80000, 120000, 160000, 200000],
+        "offsets_us": [0, 0, 0, 0, 0, 2000]
+      }
+    },
+    {
+      "id": "binding-tolerance-accept-1us",
+      "description": "One offset differs by exactly 1 us, within the binding tolerance: accepted; the offset is the minimum (the first observation's offset is 1, the minimum 0).",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": [1, 40000, 80000, 120000, 160000, 200000, 240000, 280000, 320000, 360000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "ok",
+        "offset_us": 0,
+        "canonical_us": [0, 40000, 80000, 120000, 160000, 200000],
+        "offsets_us": [1, 0, 0, 0, 0, 0]
+      }
+    },
+    {
+      "id": "binding-tolerance-refuse-2us",
+      "description": "One offset differs by 2 us, beyond the binding tolerance.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": [0, 40000, 80000, 120002, 160000, 200000, 240000, 280000, 320000, 360000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "timeline_mismatch",
+        "canonical_us": [0, 40000, 80000, 120000, 160000, 200000],
+        "offsets_us": [0, 0, 0, 2, 0, 0]
+      }
+    },
+    {
+      "id": "binding-missing-frame-index",
+      "description": "An observation without frame_index cannot be bound to a player frame.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": [0, 40000, 80000, 120000, 160000, 200000, 240000, 280000, 320000, 360000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "timeline_unavailable"
+      }
+    },
+    {
+      "id": "binding-frame-count-disagreement",
+      "description": "Decoder provenance says probed_frame_count 10 but the player lists 9 frame timestamps, although every observation offset agrees.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": [0, 40000, 80000, 120000, 160000, 200000, 240000, 280000, 320000],
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "timeline_mismatch",
+        "canonical_us": [0, 40000, 80000, 120000, 160000, 200000],
+        "offsets_us": [0, 0, 0, 0, 0, 0]
+      }
+    },
+    {
+      "id": "binding-frame-index-beyond-player",
+      "description": "An observation's frame_index (5) is beyond the player's frame list (5 frames, indices 0 to 4).",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": [0, 40000, 80000, 120000, 160000],
+      "probed_frame_count": 5,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "timeline_mismatch",
+        "canonical_us": [0, 40000, 80000, 120000, 160000, 200000]
+      }
+    },
+    {
+      "id": "binding-player-timestamps-unavailable",
+      "description": "The adapter cannot list frame timestamps without decoding.",
+      "stream": {
+        "time_base": [1, 1000],
+        "start_pts": 0,
+        "frame_pts": [0, 40, 80, 120, 160, 200, 240, 280, 320, 360]
+      },
+      "player_frame_timestamps_us": null,
+      "probed_frame_count": 10,
+      "observations": [
+        {
+          "frame_index": 0,
+          "timestamp_s": 0.0,
+          "tracking_state": "tracked",
+          "x_px": 100,
+          "y_px": 500.25
+        },
+        {
+          "frame_index": 1,
+          "timestamp_s": 0.04,
+          "tracking_state": "tracked",
+          "x_px": 108,
+          "y_px": 496.25
+        },
+        {
+          "frame_index": 2,
+          "timestamp_s": 0.08,
+          "tracking_state": "tracked",
+          "x_px": 116,
+          "y_px": 492.25
+        },
+        {
+          "frame_index": 3,
+          "timestamp_s": 0.12,
+          "tracking_state": "tracked",
+          "x_px": 124,
+          "y_px": 488.25
+        },
+        {
+          "frame_index": 4,
+          "timestamp_s": 0.16,
+          "tracking_state": "tracked",
+          "x_px": 132,
+          "y_px": 484.25
+        },
+        {
+          "frame_index": 5,
+          "timestamp_s": 0.2,
+          "tracking_state": "tracked",
+          "x_px": 140,
+          "y_px": 480.25
+        }
+      ],
+      "expected_binding": {
+        "status": "timeline_unavailable"
+      }
+    }
+  ],
+  "path_cases": [
+    {
+      "id": "lost-breaks-path",
+      "description": "Two lost observations in the middle end the first run; the next measured observation starts a new one. Nothing is drawn across the loss.",
+      "observations": [
+        {
+          "frame_index": 0,
+          "tracking_state": "tracked",
+          "x_px": 200,
+          "y_px": 800.5
+        },
+        {
+          "frame_index": 1,
+          "tracking_state": "tracked",
+          "x_px": 216,
+          "y_px": 792.5
+        },
+        {
+          "frame_index": 2,
+          "tracking_state": "tracked",
+          "x_px": 232,
+          "y_px": 784.5
+        },
+        {
+          "frame_index": 3,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 4,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 5,
+          "tracking_state": "tracked",
+          "x_px": 280,
+          "y_px": 760.5
+        },
+        {
+          "frame_index": 6,
+          "tracking_state": "tracked",
+          "x_px": 296,
+          "y_px": 752.5
+        },
+        {
+          "frame_index": 7,
+          "tracking_state": "tracked",
+          "x_px": 312,
+          "y_px": 744.5
+        }
+      ],
+      "expected_runs": [
+        {
+          "observation_indices": [0, 1, 2],
+          "edge_styles": ["solid", "solid"]
+        },
+        {
+          "observation_indices": [5, 6, 7],
+          "edge_styles": ["solid", "solid"]
+        }
+      ],
+      "expected_marker_styles": ["filled", "filled", "filled", "none", "none", "filled", "filled", "filled"]
+    },
+    {
+      "id": "low-confidence-styling",
+      "description": "A low_confidence observation is a ring marker where tracked is filled, and every segment with a low_confidence endpoint is dashed.",
+      "observations": [
+        {
+          "frame_index": 0,
+          "tracking_state": "tracked",
+          "x_px": 200,
+          "y_px": 800.5
+        },
+        {
+          "frame_index": 1,
+          "tracking_state": "tracked",
+          "x_px": 216,
+          "y_px": 792.5
+        },
+        {
+          "frame_index": 2,
+          "tracking_state": "low_confidence",
+          "x_px": 232,
+          "y_px": 784.5
+        },
+        {
+          "frame_index": 3,
+          "tracking_state": "tracked",
+          "x_px": 248,
+          "y_px": 776.5
+        },
+        {
+          "frame_index": 4,
+          "tracking_state": "tracked",
+          "x_px": 264,
+          "y_px": 768.5
+        },
+        {
+          "frame_index": 5,
+          "tracking_state": "low_confidence",
+          "x_px": 280,
+          "y_px": 760.5
+        },
+        {
+          "frame_index": 6,
+          "tracking_state": "low_confidence",
+          "x_px": 296,
+          "y_px": 752.5
+        },
+        {
+          "frame_index": 7,
+          "tracking_state": "tracked",
+          "x_px": 312,
+          "y_px": 744.5
+        }
+      ],
+      "expected_runs": [
+        {
+          "observation_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+          "edge_styles": ["solid", "dashed", "dashed", "solid", "dashed", "dashed", "dashed"]
+        }
+      ],
+      "expected_marker_styles": ["filled", "filled", "ring", "filled", "filled", "ring", "ring", "filled"]
+    },
+    {
+      "id": "single-point-run",
+      "description": "A measured observation isolated by losses is a run of one, drawn as a dot; a following pair is a line.",
+      "observations": [
+        {
+          "frame_index": 0,
+          "tracking_state": "tracked",
+          "x_px": 200,
+          "y_px": 800.5
+        },
+        {
+          "frame_index": 1,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 2,
+          "tracking_state": "tracked",
+          "x_px": 232,
+          "y_px": 784.5
+        },
+        {
+          "frame_index": 3,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 4,
+          "tracking_state": "tracked",
+          "x_px": 264,
+          "y_px": 768.5
+        },
+        {
+          "frame_index": 5,
+          "tracking_state": "tracked",
+          "x_px": 280,
+          "y_px": 760.5
+        }
+      ],
+      "expected_runs": [
+        {
+          "observation_indices": [0],
+          "edge_styles": []
+        },
+        {
+          "observation_indices": [2],
+          "edge_styles": []
+        },
+        {
+          "observation_indices": [4, 5],
+          "edge_styles": ["solid"]
+        }
+      ],
+      "expected_marker_styles": ["filled", "none", "filled", "none", "filled", "filled"]
+    },
+    {
+      "id": "frame-index-hole",
+      "description": "Frame indices 10, 11, 13 are all tracked, but the missing frame 12 ends the run: consecutive observations are not consecutive frames.",
+      "observations": [
+        {
+          "frame_index": 10,
+          "tracking_state": "tracked",
+          "x_px": 200,
+          "y_px": 800.5
+        },
+        {
+          "frame_index": 11,
+          "tracking_state": "tracked",
+          "x_px": 216,
+          "y_px": 792.5
+        },
+        {
+          "frame_index": 13,
+          "tracking_state": "tracked",
+          "x_px": 232,
+          "y_px": 784.5
+        }
+      ],
+      "expected_runs": [
+        {
+          "observation_indices": [0, 1],
+          "edge_styles": ["solid"]
+        },
+        {
+          "observation_indices": [2],
+          "edge_styles": []
+        }
+      ],
+      "expected_marker_styles": ["filled", "filled", "filled"]
+    },
+    {
+      "id": "leading-and-trailing-loss",
+      "description": "A run never begins or ends at a lost observation: leading and trailing losses contribute nothing.",
+      "observations": [
+        {
+          "frame_index": 0,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 1,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 2,
+          "tracking_state": "tracked",
+          "x_px": 232,
+          "y_px": 784.5
+        },
+        {
+          "frame_index": 3,
+          "tracking_state": "tracked",
+          "x_px": 248,
+          "y_px": 776.5
+        },
+        {
+          "frame_index": 4,
+          "tracking_state": "tracked",
+          "x_px": 264,
+          "y_px": 768.5
+        },
+        {
+          "frame_index": 5,
+          "tracking_state": "lost"
+        }
+      ],
+      "expected_runs": [
+        {
+          "observation_indices": [2, 3, 4],
+          "edge_styles": ["solid", "solid"]
+        }
+      ],
+      "expected_marker_styles": ["none", "none", "filled", "filled", "filled", "none"]
+    },
+    {
+      "id": "trail-cut-at-displayed-frame",
+      "description": "The emphasised trail is the same runs cut at the displayed observation index; the remainder is dimmed. Cuts at 0 and 4 (a run's first observation: emphasised is that single observation as a dot), 1 (inside a run), 3 (a lost observation: cuts the run before it, nothing emphasised at the loss), 5 (inside the second run) and 7 (the last observation).",
+      "observations": [
+        {
+          "frame_index": 0,
+          "tracking_state": "tracked",
+          "x_px": 200,
+          "y_px": 800.5
+        },
+        {
+          "frame_index": 1,
+          "tracking_state": "tracked",
+          "x_px": 216,
+          "y_px": 792.5
+        },
+        {
+          "frame_index": 2,
+          "tracking_state": "tracked",
+          "x_px": 232,
+          "y_px": 784.5
+        },
+        {
+          "frame_index": 3,
+          "tracking_state": "lost"
+        },
+        {
+          "frame_index": 4,
+          "tracking_state": "tracked",
+          "x_px": 264,
+          "y_px": 768.5
+        },
+        {
+          "frame_index": 5,
+          "tracking_state": "tracked",
+          "x_px": 280,
+          "y_px": 760.5
+        },
+        {
+          "frame_index": 6,
+          "tracking_state": "low_confidence",
+          "x_px": 296,
+          "y_px": 752.5
+        },
+        {
+          "frame_index": 7,
+          "tracking_state": "tracked",
+          "x_px": 312,
+          "y_px": 744.5
+        }
+      ],
+      "expected_runs": [
+        {
+          "observation_indices": [0, 1, 2],
+          "edge_styles": ["solid", "solid"]
+        },
+        {
+          "observation_indices": [4, 5, 6, 7],
+          "edge_styles": ["solid", "dashed", "dashed"]
+        }
+      ],
+      "expected_marker_styles": ["filled", "filled", "filled", "none", "filled", "filled", "ring", "filled"],
+      "trail_cuts": [
+        {
+          "displayed_observation_index": 0,
+          "emphasised_runs": [
+            {
+              "observation_indices": [0],
+              "edge_styles": []
+            }
+          ],
+          "dimmed_runs": [
+            {
+              "observation_indices": [0, 1, 2],
+              "edge_styles": ["solid", "solid"]
+            },
+            {
+              "observation_indices": [4, 5, 6, 7],
+              "edge_styles": ["solid", "dashed", "dashed"]
+            }
+          ]
+        },
+        {
+          "displayed_observation_index": 1,
+          "emphasised_runs": [
+            {
+              "observation_indices": [0, 1],
+              "edge_styles": ["solid"]
+            }
+          ],
+          "dimmed_runs": [
+            {
+              "observation_indices": [1, 2],
+              "edge_styles": ["solid"]
+            },
+            {
+              "observation_indices": [4, 5, 6, 7],
+              "edge_styles": ["solid", "dashed", "dashed"]
+            }
+          ]
+        },
+        {
+          "displayed_observation_index": 3,
+          "emphasised_runs": [
+            {
+              "observation_indices": [0, 1, 2],
+              "edge_styles": ["solid", "solid"]
+            }
+          ],
+          "dimmed_runs": [
+            {
+              "observation_indices": [4, 5, 6, 7],
+              "edge_styles": ["solid", "dashed", "dashed"]
+            }
+          ]
+        },
+        {
+          "displayed_observation_index": 4,
+          "emphasised_runs": [
+            {
+              "observation_indices": [0, 1, 2],
+              "edge_styles": ["solid", "solid"]
+            },
+            {
+              "observation_indices": [4],
+              "edge_styles": []
+            }
+          ],
+          "dimmed_runs": [
+            {
+              "observation_indices": [4, 5, 6, 7],
+              "edge_styles": ["solid", "dashed", "dashed"]
+            }
+          ]
+        },
+        {
+          "displayed_observation_index": 5,
+          "emphasised_runs": [
+            {
+              "observation_indices": [0, 1, 2],
+              "edge_styles": ["solid", "solid"]
+            },
+            {
+              "observation_indices": [4, 5],
+              "edge_styles": ["solid"]
+            }
+          ],
+          "dimmed_runs": [
+            {
+              "observation_indices": [5, 6, 7],
+              "edge_styles": ["dashed", "dashed"]
+            }
+          ]
+        },
+        {
+          "displayed_observation_index": 7,
+          "emphasised_runs": [
+            {
+              "observation_indices": [0, 1, 2],
+              "edge_styles": ["solid", "solid"]
+            },
+            {
+              "observation_indices": [4, 5, 6, 7],
+              "edge_styles": ["solid", "dashed", "dashed"]
+            }
+          ],
+          "dimmed_runs": []
+        }
+      ]
+    }
+  ],
+  "navigation_cases": [
+    {
+      "id": "three-rep-sticking-point-and-incomplete",
+      "description": "Three reps; the last follows a shorter preceding descent and is incomplete. All three are listed in order, each seeks to its metric interval start, and the incomplete one carries an incomplete flag.",
+      "rep_metrics_case_id": "three-rep-sticking-point-and-incomplete",
+      "expected_navigation": [
+        {
+          "rep_index": 0,
+          "seek_timestamp_s": 0.5625,
+          "highlight_start_timestamp_s": 0.5625,
+          "highlight_end_timestamp_s": 0.84375,
+          "availability": "reported",
+          "show_numbers": true,
+          "flags": [],
+          "withheld_reasons": []
+        },
+        {
+          "rep_index": 1,
+          "seek_timestamp_s": 1.53125,
+          "highlight_start_timestamp_s": 1.53125,
+          "highlight_end_timestamp_s": 1.84375,
+          "availability": "reported",
+          "show_numbers": true,
+          "flags": [],
+          "withheld_reasons": []
+        },
+        {
+          "rep_index": 2,
+          "seek_timestamp_s": 2.34375,
+          "highlight_start_timestamp_s": 2.34375,
+          "highlight_end_timestamp_s": 2.5625,
+          "availability": "reported",
+          "show_numbers": true,
+          "flags": ["incomplete"],
+          "withheld_reasons": []
+        }
+      ]
+    },
+    {
+      "id": "long-gap-inside-rep",
+      "description": "A withheld rep with a long gap: listed with its reasons and no numbers, still seekable and highlighted over its window (the gap breaks the highlight at draw time).",
+      "rep_metrics_case_id": "long-gap-inside-rep",
+      "expected_navigation": [
+        {
+          "rep_index": 0,
+          "seek_timestamp_s": 0.4375,
+          "highlight_start_timestamp_s": 0.4375,
+          "highlight_end_timestamp_s": 0.9375,
+          "availability": "withheld",
+          "show_numbers": false,
+          "flags": [],
+          "withheld_reasons": ["unsupported_segment", "spans_gap"]
+        }
+      ]
+    },
+    {
+      "id": "no-rep-only-a-rejected-run",
+      "description": "A clip whose only positive-velocity run was rejected has no rep: the list is empty and the rejected run is not listed.",
+      "rep_metrics_case_id": "no-rep-only-a-rejected-run",
+      "expected_navigation": []
+    },
+    {
+      "id": "boundary-not-an-observation",
+      "description": "Observations lie on a 1/32 s grid. Rep 1 ends at 0.8046875 s and rep 2 starts at 0.953125 s, neither of which is an observation timestamp: the highlight is not drawn, nothing is snapped to the nearest frame, and the rep is flagged. A frame-exact seek needs a sample, so a start that is not an observation has no seek target.",
+      "observation_timestamps_s": [0.0, 0.03125, 0.0625, 0.09375, 0.125, 0.15625, 0.1875, 0.21875, 0.25, 0.28125, 0.3125, 0.34375, 0.375, 0.40625, 0.4375, 0.46875, 0.5, 0.53125, 0.5625, 0.59375, 0.625, 0.65625, 0.6875, 0.71875, 0.75, 0.78125, 0.8125, 0.84375, 0.875, 0.90625, 0.9375, 0.96875, 1.0, 1.03125, 1.0625, 1.09375, 1.125, 1.15625, 1.1875, 1.21875, 1.25],
+      "reps": [
+        {
+          "rep_index": 0,
+          "interval_start_timestamp_s": 0.25,
+          "end_timestamp_s": 0.5,
+          "availability": "reported",
+          "withheld_reasons": [],
+          "completeness": "complete"
+        },
+        {
+          "rep_index": 1,
+          "interval_start_timestamp_s": 0.625,
+          "end_timestamp_s": 0.8046875,
+          "availability": "reported",
+          "withheld_reasons": [],
+          "completeness": "complete"
+        },
+        {
+          "rep_index": 2,
+          "interval_start_timestamp_s": 0.953125,
+          "end_timestamp_s": 1.1875,
+          "availability": "withheld",
+          "withheld_reasons": ["spans_gap"],
+          "completeness": "incomplete"
+        }
+      ],
+      "expected_navigation": [
+        {
+          "rep_index": 0,
+          "seek_timestamp_s": 0.25,
+          "highlight_start_timestamp_s": 0.25,
+          "highlight_end_timestamp_s": 0.5,
+          "availability": "reported",
+          "show_numbers": true,
+          "flags": [],
+          "withheld_reasons": []
+        },
+        {
+          "rep_index": 1,
+          "seek_timestamp_s": 0.625,
+          "highlight_start_timestamp_s": null,
+          "highlight_end_timestamp_s": null,
+          "availability": "reported",
+          "show_numbers": true,
+          "flags": ["rep_boundary_not_an_observation"],
+          "withheld_reasons": []
+        },
+        {
+          "rep_index": 2,
+          "seek_timestamp_s": null,
+          "highlight_start_timestamp_s": null,
+          "highlight_end_timestamp_s": null,
+          "availability": "withheld",
+          "show_numbers": false,
+          "flags": ["incomplete", "rep_boundary_not_an_observation"],
+          "withheld_reasons": ["spans_gap"]
+        }
+      ]
+    }
+  ]
+}
