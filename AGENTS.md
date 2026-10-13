@@ -21,6 +21,7 @@ uncertainty explicit. Measurement correctness and reproducibility outrank featur
 | `validation/` | JSON schemas, public fixtures (manifest, annotations, seeds, predictions), benchmark suites, and the stdlib-only Python annotation tool + tests. `validation/private/` is git-ignored. |
 | `docs/adr/` | Accepted architecture decisions. Read the relevant ADR before changing a boundary. |
 | `docs/validation/` | Contracts for fixtures, seeds, annotations, calibration, benchmark, tracker experiments. |
+| `research/` | Python research tooling, outside the Rust workspace and M0 gates: `vbt-workflow`, `opencv-tracking`, `gpu-tracking`, `bar-path-measurement`, `vbt-experiments`, plus `PLATE_TRACKING_PLAN.md`. |
 
 Future crates (`openbar-inference`, `openbar-video`), the `ml/` Python workspace, and the
 Flutter UI do **not** exist yet. Do not scaffold them unless asked.
