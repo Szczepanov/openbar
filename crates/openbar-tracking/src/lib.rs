@@ -8,6 +8,7 @@ mod csrt;
 mod template;
 
 pub use contrast::{LocalContrastConfig, LocalContrastTracker};
+pub use csrt::{CsrtGrayConfig, CsrtGrayTracker};
 pub use template::{TemplateMatchConfig, TemplateMatchTracker};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -190,6 +191,15 @@ pub enum TrackerError {
     InsufficientSeedContrast {
         contrast: f64,
     },
+    InsufficientSeedPatchContrast {
+        rms_levels: f64,
+    },
+    SeedNotTrackable {
+        psr: Option<f64>,
+    },
+    CsrtNumerical {
+        reason: String,
+    },
 }
 
 impl fmt::Display for TrackerError {
@@ -221,6 +231,13 @@ impl fmt::Display for TrackerError {
             Self::InvalidSeedRadius { value } => write!(f, "manual seed radius must round to a positive pixel radius, got {value}"),
             Self::InsufficientSeedContrast { contrast } =>
                 write!(f, "manual seed target/background contrast {contrast:.3} is insufficient for the contrast tracker"),
+            Self::InsufficientSeedPatchContrast { rms_levels } =>
+                write!(f, "manual seed patch contrast {rms_levels:.3} intensity levels is insufficient for the grayscale CSRT tracker"),
+            Self::SeedNotTrackable { psr } => match psr {
+                Some(psr) => write!(f, "manual seed target self-response PSR {psr:.3} is not trackable"),
+                None => write!(f, "manual seed target self-response is not trackable"),
+            },
+            Self::CsrtNumerical { reason } => write!(f, "CSRT numerical error: {reason}"),
         }
     }
 }

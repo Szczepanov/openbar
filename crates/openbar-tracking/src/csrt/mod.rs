@@ -14,46 +14,42 @@ mod detmath;
 mod fft;
 mod filter;
 mod patch;
+mod peak;
+mod tracker;
+
+pub use tracker::{CsrtGrayConfig, CsrtGrayTracker};
 
 use std::fmt;
 use std::ops::{Add, Mul, Sub};
 
 /// Complex number on `f64` with plain (non-fused) arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) struct Complex {
     pub(crate) re: f64,
     pub(crate) im: f64,
 }
 
 impl Complex {
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) const ZERO: Self = Self { re: 0.0, im: 0.0 };
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) const ONE: Self = Self { re: 1.0, im: 0.0 };
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) const fn new(re: f64, im: f64) -> Self {
         Self { re, im }
     }
 
     /// Complex conjugate. `0.0 - im` keeps a zero imaginary part as `+0.0`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn conj(self) -> Self {
         Self::new(self.re, 0.0 - self.im)
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn scale(self, factor: f64) -> Self {
         Self::new(self.re * factor, self.im * factor)
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn norm_sqr(self) -> f64 {
         self.re * self.re + self.im * self.im
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn is_finite(self) -> bool {
         self.re.is_finite() && self.im.is_finite()
     }
@@ -85,7 +81,6 @@ impl Mul for Complex {
 
 /// Errors from the deterministic numeric core.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) enum NumericError {
     /// A 1D length that is zero or not a power of two.
     InvalidLength {
@@ -269,12 +264,14 @@ mod tests {
     use super::*;
 
     /// Every file in `src/csrt`; `every_csrt_file_is_scanned` keeps this list complete.
-    const SOURCES: [(&str, &str); 5] = [
+    const SOURCES: [(&str, &str); 7] = [
         ("detmath.rs", include_str!("detmath.rs")),
         ("fft.rs", include_str!("fft.rs")),
         ("filter.rs", include_str!("filter.rs")),
         ("mod.rs", include_str!("mod.rs")),
         ("patch.rs", include_str!("patch.rs")),
+        ("peak.rs", include_str!("peak.rs")),
+        ("tracker.rs", include_str!("tracker.rs")),
     ];
 
     /// Identifiers banned outside test modules: libm transcendentals, `powi` (its precision is

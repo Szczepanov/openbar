@@ -20,7 +20,6 @@ enum Direction {
 
 /// Precomputed plan for a `width x height` complex 2D FFT.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) struct Fft2d {
     width: usize,
     height: usize,
@@ -33,7 +32,6 @@ pub(crate) struct Fft2d {
 impl Fft2d {
     /// Rejects zero and non-power-of-two sizes ([`NumericError::InvalidFftSize`]) and sides
     /// above [`MAX_TRANSFORM_LEN`] ([`NumericError::FftSizeTooLarge`]) before allocating.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn try_new(width: usize, height: usize) -> Result<Self, NumericError> {
         if !width.is_power_of_two() || !height.is_power_of_two() {
             return Err(NumericError::InvalidFftSize { width, height });
@@ -53,24 +51,20 @@ impl Fft2d {
         })
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn width(&self) -> usize {
         self.width
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn height(&self) -> usize {
         self.height
     }
 
     /// Unscaled forward DFT: `X[v][u] = sum_y sum_x x[y][x] e^{-2 pi i (u x / W + v y / H)}`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn forward(&self, input: &[Complex]) -> Result<Vec<Complex>, NumericError> {
         self.transform(input, Direction::Forward)
     }
 
     /// Inverse DFT including the `1 / (width * height)` scaling, so `inverse(forward(x)) ~ x`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
     pub(crate) fn inverse(&self, input: &[Complex]) -> Result<Vec<Complex>, NumericError> {
         self.transform(input, Direction::Inverse)
     }

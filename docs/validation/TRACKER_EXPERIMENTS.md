@@ -175,8 +175,9 @@ the slice status is recorded there.
 |-------|---------|--------|
 | S1 | deterministic FFT and transcendental-free math | merged (#171) |
 | S2 | patch geometry, feature preprocessing, Gaussian label, disk support | merged (#174) |
-| S3 | constrained filter learning and response | implemented, internal only |
-| S4–S5 | tracker loop and loss policy, synthetic benchmark | not started |
+| S3 | constrained filter learning and response | merged (#175) |
+| S4 | tracker state and loss policy, conservative adaptation | implemented (#176) |
+| S5 | synthetic benchmark suite & core integration | implemented (#176) |
 
 ### S2 contract (internal; no public API)
 
@@ -226,8 +227,66 @@ the slice status is recorded there.
   dense spatial ridge with test-only Gaussian elimination, shift signs (+X right, +Y down), S2/S3
   composition, and bit-level determinism with pinned digest `0x4045_6d96_94a9_7f6a`.
 
-Initial parameters (`sigma_px = 2`, loss and tracking PSR thresholds, learning rate, ADMM settings)
-are frozen in the plan for the later slices and have not been evaluated.
+### S4–S5 contract: tracker loop, loss policy, and synthetic benchmark
+
+Issue #176 implements slices S4 and S5, providing the public tracker and synthetic verification.
+
+- **Trait implementation & identity.** Implements `ManualSeedTracker` via `CsrtGrayTracker` and `CsrtGrayConfig`.
+  - Identity ID: `csrt-gray-v1`
+  - Implementation: `csrt-gray`
+  - Version: `1`
+  - Confidence semantics: `"max(psr,0)/(max(psr,0)+tracked_psr); algorithm-specific, not a calibrated probability across trackers"`
+  - Config keys (19 entries in stable `BTreeMap`): `admm_iterations`, `feature`,
+    `flat_patch_threshold_intensity_levels`, `label_sigma_px`, `lambda`, `learning_rate`, `lost_psr`,
+    `mu_growth`, `mu_initial`, `mu_max`, `patch_max_side`, `patch_min_side`, `patch_side_rule`,
+    `psr_exclusion_radius_px`, `search_limit`, `seed_timestamp_tolerance_s`, `support`, `tracked_psr`,
+    `tracking_mode`.
+- **Effective parameters (frozen defaults):**
+  - `lambda = 0.01`
+  - `admm_iterations = 4`
+  - `mu_initial = 1.0`, `mu_growth = 3.0`, `mu_max = 81.0`
+  - `learning_rate = 0.02`
+  - `label_sigma_px = 2.0`
+  - `lost_psr = 5.0`
+  - `tracked_psr = 8.0`
+  - `psr_exclusion_radius_px = 2`
+  - `seed_timestamp_tolerance_s = 0.0005`
+- **Peak and PSR evaluation:**
+  - Evaluated in row-major order with wrapped displacement `dx, dy` decoded within search limit `|dx|, |dy| <= side / 4`.
+  - Exact half-period displacements (`|dx| == side / 2` or `|dy| == side / 2`) are excluded.
+  - Ties prefer smaller squared displacement `dx*dx + dy*dy`, then `(dy, dx)` lexicographically.
+  - Sidelobe statistics exclude the wrapped square of radius `psr_exclusion_radius_px` (2 px) around the peak.
+  - PSR = `(peak - sidelobe_mean) / sidelobe_population_std`.
+  - Competing equal maxima outside the exclusion square yield `Ambiguous` match loss. Flat sidelobes (`std <= 1e-12`) yield `FlatSidelobes` match loss.
+- **State transitions and conservative adaptation:**
+  - `PSR < lost_psr (5.0)`: emits `Lost` with `TrackerLossReason::PoorMatch`, model learning frozen, anchor frozen.
+  - `lost_psr <= PSR < tracked_psr (8.0)`: emits `LowConfidence`, target bounds present, model learning frozen, anchor updated.
+  - `PSR >= tracked_psr (8.0)`: emits `Tracked`, target bounds present, model blended via `H_next = (1 - lr)*H_old + lr*H_candidate`, anchor updated.
+  - Crop outside frame: emits `Lost` with `TargetOutsideFrame`, anchor frozen.
+  - Patch RMS < 1 intensity level: emits `Lost` with `InsufficientContrast`, anchor frozen.
+  - Target bounds check: candidate bounds must lie within frame `[0, width]` and `[0, height]` (ADR-0007); failure emits `Lost` with `TargetOutsideFrame`.
+  - Reacquisition: `reacquired_after_loss` diagnostic flag is set to `true` on the first `Tracked` observation immediately following a `Lost` state, and returns to `false` thereafter.
+- **Architectural rulings & limitations:**
+  - **F4:** Exact-equality ambiguity check is retained for hand-built arrays.
+  - **F5:** If a candidate crop is unavailable or flat after localization, the observation reflects that loss reason, model update is frozen, and anchor moves (leading to ordinary loss on subsequent frames).
+  - **F7:** Seed observation preserves authored fractional center and bounds; subsequent frames report integer anchor coordinates.
+- **Observed synthetic evidence:**
+  - 11 synthetic benchmark scenarios in `crates/openbar-tracking/tests/csrt.rs` all passing:
+    1. Stationary sequence: exact seed preservation, zero displacement error, availability = 1.0, MAE <= 1.0 px evaluated via `evaluate_tracker_case`.
+    2. Signed translations: +X, -X, +Y, -Y, and diagonal movement tracked within <= 1.0 px per frame.
+    3. Irregular timestamps and missing frame indices: verified invariant preservation and absence of nominal FPS dependence.
+    4. Global brightness step: scale/gain invariance of normalized patch verified.
+    5. Partial occlusion: bounds present on tracked/low-confidence frames, zero bounds on loss, displacement within physical bounds.
+    6. Full occlusion gap and reacquisition: explicit loss during gap without false coordinates, reacquisition flag set on first return frame.
+    7. Distractor beyond search bound: primary target tracked without switching; absent target does not divert to distant distractor (0 false tracks).
+    8. Motion beyond search bound: target jumping > side / 4 produces explicit loss without global recovery.
+    9. Fractional seed: authored fractional center preserved on seed, integer anchor reported on subsequent frames.
+    10. Largest crop (512x512, radius 100): completes without panic within resource limits.
+    11. Determinism: repeated whole `TrackerRun` equality bit-for-bit.
+- **Status & Scope Limitation:**
+  - `csrt-gray-v1` is an **experimental, unvalidated candidate**.
+  - Synthetic evidence is necessary for correctness but is not sufficient for production selection.
+  - No CLI integration (`openbar-cli` commands unchanged) or real video decoding runner yet. Evaluation on real annotated footage remains future work.
 
 ## Carry-forward recommendation
 

@@ -26,7 +26,6 @@ use super::{Complex, NumericError};
 /// It comfortably exceeds CSRT template sizes and caps a full 2D FFT buffer at
 /// `4096 * 4096 * 16 B = 256 MiB`, so oversized requests fail with a typed error instead of a
 /// capacity-overflow panic or an allocation abort.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) const MAX_TRANSFORM_LEN: usize = 4096;
 
 /// High part of `ln 2`, with its low 21 mantissa bits zero so `k * LN2_HI` is exact.
@@ -56,7 +55,6 @@ const EXP_TAYLOR: [f64; 12] = [
 ];
 
 /// Accepts a non-zero power of two no larger than [`MAX_TRANSFORM_LEN`].
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) fn validate_table_len(len: usize) -> Result<(), NumericError> {
     if !len.is_power_of_two() {
         Err(NumericError::InvalidLength { len })
@@ -78,14 +76,12 @@ pub(crate) fn unit_roots(len: usize) -> Result<Vec<Complex>, NumericError> {
 }
 
 /// The first `len / 2` entries of [`unit_roots`], without computing the rest.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) fn unit_roots_half(len: usize) -> Result<Vec<Complex>, NumericError> {
     validate_table_len(len)?;
     Ok(roots_prefix(len, len / 2))
 }
 
 /// Periodic Hann window `w[i] = sin^2(pi i / len) = (1 - cos(2 pi i / len)) / 2`, `i < len`.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) fn hann_window_periodic(len: usize) -> Result<Vec<f64>, NumericError> {
     validate_table_len(len)?;
     let roots = roots_prefix(len * 2, len);
@@ -94,7 +90,6 @@ pub(crate) fn hann_window_periodic(len: usize) -> Result<Vec<f64>, NumericError>
 
 /// Deterministic `e^x`. Non-finite arguments and arguments whose result would overflow are
 /// rejected; arguments below the underflow threshold return `+0.0`.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(crate) fn det_exp(x: f64) -> Result<f64, NumericError> {
     if !x.is_finite() {
         return Err(NumericError::NonFiniteExpArgument { value: x });

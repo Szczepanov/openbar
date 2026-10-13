@@ -20,9 +20,9 @@ Related: #57, #80, #110; prerequisite PR #171; independent frozen study #79.
 | S0 preflight | done on base `1ee0558`; S1 digests and tracking tests green before S2 edits |
 | S1 numeric core | merged (#171) |
 | S2 patches and features | merged (#174) |
-| S3 filter learning | implemented, internal only; math and unit tests green |
-| S4 tracker state and loss | not started |
-| S5 synthetic benchmark | not started |
+| S3 filter learning | merged (#175) |
+| S4 tracker state and loss | implemented (#176) |
+| S5 synthetic benchmark | implemented (#176) |
 
 S2 rulings (departures from the text below, all internal to `csrt::patch`):
 
@@ -40,15 +40,14 @@ S2 rulings (departures from the text below, all internal to `csrt::patch`):
   allocation sized from them. `support_mask` also requires `4 * radius + 1 <= side`, the same bound
   `patch_side` guarantees.
 - **S4 note.** The existing `TrackerError::InsufficientSeedContrast` message names "the contrast
-  tracker"; reword it before the CSRT tracker reuses the variant.
+  tracker"; preserved unchanged while adding dedicated `InsufficientSeedPatchContrast` for CSRT.
 
 S3 rulings (departures from the text below, internal to `csrt::filter`):
 
 - **Spectral input names.** Signatures use `features_fft` and `label_fft` to make clear they receive
   spectra (already forward-transformed once), not spatial patches or spatial labels.
-- **Internal config.** `CsrtGrayConfig` is defined in `filter.rs` with the five training fields
-  needed for ADMM (`lambda`, `admm_iterations`, `mu_initial`, `mu_growth`, `mu_max`). Learning rate
-  and tracker-level thresholds are deferred to S4 where model interpolation and loss policy live.
+- **Internal config.** Filter training parameter struct is named `FilterTrainingParams` in `filter.rs`
+  with the five training fields needed for ADMM (`lambda`, `admm_iterations`, `mu_initial`, `mu_growth`, `mu_max`).
 - **Returned filter.** `train_filter` returns `FFT(g)` (the transform of the masked spatial filter),
   ensuring spatial support is strictly enforced.
 - **Numeric boundaries and validation.** Power-of-two filter dimensions in 1..=512 are accepted
@@ -56,6 +55,23 @@ S3 rulings (departures from the text below, internal to `csrt::filter`):
   against explicit 1e-9 bounds. Safe mu growth schedule avoids float overflow before clamping.
 - **Error variants.** `NumericError` gained `InvalidTrainingParameter`, `InvalidMask`, `EmptySupport`,
   `UnsupportedFilterSize`, `NonRealSpectrum`, `NonRealInverse`, and `InvalidDenominator`.
+
+S4–S5 rulings (design decisions enacted in #176):
+
+- **F1 (Benchmark Adapter):** Core evaluator is consumed without modification; false tracks on absent
+  targets are asserted directly as counts in test code without altering core error definitions.
+- **F2 (Error Isolation):** Preserved existing `TrackerError::InsufficientSeedContrast` for Candidate B;
+  added `InsufficientSeedPatchContrast { rms_levels: f64 }`, `SeedNotTrackable { psr: Option<f64> }`,
+  and `CsrtNumerical { reason: String }` for typed failure reporting.
+- **F3 (Config Separation):** Public `CsrtGrayConfig` exposes 11 typed fields with comprehensive range
+  and relationship validation; internal ADMM parameters are validated through `FilterTrainingParams`.
+- **F4 (Ambiguity Check):** Exact-equality ambiguity check retained for hand-built arrays.
+- **F5 (Conservative Crop Update):** When a tracked observation occurs but candidate crop is unavailable
+  or flat, model update is frozen and anchor moves (ordinary loss follows on the next frame).
+- **F6 (Seed Observation Confidence):** Seed observation is always `Tracked` with self-response PSR
+  confidence mapping; invalid seed peak or PSR < lost_psr rejects the seed run via `SeedNotTrackable`.
+- **F7 (Coordinate Precision):** Seed observation preserves authored fractional center and bounds;
+  subsequent frames report integer anchor coordinates.
 
 ## 1. Baseline and current state
 
@@ -241,24 +257,24 @@ Consumes S2; produces train_filter/response. Define one config type for S3/S4, p
 
 Consumes S2/S3; exports CsrtGrayConfig/CsrtGrayTracker implementing the existing trait.
 
-- [ ] Config tests cover every field/range, threshold order, nonfinite values and iteration limits.
-- [ ] Peak/PSR tests pin wrapped decoding, search domain, half-period rejection, deterministic tie ordering, spatially separate equal peaks, empty/flat sidelobes and score/confidence at thresholds. Use hand-built response arrays.
-- [ ] Loop tests: exact seed preservation; stationary/signed translation; irregular timestamps; one-frame seed; empty/reordered/dimension-changing/unmatched-seed validation through shared helpers.
-- [ ] State tests: occlusion emits no centre/bounds; low confidence freezes model; loss freezes model/anchor; local re-entry marks reacquisition; target beyond local search is not globally recovered. Assert private model state as well as outputs.
-- [ ] Observe red; implement the policy. Sequence/config/numerical errors abort with typed error; ordinary quality failures emit loss. Bounds checks precede updates.
-- [ ] New identity: id `csrt-gray-v1`, implementation `csrt-gray`, version `1`; explicitly experimental, grayscale/fixed-scale, algorithm-specific confidence. This is a new identity, not a canonical schema or existing tracker version bump.
-- [ ] Run full workspace gates and independent measurement review; update docs; focused commit/PR. Preserve existing tracker identities/config/output.
+- [x] Config tests cover every field/range, threshold order, nonfinite values and iteration limits.
+- [x] Peak/PSR tests pin wrapped decoding, search domain, half-period rejection, deterministic tie ordering, spatially separate equal peaks, empty/flat sidelobes and score/confidence at thresholds. Use hand-built response arrays.
+- [x] Loop tests: exact seed preservation; stationary/signed translation; irregular timestamps; one-frame seed; empty/reordered/dimension-changing/unmatched-seed validation through shared helpers.
+- [x] State tests: occlusion emits no centre/bounds; low confidence freezes model; loss freezes model/anchor; local re-entry marks reacquisition; target beyond local search is not globally recovered. Assert private model state as well as outputs.
+- [x] Observe red; implement the policy. Sequence/config/numerical errors abort with typed error; ordinary quality failures emit loss. Bounds checks precede updates.
+- [x] New identity: id `csrt-gray-v1`, implementation `csrt-gray`, version `1`; explicitly experimental, grayscale/fixed-scale, algorithm-specific confidence. This is a new identity, not a canonical schema or existing tracker version bump.
+- [x] Run full workspace gates and independent measurement review; update docs; focused commit/PR. Preserve existing tracker identities/config/output.
 
 ### S5 — Synthetic benchmark integration (fold into S4 if small)
 
 Consumes public tracker and benchmark adapter. No decoder/CLI/persisted fixture changes.
 
-- [ ] Generate asymmetric targets/backgrounds in memory; known positions/timestamps are ground truth. Keep fixtures in new tests/csrt.rs, not media files.
-- [ ] Stationary and slow signed translations: <=1 px per accepted coordinate, exact timestamp preservation, repeated whole TrackerRun equality.
-- [ ] Brightness changes, partial/full occlusion, distractors, exits/re-entry, seed edges, resource ceilings, and motion beyond local-search bound. Expected unsupported cases explicitly lose; never weaken a failing scenario silently.
-- [ ] Reuse core evaluator via benchmark_predictions and the integration pattern in tests/trackers.rs. Exclude seed from tracking-error reporting; keep a separate exact seed test. No duplicate MAE/availability/false-track formulas.
-- [ ] Document measured synthetic results/config/commit/limitations. Expected numbers are assertions, not evidence until observed.
-- [ ] Run gates and review. List remaining real-video and phone gates explicitly.
+- [x] Generate asymmetric targets/backgrounds in memory; known positions/timestamps are ground truth. Keep fixtures in new tests/csrt.rs, not media files.
+- [x] Stationary and slow signed translations: <=1 px per accepted coordinate, exact timestamp preservation, repeated whole TrackerRun equality.
+- [x] Brightness changes, partial/full occlusion, distractors, exits/re-entry, seed edges, resource ceilings, and motion beyond local-search bound. Expected unsupported cases explicitly lose; never weaken a failing scenario silently.
+- [x] Reuse core evaluator via benchmark_predictions and the integration pattern in tests/trackers.rs. Exclude seed from tracking-error reporting; keep a separate exact seed test. No duplicate MAE/availability/false-track formulas.
+- [x] Document measured synthetic results/config/commit/limitations. Expected numbers are assertions, not evidence until observed.
+- [x] Run gates and review. List remaining real-video and phone gates explicitly.
 
 ## 6. Verification and evidence
 
