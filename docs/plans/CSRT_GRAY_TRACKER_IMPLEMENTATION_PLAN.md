@@ -19,8 +19,8 @@ Related: #57, #80, #110; prerequisite PR #171; independent frozen study #79.
 |-------|--------|
 | S0 preflight | done on base `1ee0558`; S1 digests and tracking tests green before S2 edits |
 | S1 numeric core | merged (#171) |
-| S2 patches and features | implemented on `codex/csrt-gray-s2`; internal only, awaiting review/publication |
-| S3 filter learning | not started |
+| S2 patches and features | merged (#174) |
+| S3 filter learning | implemented, internal only; math and unit tests green |
 | S4 tracker state and loss | not started |
 | S5 synthetic benchmark | not started |
 
@@ -41,6 +41,21 @@ S2 rulings (departures from the text below, all internal to `csrt::patch`):
   `patch_side` guarantees.
 - **S4 note.** The existing `TrackerError::InsufficientSeedContrast` message names "the contrast
   tracker"; reword it before the CSRT tracker reuses the variant.
+
+S3 rulings (departures from the text below, internal to `csrt::filter`):
+
+- **Spectral input names.** Signatures use `features_fft` and `label_fft` to make clear they receive
+  spectra (already forward-transformed once), not spatial patches or spatial labels.
+- **Internal config.** `CsrtGrayConfig` is defined in `filter.rs` with the five training fields
+  needed for ADMM (`lambda`, `admm_iterations`, `mu_initial`, `mu_growth`, `mu_max`). Learning rate
+  and tracker-level thresholds are deferred to S4 where model interpolation and loss policy live.
+- **Returned filter.** `train_filter` returns `FFT(g)` (the transform of the masked spatial filter),
+  ensuring spatial support is strictly enforced.
+- **Numeric boundaries and validation.** Power-of-two filter dimensions in 1..=512 are accepted
+  (allowing 4x4 mathematical oracles); Hermitian symmetry and inverse imaginary residuals are validated
+  against explicit 1e-9 bounds. Safe mu growth schedule avoids float overflow before clamping.
+- **Error variants.** `NumericError` gained `InvalidTrainingParameter`, `InvalidMask`, `EmptySupport`,
+  `UnsupportedFilterSize`, `NonRealSpectrum`, `NonRealInverse`, and `InvalidDenominator`.
 
 ## 1. Baseline and current state
 
@@ -172,8 +187,8 @@ pub(super) fn normalized_patch(image: &dyn GrayscaleImage, anchor_px: (i32,i32),
 pub(super) fn gaussian_label(fft: &Fft2d, sigma_px: f64) -> Result<Vec<Complex>, NumericError>;
 pub(super) fn support_mask(side: usize, radius_px: f64) -> Result<Vec<f64>, NumericError>;
 // filter.rs; vectors have width*height elements
-pub(super) fn train_filter(fft: &Fft2d, features: &[Complex], label: &[Complex], mask: &[f64], config: &CsrtGrayConfig) -> Result<Vec<Complex>, NumericError>;
-pub(super) fn response(fft: &Fft2d, filter: &[Complex], features: &[Complex]) -> Result<Vec<f64>, NumericError>;
+pub(super) fn train_filter(fft: &Fft2d, features_fft: &[Complex], label_fft: &[Complex], mask: &[f64], config: &CsrtGrayConfig) -> Result<Vec<Complex>, NumericError>;
+pub(super) fn response(fft: &Fft2d, filter_fft: &[Complex], features_fft: &[Complex]) -> Result<Vec<f64>, NumericError>;
 // tracker.rs
 pub struct CsrtGrayConfig { /* typed fields from the parameter table */ }
 pub struct CsrtGrayTracker { /* validated config */ }
@@ -209,18 +224,18 @@ Consumes S1 math; produces the four patch.rs functions. No ADMM/config export/CL
 - [x] Run `cargo test --locked -p openbar-tracking csrt::patch::`; observe red before implementation.
 - [x] Implement only patch.rs, necessary internal error variants and declarations. Register the new source; preserve all S1 digests.
 - [x] Run focused/all-tracking tests, fmt/clippy/build. Update experiment doc as S2-only infrastructure, obtain a diff-first coordinate/numeric review.
-- [ ] When publishing is authorized, commit `feat(tracking): add deterministic grayscale CSRT patches`; PR references #57 without closing it. Stop at this deliverable.
+- [x] When publishing is authorized, commit `feat(tracking): add deterministic grayscale CSRT patches`; PR references #57 without closing it. Stop at this deliverable. (Merged in #174).
 
 ### S3 — Constrained filter learning and response (second PR)
 
 Consumes S2; produces train_filter/response. Define one config type for S3/S4, privately until S4; no duplicate config structs or unused public exports.
 
-- [ ] Write `correlation_matches_spatial_oracle`: independent direct circular correlation on 8x8 inputs vs FFT response, tolerance 1e-9. Impulse translations left/right/up/down/mixed axes prove sign/conjugation.
-- [ ] Write `full_mask_matches_ridge_reference`: small deterministic inputs, 64 iterations/constant mu, compare response with closed form `X*conj(Y)/(|X|²+lambda)` within 1e-6. Test-specific solver settings do not change experiment defaults.
-- [ ] Write `masked_solution_matches_small_dense_reference`: 4x4 helper problem, independent circular design matrix and restricted ridge normal equations solved in test code, compare spatial coefficients within 1e-6 after 64 constant-mu iterations. Diagnose convergence/normalization failures; do not silently loosen tests.
-- [ ] Add support-enforcement, repeated-bit-equality, wrong vector sizes, mask values other than 0/1, all-zero mask, nonfinite input and overflowing-intermediate tests.
-- [ ] Observe red; implement section 3 equations, fixed-order validation and scan registration. Remove dead-code expectations only for consumed helpers.
-- [ ] Run focused/all-tracking tests and gates; obtain independent mathematical review; document objective/normalization/deviations. Separate commit/PR; no selection/promotion.
+- [x] Write `correlation_matches_spatial_oracle`: independent direct circular correlation on 8x8 inputs vs FFT response, tolerance 1e-9. Impulse translations left/right/up/down/mixed axes prove sign/conjugation.
+- [x] Write `full_mask_matches_ridge_reference`: small deterministic inputs, 64 iterations/constant mu, compare response with closed form `X*conj(Y)/(|X|²+lambda)` within 1e-6. Test-specific solver settings do not change experiment defaults.
+- [x] Write `masked_solution_matches_small_dense_reference`: 4x4 helper problem, independent circular design matrix and restricted ridge normal equations solved in test code, compare spatial coefficients within 1e-6 after 64 constant-mu iterations. Diagnose convergence/normalization failures; do not silently loosen tests.
+- [x] Add support-enforcement, repeated-bit-equality, wrong vector sizes, mask values other than 0/1, all-zero mask, nonfinite input and overflowing-intermediate tests.
+- [x] Observe red; implement section 3 equations, fixed-order validation and scan registration. Remove dead-code expectations only for consumed helpers.
+- [x] Run focused/all-tracking tests and gates; obtain independent mathematical review; document objective/normalization/deviations. Separate commit/PR; no selection/promotion.
 
 ### S4 — Tracker state, loss and conservative adaptation (third PR)
 

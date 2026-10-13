@@ -12,6 +12,7 @@
 
 mod detmath;
 mod fft;
+mod filter;
 mod patch;
 
 use std::fmt;
@@ -147,6 +148,33 @@ pub(crate) enum NumericError {
     InvalidSigma {
         value: f64,
     },
+    /// A training configuration parameter that is invalid or out of range.
+    InvalidTrainingParameter {
+        field: &'static str,
+    },
+    /// A mask entry that is not finite or not exactly 0.0 or 1.0.
+    InvalidMask {
+        index: usize,
+    },
+    /// A spatial mask with no active (1.0) entries.
+    EmptySupport,
+    /// A filter transform size whose side is not a power of two or outside 1..=512.
+    UnsupportedFilterSize {
+        width: usize,
+        height: usize,
+    },
+    /// A spectrum entry violating Hermitian symmetry for a real signal.
+    NonRealSpectrum {
+        index: usize,
+    },
+    /// An inverse transform entry having a non-negligible imaginary residual.
+    NonRealInverse {
+        index: usize,
+    },
+    /// A denominator in filter training that is not finite and positive.
+    InvalidDenominator {
+        index: usize,
+    },
 }
 
 impl fmt::Display for NumericError {
@@ -207,6 +235,29 @@ impl fmt::Display for NumericError {
                     "sigma must be finite and positive with a finite variance term, got {value}"
                 )
             }
+            Self::InvalidTrainingParameter { field } => {
+                write!(f, "training parameter {field} is invalid")
+            }
+            Self::InvalidMask { index } => {
+                write!(f, "mask value at index {index} must be 0 or 1")
+            }
+            Self::EmptySupport => write!(f, "mask support is empty"),
+            Self::UnsupportedFilterSize { width, height } => write!(
+                f,
+                "filter transform size must be power-of-two side in 1..=512, got {width}x{height}"
+            ),
+            Self::NonRealSpectrum { index } => write!(
+                f,
+                "spectrum at index {index} violates Hermitian symmetry for a real signal"
+            ),
+            Self::NonRealInverse { index } => write!(
+                f,
+                "inverse transform at index {index} has non-negligible imaginary residual"
+            ),
+            Self::InvalidDenominator { index } => write!(
+                f,
+                "ADMM denominator at index {index} is not finite and positive"
+            ),
         }
     }
 }
@@ -218,9 +269,10 @@ mod tests {
     use super::*;
 
     /// Every file in `src/csrt`; `every_csrt_file_is_scanned` keeps this list complete.
-    const SOURCES: [(&str, &str); 4] = [
+    const SOURCES: [(&str, &str); 5] = [
         ("detmath.rs", include_str!("detmath.rs")),
         ("fft.rs", include_str!("fft.rs")),
+        ("filter.rs", include_str!("filter.rs")),
         ("mod.rs", include_str!("mod.rs")),
         ("patch.rs", include_str!("patch.rs")),
     ];
@@ -443,6 +495,22 @@ mod tests {
                 "got 8x16",
             ),
             (NumericError::InvalidSigma { value: 0.0 }, "got 0"),
+            (
+                NumericError::InvalidTrainingParameter { field: "lambda" },
+                "lambda",
+            ),
+            (NumericError::InvalidMask { index: 4 }, "index 4"),
+            (NumericError::EmptySupport, "empty"),
+            (
+                NumericError::UnsupportedFilterSize {
+                    width: 1024,
+                    height: 1024,
+                },
+                "got 1024x1024",
+            ),
+            (NumericError::NonRealSpectrum { index: 3 }, "index 3"),
+            (NumericError::NonRealInverse { index: 7 }, "index 7"),
+            (NumericError::InvalidDenominator { index: 2 }, "index 2"),
         ];
         for (error, needle) in cases {
             let message = error.to_string();

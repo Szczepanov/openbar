@@ -174,8 +174,9 @@ the slice status is recorded there.
 | Slice | Content | Status |
 |-------|---------|--------|
 | S1 | deterministic FFT and transcendental-free math | merged (#171) |
-| S2 | patch geometry, feature preprocessing, Gaussian label, disk support | implemented, internal only |
-| S3–S5 | filter learning, tracker loop and loss policy, synthetic benchmark | not started |
+| S2 | patch geometry, feature preprocessing, Gaussian label, disk support | merged (#174) |
+| S3 | constrained filter learning and response | implemented, internal only |
+| S4–S5 | tracker loop and loss policy, synthetic benchmark | not started |
 
 ### S2 contract (internal; no public API)
 
@@ -197,6 +198,33 @@ the slice status is recorded there.
   omitted.
 - **Failures.** Invalid radius, sigma or patch size, and non-finite results, are typed
   `NumericError`s, never plausible coordinates.
+
+### S3 contract (internal; no public API)
+
+- **Objective and normalization.** Restricted spatial ridge objective: `||A*g - y||^2 + lambda*||g||^2`,
+  constrained to $g = m \odot g$ with circular correlation matrix $A$. By Parseval, equals
+  `(1/N) * ||conj(H)*X - Y||^2 + lambda*||g||^2`. The unconstrained full-support ridge solution is
+  `H = X * conj(Y) / (|X|^2 + lambda)`.
+- **Constrained learning via scaled ADMM.** Solved in spatial/spectral alternating steps:
+  1. `GminusU = FFT(g - u)`;
+  2. `H = (X*conj(Y) + mu*GminusU) / (|X|^2 + mu)`;
+  3. `h = real(inverse(H))`;
+  4. `g = m * (mu / (lambda + mu)) * (h + u)`;
+  5. `u = u + h - g`;
+  6. `mu = if mu >= mu_max/mu_growth { mu_max } else { mu * mu_growth }`.
+  Default settings: `lambda = 0.01`, 4 fixed iterations, `mu_initial = 1.0`, `mu_growth = 3.0`,
+  `mu_max = 81.0`. Safe saturation prevents float overflow during growth updates.
+- **Support enforcement.** `train_filter` returns `FFT(g)` (the transform of the masked spatial filter),
+  guaranteeing that unconstrained frequency components do not violate the spatial boundary.
+- **Response calculation.** `response` computes `inverse(conj(H) * X)` and extracts real values after
+  validating that imaginary residuals do not exceed `1e-9 * max(1, max_abs_real)`. Validated against
+  direct circular correlation oracle `r[ty, tx] = sum_{py, px} g[py, px] * x[(py+ty)%H, (px+tx)%W]`.
+- **Resource boundary & validation.** Transform width and height must each be powers of two in
+  1..=512. Vector lengths must match `width * height`. Spectra must be finite and Hermitian within
+  `1e-9 * max(1, abs)`. Mask entries must be exactly 0 or 1 with non-empty support.
+- **Observed evidence.** Verified against independent direct spatial correlation, closed-form full ridge,
+  dense spatial ridge with test-only Gaussian elimination, shift signs (+X right, +Y down), S2/S3
+  composition, and bit-level determinism with pinned digest `0x4045_6d96_94a9_7f6a`.
 
 Initial parameters (`sigma_px = 2`, loss and tracking PSR thresholds, learning rate, ADMM settings)
 are frozen in the plan for the later slices and have not been evaluated.
