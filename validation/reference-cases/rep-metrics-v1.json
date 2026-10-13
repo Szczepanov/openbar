@@ -21,14 +21,14 @@
       "time_s_dp": 3,
       "velocity_mps_dp": 3,
       "rom_cm_dp": 2,
-      "mode": "round_half_up"
+      "mode": "ecmascript_math_round"
     }
   },
   "cases": [
     {
       "id": "single-rep-constant-velocity",
       "lift_shape": "back_squat_like",
-      "description": "One descent, pause, constant-velocity ascent, rest. Uniform 32 Hz. The only shape on which the consumer sample mean and the core interval mean coincide.",
+      "description": "One descent, pause, constant-velocity ascent, rest. Uniform 32 Hz. Mean and peak coincide with the consumer's.",
       "samples": [
         {
           "timestamp_s": 0.0,
@@ -236,6 +236,8 @@
             "start_frame": 20,
             "end_frame": 35,
             "frame_count": 16,
+            "run_start_index": 18,
+            "run_end_index": 33,
             "start_time_s": 0.59375,
             "end_time_s": 1.0625,
             "duration_s": 0.469,
@@ -256,8 +258,10 @@
             "interval_start_sample_index": 18,
             "interval_start_timestamp_s": 0.5625,
             "completeness": "complete",
+            "preceding_descent_cm": 21.875,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.5,
               "rom_m": 0.25,
               "mean_velocity_mps": 0.5,
@@ -272,7 +276,8 @@
             },
             "mean_velocity_difference_mps": 0.0
           }
-        ]
+        ],
+        "rejected_runs": []
       }
     },
     {
@@ -726,6 +731,8 @@
             "start_frame": 20,
             "end_frame": 28,
             "frame_count": 9,
+            "run_start_index": 18,
+            "run_end_index": 32,
             "start_time_s": 0.59375,
             "end_time_s": 0.84375,
             "duration_s": 0.25,
@@ -740,6 +747,8 @@
             "start_frame": 51,
             "end_frame": 60,
             "frame_count": 10,
+            "run_start_index": 49,
+            "run_end_index": 58,
             "start_time_s": 1.5625,
             "end_time_s": 1.84375,
             "duration_s": 0.281,
@@ -754,6 +763,8 @@
             "start_frame": 77,
             "end_frame": 83,
             "frame_count": 7,
+            "run_start_index": 75,
+            "run_end_index": 81,
             "start_time_s": 2.375,
             "end_time_s": 2.5625,
             "duration_s": 0.188,
@@ -774,8 +785,10 @@
             "interval_start_sample_index": 18,
             "interval_start_timestamp_s": 0.5625,
             "completeness": "complete",
+            "preceding_descent_cm": 17.96875,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.28125,
               "rom_m": 0.1875,
               "mean_velocity_mps": 0.6666666666666666,
@@ -799,8 +812,10 @@
             "interval_start_sample_index": 49,
             "interval_start_timestamp_s": 1.53125,
             "completeness": "complete",
+            "preceding_descent_cm": 17.1875,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.3125,
               "rom_m": 0.1875,
               "mean_velocity_mps": 0.6,
@@ -824,8 +839,10 @@
             "interval_start_sample_index": 75,
             "interval_start_timestamp_s": 2.34375,
             "completeness": "incomplete",
+            "preceding_descent_cm": 17.96875,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.21875,
               "rom_m": 0.125,
               "mean_velocity_mps": 0.5714285714285714,
@@ -840,7 +857,248 @@
             },
             "mean_velocity_difference_mps": 0.0
           }
-        ]
+        ],
+        "rejected_runs": []
+      }
+    },
+    {
+      "id": "leading-creep-trimmed-window",
+      "lift_shape": "back_squat_like",
+      "description": "The ascent begins with four sub-floor frames (0.03125 m/s, 0.4 cm in total). The v2 window trims them, so the metric interval starts at the last creep frame, not at the turnaround sample.",
+      "samples": [
+        {
+          "timestamp_s": 0.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.03125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.0625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.09375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.15625,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.1875,
+          "y_m": -0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.21875,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.25,
+          "y_m": -0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.28125,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.3125,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.34375,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.375,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.40625,
+          "y_m": -0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.4375,
+          "y_m": -0.15625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.46875,
+          "y_m": -0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.53125,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5625,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.59375,
+          "y_m": -0.1865234375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.625,
+          "y_m": -0.185546875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.65625,
+          "y_m": -0.1845703125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.6875,
+          "y_m": -0.18359375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.71875,
+          "y_m": -0.17578125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.75,
+          "y_m": -0.16015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.78125,
+          "y_m": -0.13671875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.8125,
+          "y_m": -0.10546875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.84375,
+          "y_m": -0.07421875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.875,
+          "y_m": -0.04296875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.90625,
+          "y_m": -0.01953125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.9375,
+          "y_m": -0.00390625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.96875,
+          "y_m": 0.00390625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0,
+          "y_m": 0.00390625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.03125,
+          "y_m": 0.00390625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0625,
+          "y_m": 0.00390625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.09375,
+          "y_m": 0.00390625,
+          "confidence": 1.0
+        }
+      ],
+      "expected": {
+        "phase_model": "concentric_only",
+        "phase_model_reason": null,
+        "consumer_breaks": [],
+        "consumer_reps": [
+          {
+            "index": 0,
+            "start_frame": 20,
+            "end_frame": 32,
+            "frame_count": 13,
+            "run_start_index": 18,
+            "run_end_index": 30,
+            "start_time_s": 0.59375,
+            "end_time_s": 0.96875,
+            "duration_s": 0.375,
+            "mean_velocity_mps": 0.471,
+            "peak_velocity_mps": 1,
+            "rom_cm": 19.04,
+            "complete": true,
+            "exclusion": null
+          }
+        ],
+        "reps": [
+          {
+            "rep_index": 0,
+            "start_sample_index": 19,
+            "end_sample_index": 31,
+            "start_timestamp_s": 0.59375,
+            "end_timestamp_s": 0.96875,
+            "interval_start_sample_index": 18,
+            "interval_start_timestamp_s": 0.5625,
+            "completeness": "complete",
+            "preceding_descent_cm": 18.65234375,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.40625,
+              "rom_m": 0.19140625,
+              "mean_velocity_mps": 0.47115384615384615,
+              "peak_velocity_mps": 1.0,
+              "peak_timestamp_s": 0.8125,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 0.47115384615384615,
+              "peak_velocity_mps": 1.0,
+              "rom_cm": 19.04296875
+            },
+            "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": []
       }
     },
     {
@@ -949,6 +1207,8 @@
             "start_frame": 9,
             "end_frame": 15,
             "frame_count": 7,
+            "run_start_index": 7,
+            "run_end_index": 13,
             "start_time_s": 0.46875,
             "end_time_s": 0.75,
             "duration_s": 0.281,
@@ -969,8 +1229,10 @@
             "interval_start_sample_index": 7,
             "interval_start_timestamp_s": 0.4375,
             "completeness": "complete",
+            "preceding_descent_cm": 11.71875,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.3125,
               "rom_m": 0.234375,
               "mean_velocity_mps": 0.75,
@@ -985,7 +1247,8 @@
             },
             "mean_velocity_difference_mps": 0.1071428571428571
           }
-        ]
+        ],
+        "rejected_runs": []
       }
     },
     {
@@ -1150,6 +1413,8 @@
             "start_frame": 16,
             "end_frame": 24,
             "frame_count": 9,
+            "run_start_index": 14,
+            "run_end_index": 22,
             "start_time_s": 0.46875,
             "end_time_s": 0.8125,
             "duration_s": 0.344,
@@ -1170,10 +1435,12 @@
             "interval_start_sample_index": 14,
             "interval_start_timestamp_s": 0.4375,
             "completeness": "complete",
+            "preceding_descent_cm": 16.40625,
+            "availability": "withheld",
             "withheld_reasons": [
               "spans_gap"
             ],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.375,
               "rom_m": 0.28125,
               "mean_velocity_mps": 0.75,
@@ -1188,7 +1455,8 @@
             },
             "mean_velocity_difference_mps": 0.08333333333333337
           }
-        ]
+        ],
+        "rejected_runs": []
       }
     },
     {
@@ -1353,6 +1621,8 @@
             "start_frame": 16,
             "end_frame": 24,
             "frame_count": 8,
+            "run_start_index": 14,
+            "run_end_index": 21,
             "start_time_s": 0.46875,
             "end_time_s": 0.9375,
             "duration_s": 0.469,
@@ -1373,11 +1643,13 @@
             "interval_start_sample_index": 14,
             "interval_start_timestamp_s": 0.4375,
             "completeness": "complete",
+            "preceding_descent_cm": 16.40625,
+            "availability": "withheld",
             "withheld_reasons": [
               "unsupported_segment",
               "spans_gap"
             ],
-            "core": null,
+            "core_primitive_values": null,
             "consumer_unrounded": {
               "mean_velocity_mps": 0.625,
               "peak_velocity_mps": 1.0,
@@ -1385,7 +1657,8 @@
             },
             "mean_velocity_difference_mps": null
           }
-        ]
+        ],
+        "rejected_runs": []
       }
     },
     {
@@ -1550,6 +1823,8 @@
             "start_frame": 16,
             "end_frame": 24,
             "frame_count": 7,
+            "run_start_index": 14,
+            "run_end_index": 20,
             "start_time_s": 0.46875,
             "end_time_s": 0.71875,
             "duration_s": 0.25,
@@ -1570,11 +1845,13 @@
             "interval_start_sample_index": 14,
             "interval_start_timestamp_s": 0.4375,
             "completeness": "complete",
+            "preceding_descent_cm": 16.40625,
+            "availability": "withheld",
             "withheld_reasons": [
               "unsupported_segment",
               "spans_gap"
             ],
-            "core": null,
+            "core_primitive_values": null,
             "consumer_unrounded": {
               "mean_velocity_mps": 0.5714285714285714,
               "peak_velocity_mps": 1.0,
@@ -1582,13 +1859,14 @@
             },
             "mean_velocity_difference_mps": null
           }
-        ]
+        ],
+        "rejected_runs": []
       }
     },
     {
       "id": "series-edge-truncated-pulls",
       "lift_shape": "deadlift_like",
-      "description": "Series starts inside the first pull and ends inside the second, with no preceding descent and no lockout at the end. The consumer's completeness test is vacuously true at the start edge.",
+      "description": "Series starts inside the first pull and ends inside the second, with no preceding descent and no lockout at the end. The first rep touches the start edge; its descent is unobserved.",
       "samples": [
         {
           "timestamp_s": 0.0,
@@ -1781,6 +2059,8 @@
             "start_frame": 2,
             "end_frame": 11,
             "frame_count": 10,
+            "run_start_index": 0,
+            "run_end_index": 9,
             "start_time_s": 0.03125,
             "end_time_s": 0.3125,
             "duration_s": 0.281,
@@ -1795,6 +2075,8 @@
             "start_frame": 31,
             "end_frame": 36,
             "frame_count": 6,
+            "run_start_index": 29,
+            "run_end_index": 34,
             "start_time_s": 0.9375,
             "end_time_s": 1.09375,
             "duration_s": 0.156,
@@ -1814,11 +2096,13 @@
             "end_timestamp_s": 0.3125,
             "interval_start_sample_index": 0,
             "interval_start_timestamp_s": 0.0,
-            "completeness": "complete",
+            "completeness": "undetermined",
+            "preceding_descent_cm": 0.0,
+            "availability": "withheld",
             "withheld_reasons": [
               "touches_series_edge"
             ],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.3125,
               "rom_m": 0.21875,
               "mean_velocity_mps": 0.7,
@@ -1842,10 +2126,12 @@
             "interval_start_sample_index": 29,
             "interval_start_timestamp_s": 0.90625,
             "completeness": "incomplete",
+            "preceding_descent_cm": 21.09375,
+            "availability": "withheld",
             "withheld_reasons": [
               "touches_series_edge"
             ],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.1875,
               "rom_m": 0.140625,
               "mean_velocity_mps": 0.75,
@@ -1859,6 +2145,1260 @@
               "rom_cm": 13.28125
             },
             "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": []
+      }
+    },
+    {
+      "id": "deadlift-from-rest-no-prior-descent",
+      "lift_shape": "deadlift_like",
+      "description": "The bar rests on the floor for 8 frames before the first pull, so the first rep does not touch the series edge, but no descent precedes it. The consumer reports it complete; the contract reports the completeness as undetermined. The second pull follows a lowering and is complete.",
+      "samples": [
+        {
+          "timestamp_s": 0.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.03125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.0625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.09375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.15625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.1875,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.21875,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.25,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.28125,
+          "y_m": 0.0078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.3125,
+          "y_m": 0.0234375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.34375,
+          "y_m": 0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.375,
+          "y_m": 0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.40625,
+          "y_m": 0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.4375,
+          "y_m": 0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.46875,
+          "y_m": 0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5,
+          "y_m": 0.1953125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.53125,
+          "y_m": 0.2109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5625,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.59375,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.625,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.65625,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.6875,
+          "y_m": 0.203125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.71875,
+          "y_m": 0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.75,
+          "y_m": 0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.78125,
+          "y_m": 0.15625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.8125,
+          "y_m": 0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.84375,
+          "y_m": 0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.875,
+          "y_m": 0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.90625,
+          "y_m": 0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.9375,
+          "y_m": 0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.96875,
+          "y_m": 0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0,
+          "y_m": 0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.03125,
+          "y_m": 0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0625,
+          "y_m": 0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.09375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.15625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.1875,
+          "y_m": 0.0078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.21875,
+          "y_m": 0.0234375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.25,
+          "y_m": 0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.28125,
+          "y_m": 0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.3125,
+          "y_m": 0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.34375,
+          "y_m": 0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.375,
+          "y_m": 0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.40625,
+          "y_m": 0.1953125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.4375,
+          "y_m": 0.2109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.46875,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.5,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.53125,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.5625,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.59375,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        }
+      ],
+      "expected": {
+        "phase_model": "concentric_only",
+        "phase_model_reason": null,
+        "consumer_breaks": [],
+        "consumer_reps": [
+          {
+            "index": 0,
+            "start_frame": 10,
+            "end_frame": 19,
+            "frame_count": 10,
+            "run_start_index": 8,
+            "run_end_index": 17,
+            "start_time_s": 0.28125,
+            "end_time_s": 0.5625,
+            "duration_s": 0.281,
+            "mean_velocity_mps": 0.7,
+            "peak_velocity_mps": 1,
+            "rom_cm": 21.09,
+            "complete": true,
+            "exclusion": null
+          },
+          {
+            "index": 1,
+            "start_frame": 39,
+            "end_frame": 48,
+            "frame_count": 10,
+            "run_start_index": 37,
+            "run_end_index": 46,
+            "start_time_s": 1.1875,
+            "end_time_s": 1.46875,
+            "duration_s": 0.281,
+            "mean_velocity_mps": 0.7,
+            "peak_velocity_mps": 1,
+            "rom_cm": 21.09,
+            "complete": true,
+            "exclusion": null
+          }
+        ],
+        "reps": [
+          {
+            "rep_index": 0,
+            "start_sample_index": 9,
+            "end_sample_index": 18,
+            "start_timestamp_s": 0.28125,
+            "end_timestamp_s": 0.5625,
+            "interval_start_sample_index": 8,
+            "interval_start_timestamp_s": 0.25,
+            "completeness": "undetermined",
+            "preceding_descent_cm": 0.0,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.3125,
+              "rom_m": 0.21875,
+              "mean_velocity_mps": 0.7,
+              "peak_velocity_mps": 1.0,
+              "peak_timestamp_s": 0.375,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 0.7,
+              "peak_velocity_mps": 1.0,
+              "rom_cm": 21.09375
+            },
+            "mean_velocity_difference_mps": 0.0
+          },
+          {
+            "rep_index": 1,
+            "start_sample_index": 38,
+            "end_sample_index": 47,
+            "start_timestamp_s": 1.1875,
+            "end_timestamp_s": 1.46875,
+            "interval_start_sample_index": 37,
+            "interval_start_timestamp_s": 1.15625,
+            "completeness": "complete",
+            "preceding_descent_cm": 21.09375,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.3125,
+              "rom_m": 0.21875,
+              "mean_velocity_mps": 0.7,
+              "peak_velocity_mps": 1.0,
+              "peak_timestamp_s": 1.28125,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 0.7,
+              "peak_velocity_mps": 1.0,
+              "rom_cm": 21.09375
+            },
+            "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": []
+      }
+    },
+    {
+      "id": "rejected-runs-depend-on-clip",
+      "lift_shape": "back_squat_like",
+      "description": "A 48 cm rep, a failed 7.8 cm attempt, then a 10.9 cm rep. Only the first is detected: the second is under the 10 cm minimum and the third is under half of the largest rise in the clip. Neither appears as a rep, so they are recorded as rejected runs.",
+      "samples": [
+        {
+          "timestamp_s": 0.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.03125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.0625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.09375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.15625,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.1875,
+          "y_m": -0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.21875,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.25,
+          "y_m": -0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.28125,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.3125,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.34375,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.375,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.40625,
+          "y_m": -0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.4375,
+          "y_m": -0.15625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.46875,
+          "y_m": -0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.53125,
+          "y_m": -0.203125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5625,
+          "y_m": -0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.59375,
+          "y_m": -0.234375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.625,
+          "y_m": -0.25,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.65625,
+          "y_m": -0.265625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.6875,
+          "y_m": -0.28125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.71875,
+          "y_m": -0.296875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.75,
+          "y_m": -0.3125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.78125,
+          "y_m": -0.328125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.8125,
+          "y_m": -0.34375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.84375,
+          "y_m": -0.359375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.875,
+          "y_m": -0.375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.90625,
+          "y_m": -0.390625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.9375,
+          "y_m": -0.40625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.96875,
+          "y_m": -0.421875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0,
+          "y_m": -0.4375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.03125,
+          "y_m": -0.453125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0625,
+          "y_m": -0.46875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.09375,
+          "y_m": -0.484375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.125,
+          "y_m": -0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.15625,
+          "y_m": -0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.1875,
+          "y_m": -0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.21875,
+          "y_m": -0.484375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.25,
+          "y_m": -0.453125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.28125,
+          "y_m": -0.40625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.3125,
+          "y_m": -0.34375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.34375,
+          "y_m": -0.28125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.375,
+          "y_m": -0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.40625,
+          "y_m": -0.15625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.4375,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.46875,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.5,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.53125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.5625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.59375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.625,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.65625,
+          "y_m": -0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.6875,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.71875,
+          "y_m": -0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.75,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.78125,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.8125,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.84375,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.875,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.90625,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.9375,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.96875,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.03125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.0625,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.09375,
+          "y_m": -0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.125,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.15625,
+          "y_m": -0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.1875,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.21875,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.25,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.28125,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.3125,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.34375,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.375,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.40625,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.4375,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.46875,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.5,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.53125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.5625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.59375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 2.625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        }
+      ],
+      "expected": {
+        "phase_model": "concentric_only",
+        "phase_model_reason": null,
+        "consumer_breaks": [],
+        "consumer_reps": [
+          {
+            "index": 0,
+            "start_frame": 40,
+            "end_frame": 50,
+            "frame_count": 11,
+            "run_start_index": 38,
+            "run_end_index": 48,
+            "start_time_s": 1.21875,
+            "end_time_s": 1.53125,
+            "duration_s": 0.313,
+            "mean_velocity_mps": 1.455,
+            "peak_velocity_mps": 2,
+            "rom_cm": 48.44,
+            "complete": true,
+            "exclusion": null
+          }
+        ],
+        "reps": [
+          {
+            "rep_index": 0,
+            "start_sample_index": 39,
+            "end_sample_index": 49,
+            "start_timestamp_s": 1.21875,
+            "end_timestamp_s": 1.53125,
+            "interval_start_sample_index": 38,
+            "interval_start_timestamp_s": 1.1875,
+            "completeness": "complete",
+            "preceding_descent_cm": 48.4375,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.34375,
+              "rom_m": 0.5,
+              "mean_velocity_mps": 1.4545454545454546,
+              "peak_velocity_mps": 2.0,
+              "peak_timestamp_s": 1.3125,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 1.4545454545454546,
+              "peak_velocity_mps": 2.0,
+              "rom_cm": 48.4375
+            },
+            "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": [
+          {
+            "start_sample_index": 60,
+            "end_sample_index": 63,
+            "rise_cm": 7.8125,
+            "reason": "below_min_rise"
+          },
+          {
+            "start_sample_index": 76,
+            "end_sample_index": 80,
+            "rise_cm": 10.9375,
+            "reason": "below_relative_rise"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rejected-run-alone-is-accepted",
+      "lift_shape": "back_squat_like",
+      "description": "The same 10.9 cm rep as in the previous case, in a clip that does not contain the 48 cm rep. It is detected here: which reps exist depends on the other reps in the clip.",
+      "samples": [
+        {
+          "timestamp_s": 0.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.03125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.0625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.09375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.15625,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.1875,
+          "y_m": -0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.21875,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.25,
+          "y_m": -0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.28125,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.3125,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.34375,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.375,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.40625,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.4375,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.46875,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.53125,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5625,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.59375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.65625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.6875,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.71875,
+          "y_m": 0.0,
+          "confidence": 1.0
+        }
+      ],
+      "expected": {
+        "phase_model": "concentric_only",
+        "phase_model_reason": null,
+        "consumer_breaks": [],
+        "consumer_reps": [
+          {
+            "index": 0,
+            "start_frame": 16,
+            "end_frame": 20,
+            "frame_count": 5,
+            "run_start_index": 14,
+            "run_end_index": 18,
+            "start_time_s": 0.46875,
+            "end_time_s": 0.59375,
+            "duration_s": 0.125,
+            "mean_velocity_mps": 0.8,
+            "peak_velocity_mps": 1,
+            "rom_cm": 10.94,
+            "complete": true,
+            "exclusion": null
+          }
+        ],
+        "reps": [
+          {
+            "rep_index": 0,
+            "start_sample_index": 15,
+            "end_sample_index": 19,
+            "start_timestamp_s": 0.46875,
+            "end_timestamp_s": 0.59375,
+            "interval_start_sample_index": 14,
+            "interval_start_timestamp_s": 0.4375,
+            "completeness": "complete",
+            "preceding_descent_cm": 10.9375,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.15625,
+              "rom_m": 0.125,
+              "mean_velocity_mps": 0.8,
+              "peak_velocity_mps": 1.0,
+              "peak_timestamp_s": 0.5,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 0.8,
+              "peak_velocity_mps": 1.0,
+              "rom_cm": 10.9375
+            },
+            "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": []
+      }
+    },
+    {
+      "id": "zero-velocity-frame-inside-ascent",
+      "lift_shape": "back_squat_like",
+      "description": "A single zero-velocity frame at a sticking point splits one ascent into two positive runs. The first (18.8 cm) is the rep; the second (2.3 cm) is rejected, so the reported rep covers only the first fragment of the ascent.",
+      "samples": [
+        {
+          "timestamp_s": 0.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.03125,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.0625,
+          "y_m": -0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.09375,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.125,
+          "y_m": -0.0625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.15625,
+          "y_m": -0.078125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.1875,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.21875,
+          "y_m": -0.109375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.25,
+          "y_m": -0.125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.28125,
+          "y_m": -0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.3125,
+          "y_m": -0.15625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.34375,
+          "y_m": -0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.375,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.40625,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.4375,
+          "y_m": -0.1875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.46875,
+          "y_m": -0.171875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5,
+          "y_m": -0.140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.53125,
+          "y_m": -0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5625,
+          "y_m": -0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.59375,
+          "y_m": -0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.625,
+          "y_m": 0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.65625,
+          "y_m": 0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.6875,
+          "y_m": 0.03125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.71875,
+          "y_m": 0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.75,
+          "y_m": 0.0546875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.78125,
+          "y_m": 0.0546875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.8125,
+          "y_m": 0.0546875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.84375,
+          "y_m": 0.0546875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.875,
+          "y_m": 0.0546875,
+          "confidence": 1.0
+        }
+      ],
+      "expected": {
+        "phase_model": "concentric_only",
+        "phase_model_reason": null,
+        "consumer_breaks": [],
+        "consumer_reps": [
+          {
+            "index": 0,
+            "start_frame": 16,
+            "end_frame": 21,
+            "frame_count": 6,
+            "run_start_index": 14,
+            "run_end_index": 19,
+            "start_time_s": 0.46875,
+            "end_time_s": 0.625,
+            "duration_s": 0.156,
+            "mean_velocity_mps": 1.083,
+            "peak_velocity_mps": 1.5,
+            "rom_cm": 18.75,
+            "complete": true,
+            "exclusion": null
+          }
+        ],
+        "reps": [
+          {
+            "rep_index": 0,
+            "start_sample_index": 15,
+            "end_sample_index": 20,
+            "start_timestamp_s": 0.46875,
+            "end_timestamp_s": 0.625,
+            "interval_start_sample_index": 14,
+            "interval_start_timestamp_s": 0.4375,
+            "completeness": "complete",
+            "preceding_descent_cm": 15.625,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.1875,
+              "rom_m": 0.203125,
+              "mean_velocity_mps": 1.0833333333333333,
+              "peak_velocity_mps": 1.5,
+              "peak_timestamp_s": 0.53125,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 1.0833333333333333,
+              "peak_velocity_mps": 1.5,
+              "rom_cm": 18.75
+            },
+            "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": [
+          {
+            "start_sample_index": 22,
+            "end_sample_index": 24,
+            "rise_cm": 2.34375,
+            "reason": "below_min_rise"
           }
         ]
       }
@@ -2134,6 +3674,8 @@
             "start_frame": 6,
             "end_frame": 16,
             "frame_count": 11,
+            "run_start_index": 4,
+            "run_end_index": 14,
             "start_time_s": 0.15625,
             "end_time_s": 0.46875,
             "duration_s": 0.313,
@@ -2148,6 +3690,8 @@
             "start_frame": 42,
             "end_frame": 48,
             "frame_count": 7,
+            "run_start_index": 40,
+            "run_end_index": 46,
             "start_time_s": 1.28125,
             "end_time_s": 1.46875,
             "duration_s": 0.188,
@@ -2167,9 +3711,11 @@
             "end_timestamp_s": 0.46875,
             "interval_start_sample_index": 4,
             "interval_start_timestamp_s": 0.125,
-            "completeness": "complete",
+            "completeness": "undetermined",
+            "preceding_descent_cm": 0.0,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.34375,
               "rom_m": 0.5,
               "mean_velocity_mps": 1.4545454545454546,
@@ -2193,8 +3739,10 @@
             "interval_start_sample_index": 40,
             "interval_start_timestamp_s": 1.25,
             "completeness": "complete",
+            "preceding_descent_cm": 3.125,
+            "availability": "reported",
             "withheld_reasons": [],
-            "core": {
+            "core_primitive_values": {
               "duration_s": 0.21875,
               "rom_m": 0.34375,
               "mean_velocity_mps": 1.5714285714285714,
@@ -2208,6 +3756,332 @@
               "rom_cm": 31.25
             },
             "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": [
+          {
+            "start_sample_index": 24,
+            "end_sample_index": 29,
+            "rise_cm": 8.59375,
+            "reason": "below_min_rise"
+          }
+        ]
+      }
+    },
+    {
+      "id": "clean-and-jerk-drive-below-half-pull",
+      "lift_shape": "clean_and_jerk_like",
+      "description": "The same movement with a shorter drive (14 cm against a 48 cm pull). The generic rule reports one rep, the pull, and silently drops both the recovery and the drive as rejected runs.",
+      "samples": [
+        {
+          "timestamp_s": 0.0,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.03125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.0625,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.09375,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.125,
+          "y_m": 0.0,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.15625,
+          "y_m": 0.015625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.1875,
+          "y_m": 0.046875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.21875,
+          "y_m": 0.09375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.25,
+          "y_m": 0.15625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.28125,
+          "y_m": 0.21875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.3125,
+          "y_m": 0.28125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.34375,
+          "y_m": 0.34375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.375,
+          "y_m": 0.40625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.40625,
+          "y_m": 0.453125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.4375,
+          "y_m": 0.484375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.46875,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5,
+          "y_m": 0.484375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.53125,
+          "y_m": 0.46875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.5625,
+          "y_m": 0.453125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.59375,
+          "y_m": 0.4375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.625,
+          "y_m": 0.421875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.65625,
+          "y_m": 0.40625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.6875,
+          "y_m": 0.40625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.71875,
+          "y_m": 0.40625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.75,
+          "y_m": 0.4140625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.78125,
+          "y_m": 0.4296875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.8125,
+          "y_m": 0.453125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.84375,
+          "y_m": 0.4765625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.875,
+          "y_m": 0.4921875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.90625,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.9375,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 0.96875,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.03125,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.0625,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.09375,
+          "y_m": 0.5,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.125,
+          "y_m": 0.484375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.15625,
+          "y_m": 0.46875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.1875,
+          "y_m": 0.453125,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.21875,
+          "y_m": 0.4375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.25,
+          "y_m": 0.4375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.28125,
+          "y_m": 0.46875,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.3125,
+          "y_m": 0.515625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.34375,
+          "y_m": 0.5625,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.375,
+          "y_m": 0.59375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.40625,
+          "y_m": 0.609375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.4375,
+          "y_m": 0.609375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.46875,
+          "y_m": 0.609375,
+          "confidence": 1.0
+        },
+        {
+          "timestamp_s": 1.5,
+          "y_m": 0.609375,
+          "confidence": 1.0
+        }
+      ],
+      "expected": {
+        "phase_model": "lift_specific_required",
+        "phase_model_reason": "The generic concentric rule keeps only the pull and rejects the recovery and the drive, so a clean-and-jerk would be reported as a pull alone. Phase boundaries need a lift-specific model.",
+        "consumer_breaks": [],
+        "consumer_reps": [
+          {
+            "index": 0,
+            "start_frame": 6,
+            "end_frame": 16,
+            "frame_count": 11,
+            "run_start_index": 4,
+            "run_end_index": 14,
+            "start_time_s": 0.15625,
+            "end_time_s": 0.46875,
+            "duration_s": 0.313,
+            "mean_velocity_mps": 1.455,
+            "peak_velocity_mps": 2,
+            "rom_cm": 48.44,
+            "complete": true,
+            "exclusion": null
+          }
+        ],
+        "reps": [
+          {
+            "rep_index": 0,
+            "start_sample_index": 5,
+            "end_sample_index": 15,
+            "start_timestamp_s": 0.15625,
+            "end_timestamp_s": 0.46875,
+            "interval_start_sample_index": 4,
+            "interval_start_timestamp_s": 0.125,
+            "completeness": "undetermined",
+            "preceding_descent_cm": 0.0,
+            "availability": "reported",
+            "withheld_reasons": [],
+            "core_primitive_values": {
+              "duration_s": 0.34375,
+              "rom_m": 0.5,
+              "mean_velocity_mps": 1.4545454545454546,
+              "peak_velocity_mps": 2.0,
+              "peak_timestamp_s": 0.25,
+              "confidence": 1.0
+            },
+            "consumer_unrounded": {
+              "mean_velocity_mps": 1.4545454545454546,
+              "peak_velocity_mps": 2.0,
+              "rom_cm": 48.4375
+            },
+            "mean_velocity_difference_mps": 0.0
+          }
+        ],
+        "rejected_runs": [
+          {
+            "start_sample_index": 24,
+            "end_sample_index": 29,
+            "rise_cm": 8.59375,
+            "reason": "below_min_rise"
+          },
+          {
+            "start_sample_index": 41,
+            "end_sample_index": 45,
+            "rise_cm": 14.0625,
+            "reason": "below_relative_rise"
           }
         ]
       }

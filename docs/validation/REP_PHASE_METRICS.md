@@ -82,8 +82,8 @@ These are real differences between items 3–4 (core primitives, which need an e
 
 Because the consumer's window starts one frame after the turnaround, a core interval that starts at
 the window's first frame would exclude a segment the consumer averages. Evaluated that way, the two
-means differ even on uniform sampling (by up to 0.05 m/s on 6–10 sample synthetic windows, the size
-of the provisional mean-velocity gate). Evaluated over the interval that starts at the sample before
+means differ even on uniform sampling (by roughly 0.01–0.10 m/s on the 6–16 sample synthetic windows
+in the reference cases, up to twice the provisional 0.05 m/s mean-velocity gate). Evaluated over the interval that starts at the sample before
 the window's first frame (Section 2), core covers exactly the consumer's segments, and:
 
 - the peak is identical by construction;
@@ -101,8 +101,15 @@ Other findings from the inventory:
 
 - Detection is concentric-only. The descent is never reported and is only the denominator of the
   completeness test. There is no eccentric, pause or lockout phase.
-- The completeness test is vacuously true when a rep starts at the series edge (no preceding descent
-  exists), so `complete` alone does not detect an edge-truncated rep.
+- The completeness test is vacuously true whenever no descent is observed before the run
+  (`descent <= 0`): at the series edge, but equally when a clip opens with the bar at rest on the floor
+  or with the lifter paused at the bottom. `complete` alone therefore does not mean a full rep was
+  observed; the reference case `deadlift-from-rest-no-prior-descent` pins this.
+- Runs that fail the rise rules (10 cm, or half of the largest rise anywhere in the clip) are never
+  reported as reps and leave no trace in the consumer's output. Which reps exist therefore depends on
+  the rest of the clip.
+- A single zero-velocity frame splits one ascent into two runs; the second fragment can be dropped by
+  the rise rules, so the reported rep covers only the first fragment.
 - `min_confidence` reaches the consumer only through core's rule that a below-threshold endpoint
   yields a null velocity. The consumer records it as provenance and applies no confidence rule of its
   own.
@@ -118,19 +125,20 @@ Each value a future Android screen may show, with its definition.
 
 Two terms are used. The **window** is what the segmentation rule reports: the first and last
 concentric frame, as sample indices. The **metric interval** is `[t(window first − 1), t(window last)]`:
-it starts at the turnaround sample, the one before the first upward frame. Its boundaries are sampled
-timestamps, so the core primitives accept it without interpolation, and every upward segment the rule
-counted lies wholly inside it.
+it starts at the sample before the window's first frame. That is the turnaround sample, unless the v2
+window trimmed leading sub-floor frames (at most 1 cm of rise), in which case it is the last trimmed
+frame (`leading-creep-trimmed-window`). Its boundaries are sampled timestamps, so the core primitives
+accept it without interpolation, and every upward segment the window counted lies wholly inside it.
 
 | Displayed value | Units | Axis, sign | Interval | Method |
 | --- | --- | --- | --- | --- |
 | Rep number | – | – | order of detected runs | segmentation rule |
-| Concentric start, end | s, decoded presentation timestamps | – | metric interval | turnaround sample, last concentric frame |
+| Concentric start, end | s, decoded presentation timestamps | – | metric interval | sample before the window's first frame; last concentric frame |
 | Duration | s | – | metric interval | `t_end − t_start` |
 | Concentric ROM | m (UI may present cm) | vertical, positive up | metric interval | core `range_of_motion` over the interval samples |
 | Mean concentric velocity | m/s | vertical, positive up | metric interval | core `mean_axis_velocity` |
 | Peak concentric velocity | m/s | vertical, positive up | segments inside the metric interval | core `peak_axis_velocity`, with its timestamp |
-| Completeness | `complete` / `incomplete` | – | whole run vs preceding descent | segmentation rule |
+| Completeness | `complete` / `incomplete` / `undetermined` | – | whole run vs preceding descent | Section 4 |
 | Availability | `reported` / `withheld` plus reasons | – | metric interval | Section 4 |
 | Data confidence | 0–1, not a probability | – | metric interval | minimum sample confidence in the interval |
 
@@ -138,10 +146,13 @@ Rules for every row:
 
 - Values are image-plane measurements under the scalar plate-diameter calibration. A numeric value
   does not override calibration warnings or the recording-support policy.
-- The label "mean concentric velocity" is shown only with the rule identity and version that produced
-  the window, and only for a lift whose profile is supported (Section 3). Until M1 evidence exists the
-  value carries the status from `ADR-0008`: unvalidated.
-- Euclidean peak speed, acceleration, power and force are not displayed. They are not validated
+- The label "mean concentric velocity" is **not used** until the boundary rule has been validated by
+  #79 / #58 evidence and the change that records that validation amends `KINEMATIC_METRICS.md`, which
+  currently forbids the label. Until then the value is shown as "mean upward velocity", with the rule id
+  and version and an unvalidated marker, and only for a lift whose profile is supported (Section 3).
+  The same applies to "peak concentric velocity".
+- Peak velocity is the maximum signed vertical component; ties keep the earliest segment (core
+  `peak_axis_velocity`). Euclidean peak speed, acceleration, power and force are not displayed. They are not validated
   metrics (`KINEMATIC_METRICS.md`), and barbell-derived values must not be presented as whole-body
   output.
 - Display rounding happens once, at presentation. Stored and exported values are unrounded `f64`.
@@ -171,44 +182,82 @@ label), and rep metrics are produced only for a declared lift that has a support
 | --- | --- | --- | --- |
 | 1 | Back squat | One descent and one ascent per rep; the pinned study has a squat slot; the bar rises monotonically during the concentric phase | M1 entry (ADR-0008) and the #79 / #58 outcomes for the rule |
 | 1, conditional | Snatch; clean without jerk | In the #79 study design with the same generic rule, but a single positive run per lift is **not established**: the bar rises during the pull, can drop briefly while the lifter moves under it, and rises again on recovery | #79 rep-count and pairing evidence per slot; otherwise moves to Stage 3 |
-| 2 | Deadlift; bench press | Different phase semantics: a deadlift rep can begin with the concentric phase (no preceding descent, so the edge rule withholds the first rep); a bench press has an unrack and chest pause. Same rule may suffice, but this is not demonstrated | separate evidence and a decision per lift |
+| 2 | Deadlift; bench press | Different phase semantics: a deadlift rep can begin with the concentric phase, so no descent precedes it and completeness is `undetermined` (and the first rep is withheld as well when the clip starts mid-pull); a bench press has an unrack and chest pause. Same rule may suffice, but this is not demonstrated | separate evidence and a decision per lift |
 | 3 | Clean and jerk; jerk; other multi-stage lifts | One lift contains several rises separated by eccentric or hold phases | a lift-specific phase model, its own ADR and evidence |
 
-Clean and jerk must not be treated as one generic positive-velocity run. The reference case
-`clean-and-jerk-shaped` pins the failure mode: a pull, a catch and recovery, then a dip and drive. The
-generic rule reports the pull and the drive as two reps and drops the recovery because its rise is
-under the 10 cm minimum. That case is a constructed shape, not a claim about real data. The 2026-10-02
-clean-and-jerk trial recorded in `VBT_WORKFLOW_PLAN.md` found 4 reps in 4 sets from both sources, but
-that shows the two sources agreed under one rule, not that the rule isolates the intended phase; it was
-also excluded from the formal study and re-implemented the rule for the check.
+Clean and jerk must not be treated as one generic positive-velocity run. Two reference cases pin two
+failure modes of a constructed pull, catch, recovery, dip and drive:
+
+- `clean-and-jerk-shaped`: the generic rule reports the pull and the drive as two reps and drops the
+  recovery because its rise is under the 10 cm minimum;
+- `clean-and-jerk-drive-below-half-pull`: with a drive under half of the pull's rise, the generic rule
+  reports the pull alone and rejects both the recovery and the drive.
+
+Which of these a real clean and jerk produces depends on the relative rises of its phases, so the result
+is unpredictable without a lift-specific model. These cases are constructed shapes, not claims about
+real data. The 2026-10-02 clean-and-jerk trial recorded in `VBT_WORKFLOW_PLAN.md` ran one set of four
+lifts and both sources found 4 reps. That shows the two sources agreed under one rule, not that the rule
+isolates the intended phase; the trial was also excluded from the formal study and re-implemented the
+rule for the check.
 
 For a declared lift without a supported profile the product shows the bar path and no rep or phase
 metrics, with an explicit "not supported for this lift" state.
 
-## 4. Gap, lost, low-confidence and incomplete behaviour
+## 4. Gap, lost, low-confidence, incomplete and rejected behaviour
 
-A detected rep is always listed. Its metrics are `reported` or `withheld`. A withheld rep shows its
-window and reasons and no numbers. It is never counted as a complete rep and never shown as zero.
+Every run that passes the rise rules is a rep and is always listed. Its metrics are `reported` or
+`withheld`. A withheld rep shows its window and reasons and no numbers. It is never counted as a
+complete rep and never shown as zero. In the reference file, `core_primitive_values` are intermediate
+values for checking the definitions; they are shown to a user only when `availability` is `reported`.
 
 | Reason | Condition | Source rule |
 | --- | --- | --- |
 | `unsupported_segment` | any sample in the metric interval is below `min_confidence`, or any interval exceeds `max_gap_s` | core `series_supported` |
-| `spans_gap` | a continuity break lies inside or at the edge of the rep's run: a null velocity or an interval above 1.5 × the median interval | consumer adapter break rule, adopted |
+| `spans_gap` | a continuity break lies inside or at the edge of the rep's run: a null velocity, or an interval above 1.5 × the median of all consecutive sample intervals in the Analysis's kinematic samples (an even count averages the two middle values) | consumer adapter break rule, adopted |
 | `touches_series_edge` | the run begins at the first usable frame or ends at the last | consumer adapter, adopted |
 
-Reasons are listed in that fixed order and may combine. The relative-gap reason is intentionally
-stricter than core: a 0.125 s interval is inside `max_gap_s = 0.2 s`, so core can still derive a
-velocity, but the rep is withheld because a peak or onset inside an under-sampled stretch could be
-missed. The reference case `relative-gap-inside-rep` records both facts.
+`unsupported_segment` may combine with either of the other two. `spans_gap` and `touches_series_edge`
+do not combine in rule version 1: the consumer reports one exclusion per rep and `spans_gap` takes
+precedence, which the reference cases pin. Reasons are listed in the order above.
 
-Completeness is separate from availability:
+The relative-gap reason is intentionally stricter than core: a 0.125 s interval is inside
+`max_gap_s = 0.2 s`, so core can still derive a velocity, but the rep is withheld because a peak or
+onset inside an under-sampled stretch could be missed (`relative-gap-inside-rep` records both facts).
+Lost observations appear to this rule only as timestamp gaps. A loss of a few frames at 30 fps stays
+within `max_gap_s`, so it is caught by `spans_gap` and not by `unsupported_segment`.
 
-- `incomplete` (ascent shorter than 0.85 × the preceding descent): the rep is reported, flagged as
-  partial, and excluded from set summaries and complete-rep counts by default. The partial count is
-  shown separately.
-- A rep that is both `incomplete` and withheld is shown as withheld.
-- Because `complete` is vacuously true at the series edge, `touches_series_edge` takes precedence over
-  the completeness flag.
+### Completeness
+
+Completeness compares the run's rise with the descent observed before it (the highest displacement
+since the previous rep's run ended, minus the displacement at the run's start). It has three states:
+
+| State | Condition | Treatment |
+| --- | --- | --- |
+| `complete` | descent observed and rise ≥ 0.85 × descent | counted |
+| `incomplete` | descent observed and rise < 0.85 × descent | reported, flagged partial, excluded from set summaries and complete-rep counts by default; counted separately |
+| `undetermined` | no descent observed (`descent <= 0`) | reported, flagged, treated like `incomplete` for summaries; the consumer reports these as `complete` |
+
+`undetermined` covers the series edge, a clip that opens with the bar at rest, and a first rep that
+starts from a pause. It is independent of `touches_series_edge`. The contract states no minimum descent:
+under tracking jitter a tiny positive descent is classified by the same 0.85 rule, and choosing a floor
+is deferred to evidence. A rep that is withheld is shown as withheld whatever its completeness.
+
+### Rejected runs
+
+A positive-velocity run that fails the rise rules is not a rep: its rise is under 10 cm
+(`below_min_rise`), or under 0.5 × the largest run rise anywhere in the clip (`below_relative_rise`).
+The consumer drops these silently. The rule returns them as `rejected_runs` (run window, rise, reason)
+so that a failed attempt, a fragment or a dropped phase is visible to the caller:
+
+- the relative threshold depends on the whole clip, so trimming or concatenating clips changes which
+  reps exist (`rejected-runs-depend-on-clip`, `rejected-run-alone-is-accepted`);
+- a zero-velocity frame at a sticking point splits an ascent, and a small second fragment is rejected,
+  so the reported rep covers only the first fragment (`zero-velocity-frame-inside-ascent`);
+- a clean and jerk can lose its recovery or drive the same way (Section 3).
+
+`rejected_runs` is a diagnostic, not a displayed value: it lists every positive-velocity run that was
+not accepted, including noise-sized ones, and the caller decides what to surface. Whether a rejected run
+adjacent to a rep should mark that rep ambiguous is not decided here; it needs evidence on real clips.
 
 No rep boundary is interpolated, and no value is produced across an unsupported span.
 
@@ -223,7 +272,14 @@ constants in Section 1, with these differences and no others:
 - availability is decided by Section 4 and core `series_supported`, not left to a caller;
 - metric values are the core definitions in Section 2 over the metric interval, not the consumer's
   sample mean, peak and endpoint ROM over its window;
-- results carry the rule id, version, every constant above and the kinematics provenance.
+- results carry the rule id, version, every constant above and the kinematics provenance;
+- it returns `rejected_runs` (Section 4) and the three-state completeness.
+
+The rule is defined on the Analysis's recorded kinematics layer. Its input layer, filter identity and
+`backward-difference@1` parameters are part of the result's provenance, and a result is valid only for
+the provenance it carries. This contract chooses no filter: that belongs to #57 and #79. The input
+matters. The 2026-10-02 trial recorded that raw frame differencing delayed rep onset by 0.08–0.15 s on
+three of four reps, and any `vy <= 0` frame mid-ascent splits a run (Section 4).
 
 Any change to a constant, to the window logic or to the metric definitions is a new version. Version 1
 readers fail closed on other versions.
@@ -237,20 +293,27 @@ and `python validation/tools/schema_check.py`.
 
 Inputs are dyadic: sample times and velocities are exact binary fractions, so every expected value is
 exactly reproducible in `f64` across Rust, Kotlin, Dart and Python. Each case records the pinned
-consumer's output (`consumer_reps`, `consumer_breaks`), the core values over the metric interval
-(`core`, with `interval_start_sample_index`), the consumer's unrounded values, the explicit mean
-difference, the completeness and the withheld reasons.
+consumer's output (`consumer_reps` with its run indices, `consumer_breaks`), the core primitive values
+over the metric interval (`core_primitive_values`, with `interval_start_sample_index`), the consumer's
+unrounded values, the explicit mean difference, the preceding descent and completeness state, the
+availability and withheld reasons, and the `rejected_runs`.
 
 | Case | What it pins |
 | --- | --- |
 | `single-rep-constant-velocity` | the simplest rep; mean and peak coincide |
-| `three-rep-sticking-point-and-incomplete` | rep count of 3, the v2 edge trim, a sticking point, an incomplete third rep; mean and peak coincide on uniform sampling |
+| `three-rep-sticking-point-and-incomplete` | rep count of 3, the v2 trailing trim, a sticking point, an incomplete third rep; mean and peak coincide on uniform sampling |
+| `leading-creep-trimmed-window` | the v2 leading trim: the metric interval starts at the last trimmed frame |
 | `irregular-timestamps-ascent` | variable frame spacing: time-weighted core mean 0.75 m/s vs consumer sample mean 0.643 m/s, same peak |
 | `relative-gap-inside-rep` | core still derives; policy withholds (`spans_gap`) |
 | `long-gap-inside-rep` | `unsupported_segment` and `spans_gap` together |
 | `low-confidence-inside-rep` | below-threshold sample: both adjacent derivatives unsupported |
-| `series-edge-truncated-pulls` | `touches_series_edge`; vacuous completeness at the start |
+| `series-edge-truncated-pulls` | `touches_series_edge`; `undetermined` completeness at the start |
+| `deadlift-from-rest-no-prior-descent` | `undetermined` completeness without touching the edge; the consumer says `complete` |
+| `rejected-runs-depend-on-clip` | `below_min_rise` and `below_relative_rise` rejected runs |
+| `rejected-run-alone-is-accepted` | the same small rep accepted when the large rep is absent |
+| `zero-velocity-frame-inside-ascent` | a split ascent: the second fragment is rejected |
 | `clean-and-jerk-shaped` | `lift_specific_required`: generic rule yields two reps and drops the recovery |
+| `clean-and-jerk-drive-below-half-pull` | `lift_specific_required`: generic rule yields the pull alone |
 
 ### Checks and tolerances
 
@@ -258,7 +321,7 @@ difference, the completeness and the withheld reasons.
 | --- | --- | --- |
 | Case file consistency | `python -m unittest discover -v -s validation/tests -p 'test_rep_metrics_reference.py'` | expected values follow the `KINEMATIC_METRICS.md` definitions and the consumer arithmetic; policy fields follow Section 4 |
 | Schema | `python validation/tools/schema_check.py` | the case file is well-formed |
-| Pinned-consumer parity | `node --experimental-strip-types research/vbt-workflow/rep_reference_cases_consumer.mjs check <consumer-app-dir> validation/reference-cases/rep-metrics-v1.json` with the consumer checkout at the pinned commit | the recorded consumer output is what the pin produces |
+| Pinned-consumer parity | `node --experimental-strip-types research/vbt-workflow/rep_reference_cases_consumer.mjs check <consumer-app-dir> validation/reference-cases/rep-metrics-v1.json` with the consumer checkout at the pinned commit | the recorded consumer output is what the pin produces. Run by hand: it needs the sibling checkout and is not part of CI, so the consumer boundaries in the file are taken as given by the Python test |
 
 Tolerances a future implementation is held to:
 
@@ -267,15 +330,18 @@ Tolerances a future implementation is held to:
   absolute difference at most `1e-9` on these dyadic inputs. Non-dyadic real recordings are compared
   with the existing narrow canonical floating-point tolerance, not a looser one.
 - **Consumer-parity profile** (if implemented for #79 comparison): equal after the legacy rounding, 3 dp
-  for time and velocity and 2 dp for cm, rounding half up. Rounded values are compared; stored values
-  are not rounded.
+  for time and velocity and 2 dp for cm, using ECMAScript `Math.round` semantics (ties toward +∞; the
+  reference values are positive). Rounded values are compared; stored values are not rounded.
 - **Cross-binding parity:** the Android binding and the native CLI return byte-identical serialized
   results for every case. Because both call the same Rust implementation, this is a binding test, not a
   second-implementation test.
 - **Consumer golden corpus:** the pin's `concentricSegmentation.golden.json` (200 seeded synthetic
   series, 30 and 60 fps) should be replayed through the Rust segmentation primitive. The primitive
   therefore takes the same frame shape (time, velocity, displacement) internally, with an adapter
-  from core samples. Boundaries and rep flags must match exactly.
+  from core samples. Boundaries and rep flags must match exactly. The golden file holds outputs only;
+  its inputs come from a seeded generator in the consumer's test code. The implementing task must either
+  export the inputs through a bridge like the one used here or port the generator, which is copied code
+  and carries the MIT notice.
 
 ## 7. Ownership, portability and persistence
 
@@ -289,8 +355,8 @@ Tolerances a future implementation is held to:
   MIT licence notice travel with it.
 - **Persistence:** rep results are a derived, recomputable view of a validated Analysis, a declared
   lift profile and a rule version. They are **not** added to `analysis-v1`: that schema, its version
-  constants and its golden are unchanged, and `ANALYSIS_SCHEMA.md` already requires protocol results to
-  be typed, discriminated and explicit about units and definitions rather than an untyped map. An app
+  constants and its golden are unchanged, and `ANALYSIS_SCHEMA.md` recommends that protocol results be
+  typed, discriminated and explicit about units and definitions rather than an untyped map. An app
   may cache a result keyed by the Analysis digest, rule id and version, and parameters, and must
   recompute on any mismatch.
 - **Export:** a rep-metrics export, if wanted, is a new versioned sidecar document that references the

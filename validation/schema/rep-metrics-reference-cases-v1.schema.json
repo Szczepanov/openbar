@@ -56,7 +56,7 @@
             "time_s_dp": { "type": "integer", "minimum": 0 },
             "velocity_mps_dp": { "type": "integer", "minimum": 0 },
             "rom_cm_dp": { "type": "integer", "minimum": 0 },
-            "mode": { "const": "round_half_up" }
+            "mode": { "const": "ecmascript_math_round" }
           }
         }
       }
@@ -104,7 +104,8 @@
         "phase_model_reason",
         "consumer_breaks",
         "consumer_reps",
-        "reps"
+        "reps",
+        "rejected_runs"
       ],
       "properties": {
         "phase_model": { "enum": ["concentric_only", "lift_specific_required"] },
@@ -129,7 +130,22 @@
         "reps": {
           "type": "array",
           "items": { "$ref": "#/$defs/rep" }
+        },
+        "rejected_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rejected_run" }
         }
+      }
+    },
+    "rejected_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_sample_index", "end_sample_index", "rise_cm", "reason"],
+      "properties": {
+        "start_sample_index": { "type": "integer", "minimum": 0 },
+        "end_sample_index": { "type": "integer", "minimum": 1 },
+        "rise_cm": { "type": "number" },
+        "reason": { "enum": ["below_min_rise", "below_relative_rise"] }
       }
     },
     "consumer_rep": {
@@ -140,6 +156,8 @@
         "start_frame",
         "end_frame",
         "frame_count",
+        "run_start_index",
+        "run_end_index",
         "start_time_s",
         "end_time_s",
         "duration_s",
@@ -154,6 +172,8 @@
         "start_frame": { "type": "integer", "minimum": 1 },
         "end_frame": { "type": "integer", "minimum": 1 },
         "frame_count": { "type": "integer", "minimum": 1 },
+        "run_start_index": { "type": "integer", "minimum": 0 },
+        "run_end_index": { "type": "integer", "minimum": 0 },
         "start_time_s": { "type": "number", "minimum": 0 },
         "end_time_s": { "type": "number", "minimum": 0 },
         "duration_s": { "type": "number", "minimum": 0 },
@@ -206,8 +226,10 @@
         "interval_start_sample_index",
         "interval_start_timestamp_s",
         "completeness",
+        "preceding_descent_cm",
+        "availability",
         "withheld_reasons",
-        "core",
+        "core_primitive_values",
         "consumer_unrounded",
         "mean_velocity_difference_mps"
       ],
@@ -219,13 +241,15 @@
         "end_timestamp_s": { "type": "number", "minimum": 0 },
         "interval_start_sample_index": { "type": "integer", "minimum": 0 },
         "interval_start_timestamp_s": { "type": "number", "minimum": 0 },
-        "completeness": { "enum": ["complete", "incomplete"] },
+        "completeness": { "enum": ["complete", "incomplete", "undetermined"] },
+        "preceding_descent_cm": { "type": "number" },
+        "availability": { "enum": ["reported", "withheld"] },
         "withheld_reasons": {
           "type": "array",
           "uniqueItems": true,
           "items": { "enum": ["unsupported_segment", "spans_gap", "touches_series_edge"] }
         },
-        "core": {
+        "core_primitive_values": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/core_values" }]
         },
         "consumer_unrounded": { "$ref": "#/$defs/consumer_unrounded" },
