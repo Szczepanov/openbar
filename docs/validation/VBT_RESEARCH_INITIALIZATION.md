@@ -235,6 +235,10 @@ research/opencv-tracking/.venv/Scripts/python.exe research/vbt-workflow/vbt_sess
 
 ## Limits
 
+The [#178 automatic plate-selection plan](../plans/AUTOMATIC_PLATE_SELECTION_PLAN.md) audits this
+boundary and proposes a future plate-only import/correction specification and evaluation protocol.
+It does not extend the #113 authorization, change these records or select a production detector.
+
 - `init-research` runs no tracking or kinematics; `run-research` does, with outputs under
   `machine-run/` only. Neither changes the canonical `Analysis`.
 - Neither command writes a #95 seed, CSV, the personal manifest, `session.html`, `session-input.csv`

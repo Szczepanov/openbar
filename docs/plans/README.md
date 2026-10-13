@@ -13,6 +13,12 @@ Use the repository documentation layers consistently:
 
 A plan does not override an accepted ADR, schema, validation contract or scope fence.
 
+## M1 preparation
+
+- [Automatic plate selection (#178)](AUTOMATIC_PLATE_SELECTION_PLAN.md): #95/#113 reuse audit,
+  proposed import/correction behavior and development evaluation protocol. Prototype implementation
+  is deferred pending a separate owner scope decision; this plan does not authorize M1 entry.
+
 ## Recommended plan structure
 
 Plans should be executable by another engineer/agent without reconstructing the original reasoning.
