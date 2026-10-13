@@ -144,12 +144,15 @@ def run_rise_cm(frames: list[dict], run: tuple[int, int]) -> float:
     return frames[run[1]]["displacement_cm"] - frames[run[0]]["displacement_cm"]
 
 
-def rise_threshold_cm(frames: list[dict], runs: list[tuple[int, int]]) -> float:
-    """max(10 cm, 0.5 x the largest run rise anywhere in the series)."""
+def rise_threshold_cm(frames: list[dict], runs: list[tuple[int, int]]) -> float | None:
+    """max(10 cm, 0.5 x the largest run rise anywhere in the series); None when there is no run."""
+    if not runs:
+        return None
     return max(MIN_REP_RISE_CM, MIN_REP_RISE_FRACTION * max(run_rise_cm(frames, run) for run in runs))
 
 
 def rejection_reason(rise_cm: float) -> str:
+    """below_min_rise wins when both rules reject the run."""
     return "below_min_rise" if rise_cm < MIN_REP_RISE_CM else "below_relative_rise"
 
 
@@ -161,8 +164,12 @@ def preceding_descent_cm(frames: list[dict], previous_rep_run_end: int, run_star
 
 
 def completeness_state(consumer_complete: bool, descent_cm: float) -> str:
-    """`undetermined` when no preceding descent was observed (the consumer reports it as complete)."""
-    if descent_cm <= 0:
+    """`undetermined` when the preceding descent is below the minimum rep rise (10 cm).
+
+    A descent that small cannot be a reference for a full rep. The consumer reports a run with no
+    descent at all as complete, and judges a tiny positive descent by the 0.85 rule.
+    """
+    if descent_cm < MIN_REP_RISE_CM:
         return "undetermined"
     return "complete" if consumer_complete else "incomplete"
 
@@ -257,14 +264,35 @@ class RepMetricsReferenceTests(unittest.TestCase):
                 self.assertEqual(rep["withheld_reasons"], reasons, case["id"])
                 self.assertEqual(rep["availability"], "withheld" if reasons else "reported", case["id"])
 
-    def test_withheld_reasons_follow_a_single_consumer_exclusion(self) -> None:
-        # The pinned consumer reports one exclusion per rep and spans_gap pre-empts the edge reason,
-        # so these two never combine in rule version 1. unsupported_segment may combine with either.
-        for case in self.document["cases"]:
-            for rep in case["expected"]["reps"]:
+    def test_gap_exclusion_takes_precedence_over_the_series_edge(self) -> None:
+        # The consumer reports one exclusion per rep. In this case the run starts at the first usable
+        # frame (it touches the series edge) and also contains a continuity break; spans_gap wins.
+        case = next(c for c in self.document["cases"] if c["id"] == "series-edge-run-with-gap")
+        rep, consumer = case["expected"]["reps"][0], case["expected"]["consumer_reps"][0]
+        self.assertEqual(consumer["run_start_frame_index"], 0)
+        self.assertEqual(consumer["exclusion"], "spans_gap")
+        self.assertEqual(rep["withheld_reasons"], ["spans_gap"])
+        for other in self.document["cases"]:
+            for other_rep in other["expected"]["reps"]:
                 self.assertFalse(
-                    {"spans_gap", "touches_series_edge"} <= set(rep["withheld_reasons"]), case["id"]
+                    {"spans_gap", "touches_series_edge"} <= set(other_rep["withheld_reasons"]), other["id"]
                 )
+
+    def test_leading_creep_case_actually_trims_the_window(self) -> None:
+        case = next(c for c in self.document["cases"] if c["id"] == "leading-creep-trimmed-window")
+        frames = usable_frames(case["samples"], self.config)
+        rep, consumer = case["expected"]["reps"][0], case["expected"]["consumer_reps"][0]
+        run_start_sample = frames[consumer["run_start_frame_index"]]["sample_index"]
+        self.assertGreater(rep["start_sample_index"], run_start_sample)
+        # The metric interval starts at the last trimmed frame, not at the turnaround sample.
+        self.assertEqual(rep["interval_start_sample_index"], rep["start_sample_index"] - 1)
+        self.assertGreaterEqual(rep["interval_start_sample_index"], run_start_sample)
+
+    def test_a_clip_without_any_accepted_rep_still_reports_its_rejected_runs(self) -> None:
+        case = next(c for c in self.document["cases"] if c["id"] == "no-rep-only-a-rejected-run")
+        self.assertEqual(case["expected"]["reps"], [])
+        self.assertEqual(case["expected"]["consumer_reps"], [])
+        self.assertEqual([run["reason"] for run in case["expected"]["rejected_runs"]], ["below_min_rise"])
 
     def test_runs_are_accepted_or_rejected_by_the_rise_rules(self) -> None:
         for case in self.document["cases"]:
@@ -274,12 +302,12 @@ class RepMetricsReferenceTests(unittest.TestCase):
             accepted = {
                 (run[0], run[1])
                 for run in runs
-                if run_rise_cm(frames, run) >= threshold
+                if threshold is not None and run_rise_cm(frames, run) >= threshold
             }
             reps = case["expected"]["consumer_reps"]
             self.assertEqual(
                 accepted,
-                {(rep["run_start_index"], rep["run_end_index"]) for rep in reps},
+                {(rep["run_start_frame_index"], rep["run_end_frame_index"]) for rep in reps},
                 case["id"],
             )
             rejected = [
@@ -299,17 +327,20 @@ class RepMetricsReferenceTests(unittest.TestCase):
             frames = usable_frames(case["samples"], self.config)
             previous_end = -1
             for rep, consumer in zip(case["expected"]["reps"], case["expected"]["consumer_reps"]):
-                descent = preceding_descent_cm(frames, previous_end, consumer["run_start_index"])
+                descent = preceding_descent_cm(frames, previous_end, consumer["run_start_frame_index"])
                 self.assertEqual(rep["preceding_descent_cm"], descent, case["id"])
                 self.assertEqual(rep["completeness"], completeness_state(consumer["complete"], descent), case["id"])
-                run = (consumer["run_start_index"], consumer["run_end_index"])
-                if descent > 0:
+                run = (consumer["run_start_frame_index"], consumer["run_end_frame_index"])
+                if descent <= 0:
+                    # The consumer treats "no descent observed" as complete.
+                    self.assertTrue(consumer["complete"], case["id"])
+                else:
                     self.assertEqual(
                         consumer["complete"],
                         run_rise_cm(frames, run) >= COMPLETE_DESCENT_FRACTION * descent,
                         case["id"],
                     )
-                previous_end = consumer["run_end_index"]
+                previous_end = consumer["run_end_frame_index"]
 
     def test_core_and_consumer_agree_on_peak_and_differ_only_where_documented(self) -> None:
         tolerance = self.document["tolerances"]["core_abs"]

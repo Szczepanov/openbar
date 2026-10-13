@@ -47,7 +47,7 @@ toolkit-neutral.
 
 ### 2. Rule identity: `concentric-reps@1`
 
-The first portable rule matches the detection, completeness and window behaviour of
+The first portable rule matches the detection and window behaviour of
 `concentric-segmentation-v2` at the pinned commit, with the pinned constants (10 cm minimum rise, 0.5 ×
 largest rise, 0.85 completeness fraction, 0.05 m/s boundary floor, 1 cm maximum trim, 1.5 × median
 interval gap factor). Those constants are engineering choices recorded by the consumer; this repository
@@ -74,9 +74,9 @@ so core accepts it without interpolation, and every upward segment the rule coun
 | Value | Definition |
 | --- | --- |
 | Duration | `t_end − t_start` of the metric interval |
-| Concentric ROM | core `range_of_motion` over the interval samples (vertical, +Y up) |
-| Mean concentric velocity | core `mean_axis_velocity` over the interval |
-| Peak concentric velocity | core `peak_axis_velocity` over the interval, with timestamp |
+| Upward ROM | core `range_of_motion` over the interval samples (vertical, +Y up) |
+| Mean upward velocity | core `mean_axis_velocity` over the interval |
+| Peak upward velocity | core `peak_axis_velocity` over the interval, with timestamp |
 | Completeness, availability, confidence | section 4 |
 
 Over this interval core covers exactly the segments the consumer averages, so the peak equals the
@@ -88,10 +88,10 @@ mean × duration ≠ ROM inconsistency. The consumer's unweighted sample mean is
 is named differently and every comparison discloses the difference. Euclidean peak speed, acceleration,
 power and force are not displayed.
 
-The product label "mean concentric velocity" is **not used** until #79 / #58 evidence validates the
-boundary rule and the change that records that validation amends `KINEMATIC_METRICS.md`, which
-currently forbids the label. Until then the value is shown as "mean upward velocity" with the rule id,
-version and an unvalidated marker, for a supported lift only.
+The word "concentric" in a product label (mean or peak concentric velocity, concentric ROM) is **not
+used** until #79 / #58 evidence validates the boundary rule and the change that records that validation
+amends `KINEMATIC_METRICS.md`, which currently forbids the label. Until then the values are shown as
+"upward" with the rule id, version and an unvalidated marker, for a supported lift only.
 
 ### 4. Gaps, lost data, low confidence, incomplete reps and rejected runs
 
@@ -105,16 +105,19 @@ Every run that passes the rise rules is a rep and is always listed. Its metrics 
   under-sampled stretch cannot be missed.
 - `touches_series_edge`: the run begins at the first or ends at the last usable frame.
 
-`spans_gap` and `touches_series_edge` do not combine in version 1 (one consumer exclusion per rep).
+`spans_gap` and `touches_series_edge` do not combine in version 1 (one consumer exclusion per rep;
+`spans_gap` takes precedence, as the `series-edge-run-with-gap` case pins).
 
 Completeness has three states. `complete` and `incomplete` compare the rise with 0.85 × the preceding
-descent. `undetermined` applies when no descent was observed, which happens at the series edge but also
-when a clip opens with the bar at rest or paused; the consumer reports these reps as `complete`, so the
-edge reason alone does not cover them. `incomplete` and `undetermined` reps are reported and flagged, are
-excluded from set summaries and complete-rep counts by default, and are counted separately.
+descent. `undetermined` applies when that descent is below the minimum rep rise of 10 cm (an existing
+constant), which includes no descent at all. That happens at the series edge, but also when a clip opens
+with the bar at rest or paused, and under tracking jitter before a pull. The consumer reports a run with
+no descent as `complete`, so the edge reason alone does not cover these reps. `incomplete` and
+`undetermined` reps are reported and flagged, are excluded from set summaries and complete-rep counts by
+default, and are counted separately.
 
 A positive-velocity run that fails the rise rules (under 10 cm, or under half of the largest rise
-anywhere in the clip) is not a rep. The consumer drops it silently. The rule returns these as
+anywhere in the clip; the first wins when both apply) is not a rep. The consumer drops it silently. The rule returns these as
 `rejected_runs` with their window, rise and reason, so a failed attempt, a fragment of a split ascent or
 a dropped phase is visible. Because the relative threshold depends on the whole clip, trimming or
 concatenating clips changes which reps exist; the reference cases pin this. Whether a rejected run next
@@ -148,7 +151,7 @@ Executable expectations live in `validation/reference-cases/rep-metrics-v1.json`
 `rep-metrics-reference-cases-v1`. Inputs are dyadic, so expected values are bit-reproducible. The
 checks are:
 
-- boundaries, rep count, completeness and withheld reasons: exact;
+- boundaries, rep count, completeness, withheld reasons, and rejected-run windows and reasons: exact;
 - core values: absolute difference at most `1e-9` on the dyadic cases, the existing narrow canonical
   tolerance on real data;
 - consumer-parity profile, if built for #79 comparison: equal after the consumer's legacy rounding;

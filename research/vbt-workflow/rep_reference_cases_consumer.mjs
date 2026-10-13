@@ -80,7 +80,7 @@ function consumerOutput(parser, segmentation, testCase, config) {
         breaks: parsed.breaks.map(({ beforeIndex, afterIndex, reason }) => ({ before_index: beforeIndex, after_index: afterIndex, reason })),
         reps: parsed.reps.map((rep, position) => ({
             index: rep.index, start_frame: rep.startFrame, end_frame: rep.endFrame, frame_count: rep.frameCount,
-            run_start_index: segments[position].runStartIndex, run_end_index: segments[position].runEndIndex,
+            run_start_frame_index: segments[position].runStartIndex, run_end_frame_index: segments[position].runEndIndex,
             start_time_s: rep.startTimeS, end_time_s: rep.endTimeS, duration_s: rep.durationS,
             mean_velocity_mps: rep.meanVelocityMps, peak_velocity_mps: rep.peakVelocityMps,
             rom_cm: rep.romCm, complete: rep.complete, exclusion: rep.exclusion,

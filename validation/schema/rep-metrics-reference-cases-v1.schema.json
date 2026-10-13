@@ -156,8 +156,8 @@
         "start_frame",
         "end_frame",
         "frame_count",
-        "run_start_index",
-        "run_end_index",
+        "run_start_frame_index",
+        "run_end_frame_index",
         "start_time_s",
         "end_time_s",
         "duration_s",
@@ -172,8 +172,12 @@
         "start_frame": { "type": "integer", "minimum": 1 },
         "end_frame": { "type": "integer", "minimum": 1 },
         "frame_count": { "type": "integer", "minimum": 1 },
-        "run_start_index": { "type": "integer", "minimum": 0 },
-        "run_end_index": { "type": "integer", "minimum": 0 },
+        "run_start_frame_index": {
+          "description": "Index into the consumer's usable frames (samples with a velocity), not into the sample array.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "run_end_frame_index": { "type": "integer", "minimum": 0 },
         "start_time_s": { "type": "number", "minimum": 0 },
         "end_time_s": { "type": "number", "minimum": 0 },
         "duration_s": { "type": "number", "minimum": 0 },
@@ -242,7 +246,11 @@
         "interval_start_sample_index": { "type": "integer", "minimum": 0 },
         "interval_start_timestamp_s": { "type": "number", "minimum": 0 },
         "completeness": { "enum": ["complete", "incomplete", "undetermined"] },
-        "preceding_descent_cm": { "type": "number" },
+        "preceding_descent_cm": {
+          "description": "Centimetres, in the consumer's arithmetic, so the value can be compared with its golden. Core-owned metric values are in metres.",
+          "type": "number",
+          "minimum": 0
+        },
         "availability": { "enum": ["reported", "withheld"] },
         "withheld_reasons": {
           "type": "array",

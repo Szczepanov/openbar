@@ -103,8 +103,9 @@ Other findings from the inventory:
   completeness test. There is no eccentric, pause or lockout phase.
 - The completeness test is vacuously true whenever no descent is observed before the run
   (`descent <= 0`): at the series edge, but equally when a clip opens with the bar at rest on the floor
-  or with the lifter paused at the bottom. `complete` alone therefore does not mean a full rep was
-  observed; the reference case `deadlift-from-rest-no-prior-descent` pins this.
+  or with the lifter paused at the bottom. Tracking jitter while the bar rests gives a small positive
+  descent, which the 0.85 test then also passes. `complete` alone therefore does not mean a full rep was
+  observed (`deadlift-from-rest-no-prior-descent`, `deadlift-from-rest-with-jitter`).
 - Runs that fail the rise rules (10 cm, or half of the largest rise anywhere in the clip) are never
   reported as reps and leave no trace in the consumer's output. Which reps exist therefore depends on
   the rest of the clip.
@@ -115,9 +116,9 @@ Other findings from the inventory:
   own.
 - `KINEMATIC_METRICS.md` says product labels such as "mean concentric velocity" must not be used until
   a separately validated process defines the concentric interval boundaries. The #79 preregistration
-  uses the consumer rule for exactly that, under an owner-authorised, separately tracked study. The
-  two statements are consistent only if the label is treated as pending validation, which this
-  document does.
+  uses the consumer rule for exactly that, under an owner-authorised, separately tracked study. This
+  contract keeps the two consistent by withholding the "concentric" label for the app until validation
+  (Section 2) and showing "upward" values meanwhile.
 
 ## 2. Displayed values
 
@@ -127,17 +128,18 @@ Two terms are used. The **window** is what the segmentation rule reports: the fi
 concentric frame, as sample indices. The **metric interval** is `[t(window first − 1), t(window last)]`:
 it starts at the sample before the window's first frame. That is the turnaround sample, unless the v2
 window trimmed leading sub-floor frames (at most 1 cm of rise), in which case it is the last trimmed
-frame (`leading-creep-trimmed-window`). Its boundaries are sampled timestamps, so the core primitives
+frame (`leading-creep-trimmed-window`; the consumer's omitted rise, which must not exceed 1 cm,
+includes the first above-floor step). Its boundaries are sampled timestamps, so the core primitives
 accept it without interpolation, and every upward segment the window counted lies wholly inside it.
 
 | Displayed value | Units | Axis, sign | Interval | Method |
 | --- | --- | --- | --- | --- |
 | Rep number | – | – | order of detected runs | segmentation rule |
-| Concentric start, end | s, decoded presentation timestamps | – | metric interval | sample before the window's first frame; last concentric frame |
+| Upward start, end | s, decoded presentation timestamps | – | metric interval | sample before the window's first frame; last concentric frame |
 | Duration | s | – | metric interval | `t_end − t_start` |
-| Concentric ROM | m (UI may present cm) | vertical, positive up | metric interval | core `range_of_motion` over the interval samples |
-| Mean concentric velocity | m/s | vertical, positive up | metric interval | core `mean_axis_velocity` |
-| Peak concentric velocity | m/s | vertical, positive up | segments inside the metric interval | core `peak_axis_velocity`, with its timestamp |
+| Upward ROM | m (UI may present cm) | vertical, positive up | metric interval | core `range_of_motion` over the interval samples |
+| Mean upward velocity | m/s | vertical, positive up | metric interval | core `mean_axis_velocity` |
+| Peak upward velocity | m/s | vertical, positive up | segments inside the metric interval | core `peak_axis_velocity`, with its timestamp |
 | Completeness | `complete` / `incomplete` / `undetermined` | – | whole run vs preceding descent | Section 4 |
 | Availability | `reported` / `withheld` plus reasons | – | metric interval | Section 4 |
 | Data confidence | 0–1, not a probability | – | metric interval | minimum sample confidence in the interval |
@@ -146,11 +148,11 @@ Rules for every row:
 
 - Values are image-plane measurements under the scalar plate-diameter calibration. A numeric value
   does not override calibration warnings or the recording-support policy.
-- The label "mean concentric velocity" is **not used** until the boundary rule has been validated by
-  #79 / #58 evidence and the change that records that validation amends `KINEMATIC_METRICS.md`, which
-  currently forbids the label. Until then the value is shown as "mean upward velocity", with the rule id
-  and version and an unvalidated marker, and only for a lift whose profile is supported (Section 3).
-  The same applies to "peak concentric velocity".
+- The word "concentric" in a product label (mean or peak concentric velocity, concentric ROM) is **not
+  used** until the boundary rule has been validated by #79 / #58 evidence and the change that records
+  that validation amends `KINEMATIC_METRICS.md`, which currently forbids the label. Until then the
+  values are shown as "upward", with the rule id and version and an unvalidated marker, and only for a
+  lift whose profile is supported (Section 3).
 - Peak velocity is the maximum signed vertical component; ties keep the earliest segment (core
   `peak_axis_velocity`). Euclidean peak speed, acceleration, power and force are not displayed. They are not validated
   metrics (`KINEMATIC_METRICS.md`), and barbell-derived values must not be presented as whole-body
@@ -218,7 +220,8 @@ values for checking the definitions; they are shown to a user only when `availab
 
 `unsupported_segment` may combine with either of the other two. `spans_gap` and `touches_series_edge`
 do not combine in rule version 1: the consumer reports one exclusion per rep and `spans_gap` takes
-precedence, which the reference cases pin. Reasons are listed in the order above.
+precedence, which `series-edge-run-with-gap` pins (a run that touches the start edge and contains a
+break). Reasons are listed in the order above.
 
 The relative-gap reason is intentionally stricter than core: a 0.125 s interval is inside
 `max_gap_s = 0.2 s`, so core can still derive a velocity, but the rep is withheld because a peak or
@@ -235,17 +238,21 @@ since the previous rep's run ended, minus the displacement at the run's start). 
 | --- | --- | --- |
 | `complete` | descent observed and rise ≥ 0.85 × descent | counted |
 | `incomplete` | descent observed and rise < 0.85 × descent | reported, flagged partial, excluded from set summaries and complete-rep counts by default; counted separately |
-| `undetermined` | no descent observed (`descent <= 0`) | reported, flagged, treated like `incomplete` for summaries; the consumer reports these as `complete` |
+| `undetermined` | the preceding descent is below the minimum rep rise, 10 cm (`MIN_REP_RISE_CM`), including no descent at all | reported, flagged, treated like `incomplete` for summaries; the consumer reports a run with no descent as `complete` and judges a tiny one by the 0.85 rule |
 
-`undetermined` covers the series edge, a clip that opens with the bar at rest, and a first rep that
-starts from a pause. It is independent of `touches_series_edge`. The contract states no minimum descent:
-under tracking jitter a tiny positive descent is classified by the same 0.85 rule, and choosing a floor
-is deferred to evidence. A rep that is withheld is shown as withheld whatever its completeness.
+`undetermined` covers the series edge, a clip that opens with the bar at rest, a first rep that starts
+from a pause, and tracking jitter before a pull (`deadlift-from-rest-with-jitter`: a 0.78 cm descent
+that a `descent > 0` test would accept). A descent smaller than the minimum rep rise cannot be a
+reference for a full rep, and the floor reuses an existing constant rather than adding one. It is
+independent of `touches_series_edge`. A rep that is withheld is shown as withheld whatever its
+completeness.
 
 ### Rejected runs
 
 A positive-velocity run that fails the rise rules is not a rep: its rise is under 10 cm
-(`below_min_rise`), or under 0.5 × the largest run rise anywhere in the clip (`below_relative_rise`).
+(`below_min_rise`, which wins when both rules reject the run), or under 0.5 × the largest run rise
+anywhere in the clip (`below_relative_rise`). A clip may therefore contain rejected runs and no rep at
+all (`no-rep-only-a-rejected-run`).
 The consumer drops these silently. The rule returns them as `rejected_runs` (run window, rise, reason)
 so that a failed attempt, a fragment or a dropped phase is visible to the caller:
 
@@ -302,13 +309,16 @@ availability and withheld reasons, and the `rejected_runs`.
 | --- | --- |
 | `single-rep-constant-velocity` | the simplest rep; mean and peak coincide |
 | `three-rep-sticking-point-and-incomplete` | rep count of 3, the v2 trailing trim, a sticking point, an incomplete third rep; mean and peak coincide on uniform sampling |
-| `leading-creep-trimmed-window` | the v2 leading trim: the metric interval starts at the last trimmed frame |
+| `leading-creep-trimmed-window` | a real v2 leading trim (omitted rise 0.49 cm): the metric interval starts at the last trimmed frame, and a test asserts the window starts after the run start |
 | `irregular-timestamps-ascent` | variable frame spacing: time-weighted core mean 0.75 m/s vs consumer sample mean 0.643 m/s, same peak |
 | `relative-gap-inside-rep` | core still derives; policy withholds (`spans_gap`) |
 | `long-gap-inside-rep` | `unsupported_segment` and `spans_gap` together |
 | `low-confidence-inside-rep` | below-threshold sample: both adjacent derivatives unsupported |
 | `series-edge-truncated-pulls` | `touches_series_edge`; `undetermined` completeness at the start |
+| `series-edge-run-with-gap` | a run that touches the edge and contains a break: `spans_gap` takes precedence |
 | `deadlift-from-rest-no-prior-descent` | `undetermined` completeness without touching the edge; the consumer says `complete` |
+| `deadlift-from-rest-with-jitter` | a 0.78 cm jitter descent stays `undetermined` under the 10 cm floor |
+| `no-rep-only-a-rejected-run` | no rep and one rejected run |
 | `rejected-runs-depend-on-clip` | `below_min_rise` and `below_relative_rise` rejected runs |
 | `rejected-run-alone-is-accepted` | the same small rep accepted when the large rep is absent |
 | `zero-velocity-frame-inside-ascent` | a split ascent: the second fragment is rejected |
@@ -325,7 +335,10 @@ availability and withheld reasons, and the `rejected_runs`.
 
 Tolerances a future implementation is held to:
 
-- **Boundaries, rep count, completeness, withheld reasons:** exact.
+- **Boundaries, rep count, completeness, withheld reasons, rejected-run windows and reasons:** exact.
+- **`rise_cm` and `preceding_descent_cm`:** within `1e-9` on these inputs. They are in centimetres, in
+  the consumer's arithmetic, so they can be compared with its golden; core-owned metric values are in
+  metres.
 - **Core values** (`duration_s`, `rom_m`, `mean_velocity_mps`, `peak_velocity_mps`, `peak_timestamp_s`):
   absolute difference at most `1e-9` on these dyadic inputs. Non-dyadic real recordings are compared
   with the existing narrow canonical floating-point tolerance, not a looser one.
