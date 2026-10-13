@@ -14,8 +14,7 @@ pub(super) const MAX_FILTER_SIDE: usize = 512;
 
 /// Training configuration for the grayscale CSRT filter (S3 parameters).
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
-pub(super) struct CsrtGrayConfig {
+pub(super) struct FilterTrainingParams {
     pub(super) lambda: f64,
     pub(super) admm_iterations: usize,
     pub(super) mu_initial: f64,
@@ -23,7 +22,7 @@ pub(super) struct CsrtGrayConfig {
     pub(super) mu_max: f64,
 }
 
-impl Default for CsrtGrayConfig {
+impl Default for FilterTrainingParams {
     fn default() -> Self {
         Self {
             lambda: 0.01,
@@ -35,8 +34,7 @@ impl Default for CsrtGrayConfig {
     }
 }
 
-impl CsrtGrayConfig {
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
+impl FilterTrainingParams {
     pub(super) fn validate(self) -> Result<(), NumericError> {
         if !self.lambda.is_finite() || self.lambda <= 0.0 {
             return Err(NumericError::InvalidTrainingParameter { field: "lambda" });
@@ -138,13 +136,12 @@ fn validate_and_extract_real(spatial: &[Complex]) -> Result<Vec<f64>, NumericErr
 }
 
 /// Trains the constrained spatial filter via scaled ADMM and returns its unnormalized FFT spectrum `H = FFT(g)`.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) fn train_filter(
     fft: &Fft2d,
     features_fft: &[Complex],
     label_fft: &[Complex],
     mask: &[f64],
-    config: &CsrtGrayConfig,
+    config: &FilterTrainingParams,
 ) -> Result<Vec<Complex>, NumericError> {
     validate_filter_fft(fft)?;
     config.validate()?;
@@ -287,7 +284,6 @@ pub(super) fn train_filter(
 }
 
 /// Computes the real correlation response `inverse(conj(filter_fft) * features_fft)`.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) fn response(
     fft: &Fft2d,
     filter_fft: &[Complex],
@@ -321,6 +317,47 @@ pub(super) fn response(
 
     let spatial = fft.inverse(&product)?;
     validate_and_extract_real(&spatial)
+}
+
+/// Blends an existing filter spectrum with a candidate filter spectrum:
+/// `H_next = (1 - learning_rate) * H_old + learning_rate * H_candidate`.
+pub(super) fn blend_filters(
+    old: &[Complex],
+    candidate: &[Complex],
+    learning_rate: f64,
+) -> Result<Vec<Complex>, NumericError> {
+    if !learning_rate.is_finite() || !(0.0..=1.0).contains(&learning_rate) {
+        return Err(NumericError::InvalidTrainingParameter {
+            field: "learning_rate",
+        });
+    }
+    if old.len() != candidate.len() {
+        return Err(NumericError::BufferLengthMismatch {
+            expected: old.len(),
+            actual: candidate.len(),
+        });
+    }
+    for (index, (&o, &c)) in old.iter().zip(candidate.iter()).enumerate() {
+        if !o.is_finite() || !c.is_finite() {
+            return Err(NumericError::NonFiniteInput { index });
+        }
+    }
+    if learning_rate == 0.0 {
+        return Ok(old.to_vec());
+    }
+    if learning_rate == 1.0 {
+        return Ok(candidate.to_vec());
+    }
+    let one_minus_lr = 1.0 - learning_rate;
+    let mut blended = Vec::with_capacity(old.len());
+    for (index, (&o, &c)) in old.iter().zip(candidate.iter()).enumerate() {
+        let b = o.scale(one_minus_lr) + c.scale(learning_rate);
+        if !b.is_finite() {
+            return Err(NumericError::NonFiniteOutput { index });
+        }
+        blended.push(b);
+    }
+    Ok(blended)
 }
 
 #[cfg(test)]
@@ -537,7 +574,7 @@ mod tests {
 
     #[test]
     fn training_config_validation() {
-        let default_cfg = CsrtGrayConfig::default();
+        let default_cfg = FilterTrainingParams::default();
         assert_eq!(default_cfg.lambda, 0.01);
         assert_eq!(default_cfg.admm_iterations, 4);
         assert_eq!(default_cfg.mu_initial, 1.0);
@@ -600,7 +637,7 @@ mod tests {
         }
 
         // Saturated safe schedule with huge growth
-        let saturated_cfg = CsrtGrayConfig {
+        let saturated_cfg = FilterTrainingParams {
             lambda: 0.01,
             admm_iterations: 4,
             mu_initial: 1.0,
@@ -630,7 +667,7 @@ mod tests {
         let all_one_mask = vec![1.0; 16];
 
         let lambda = 0.25;
-        let config = CsrtGrayConfig {
+        let config = FilterTrainingParams {
             lambda,
             admm_iterations: 64,
             mu_initial: 1.0,
@@ -729,7 +766,7 @@ mod tests {
         let y_fft = fft.forward(&y_complex).expect("forward y");
 
         let lambda = 0.25;
-        let config = CsrtGrayConfig {
+        let config = FilterTrainingParams {
             lambda,
             admm_iterations: 64,
             mu_initial: 1.0,
@@ -832,7 +869,7 @@ mod tests {
             irregular_mask[i] = 1.0;
         }
 
-        let config = CsrtGrayConfig::default();
+        let config = FilterTrainingParams::default();
         let trained_irregular = train_filter(&fft, &x_fft, &y_fft, &irregular_mask, &config)
             .expect("train with irregular mask");
         let spatial_irregular = fft
@@ -880,7 +917,7 @@ mod tests {
         let x_fft = fft.forward(&x_spatial).expect("forward x");
         let y_fft = fft.forward(&y_spatial).expect("forward y");
         let mask = crate::csrt::patch::support_mask(8, 1.0).expect("disk mask");
-        let config = CsrtGrayConfig::default();
+        let config = FilterTrainingParams::default();
 
         let out1 = train_filter(&fft, &x_fft, &y_fft, &mask, &config).expect("out1");
         let out2 = train_filter(&fft, &x_fft, &y_fft, &mask, &config).expect("out2");
@@ -929,7 +966,7 @@ mod tests {
         let valid_spatial: Vec<Complex> = (0..64).map(|i| Complex::new(i as f64, 0.0)).collect();
         let valid_fft = fft.forward(&valid_spatial).expect("forward");
         let valid_mask = vec![1.0; 64];
-        let valid_cfg = CsrtGrayConfig::default();
+        let valid_cfg = FilterTrainingParams::default();
 
         // Buffer length mismatches
         assert_eq!(
@@ -1073,7 +1110,7 @@ mod tests {
         let label_fft = fft8.forward(&label_spatial).expect("forward label");
         let mask = support_mask(8, 1.0).expect("support mask");
 
-        let config = CsrtGrayConfig::default();
+        let config = FilterTrainingParams::default();
         let filter_fft1 =
             train_filter(&fft8, &features_fft, &label_fft, &mask, &config).expect("train filter 1");
         let resp1 = response(&fft8, &filter_fft1, &features_fft).expect("response 1");
@@ -1101,7 +1138,7 @@ mod tests {
     #[test]
     fn filter_exercises_minimum_and_maximum_side_smoke() {
         // Exercise S2 minimum side 8 and maximum side 512 with a one-iteration valid training pass
-        let config = CsrtGrayConfig {
+        let config = FilterTrainingParams {
             lambda: 0.01,
             admm_iterations: 1,
             mu_initial: 1.0,
@@ -1172,7 +1209,7 @@ mod tests {
             &features_fft,
             &label_fft,
             &mask,
-            &CsrtGrayConfig::default(),
+            &FilterTrainingParams::default(),
         )
         .expect("train");
         let resp = response(&fft8, &filter_fft, &features_fft).expect("response");
@@ -1185,6 +1222,65 @@ mod tests {
         assert_eq!(
             digest, EXPECTED_DIGEST,
             "learned filter and response digest must remain bit-stable: got 0x{digest:016x}"
+        );
+    }
+
+    #[test]
+    fn blend_filters_properties_and_errors() {
+        let (width, height) = (8, 8);
+        let fft = Fft2d::try_new(width, height).expect("fft");
+        let spatial1: Vec<Complex> = (0..64)
+            .map(|i| Complex::new((i * 3 + 1) as f64, 0.0))
+            .collect();
+        let spatial2: Vec<Complex> = (0..64)
+            .map(|i| Complex::new(((63 - i) * 2 + 5) as f64, 0.0))
+            .collect();
+        let old = fft.forward(&spatial1).expect("forward 1");
+        let candidate = fft.forward(&spatial2).expect("forward 2");
+
+        // lr = 0 returns old bit-for-bit
+        let at_zero = blend_filters(&old, &candidate, 0.0).expect("lr 0");
+        for (a, b) in at_zero.iter().zip(old.iter()) {
+            assert_eq!(a.re.to_bits(), b.re.to_bits());
+            assert_eq!(a.im.to_bits(), b.im.to_bits());
+        }
+
+        // lr = 1 returns candidate bit-for-bit
+        let at_one = blend_filters(&old, &candidate, 1.0).expect("lr 1");
+        for (a, b) in at_one.iter().zip(candidate.iter()) {
+            assert_eq!(a.re.to_bits(), b.re.to_bits());
+            assert_eq!(a.im.to_bits(), b.im.to_bits());
+        }
+
+        // Hermitian symmetry preserved for intermediate lr
+        let blended = blend_filters(&old, &candidate, 0.02).expect("lr 0.02");
+        assert!(validate_spectrum(&blended, width, height).is_ok());
+
+        // Mismatched buffer lengths
+        assert_eq!(
+            blend_filters(&old[..63], &candidate, 0.02),
+            Err(NumericError::BufferLengthMismatch {
+                expected: 63,
+                actual: 64
+            })
+        );
+
+        // Invalid learning rates
+        for bad_lr in [f64::NAN, -0.01, 1.01, f64::INFINITY] {
+            assert_eq!(
+                blend_filters(&old, &candidate, bad_lr),
+                Err(NumericError::InvalidTrainingParameter {
+                    field: "learning_rate"
+                })
+            );
+        }
+
+        // Non-finite input
+        let mut nan_old = old.clone();
+        nan_old[5] = Complex::new(f64::NAN, 0.0);
+        assert_eq!(
+            blend_filters(&nan_old, &candidate, 0.5),
+            Err(NumericError::NonFiniteInput { index: 5 })
         );
     }
 }

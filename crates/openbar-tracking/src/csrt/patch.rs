@@ -19,18 +19,14 @@ use super::{Complex, NumericError};
 use crate::GrayscaleImage;
 
 /// Smallest supported patch side.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) const MIN_PATCH_SIDE: usize = 8;
 /// Largest supported patch side. A prototype ceiling, not a measured phone budget.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) const MAX_PATCH_SIDE: usize = 512;
 /// Patches with a population RMS below one intensity level (`1/255` on the 0..1 scale) are flat.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 const MIN_RMS_LEVELS: f64 = 1.0;
 
 /// Outcome of reading one patch.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) enum Patch {
     /// Preprocessed spatial values, row-major, imaginary parts zero.
     Available(Vec<Complex>),
@@ -42,7 +38,6 @@ pub(super) enum Patch {
 
 /// Side of the square patch for a target of radius `radius_px`: the next power of two of
 /// `ceil(4 * radius_px + 1)`, at least [`MIN_PATCH_SIDE`], at most [`MAX_PATCH_SIDE`].
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) fn patch_side(radius_px: f64) -> Result<usize, NumericError> {
     validate_radius(radius_px)?;
     let required = (4.0 * radius_px + 1.0).ceil();
@@ -57,7 +52,6 @@ pub(super) fn patch_side(radius_px: f64) -> Result<usize, NumericError> {
     Ok((required as usize).next_power_of_two().max(MIN_PATCH_SIDE))
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 fn validate_radius(radius_px: f64) -> Result<(), NumericError> {
     if radius_px.is_finite() && radius_px > 0.0 {
         Ok(())
@@ -67,7 +61,6 @@ fn validate_radius(radius_px: f64) -> Result<(), NumericError> {
 }
 
 /// Accepts a square, power-of-two side within [`MIN_PATCH_SIDE`]..=[`MAX_PATCH_SIDE`].
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 fn validate_side(width: usize, height: usize) -> Result<usize, NumericError> {
     if width == height
         && width.is_power_of_two()
@@ -81,7 +74,6 @@ fn validate_side(width: usize, height: usize) -> Result<usize, NumericError> {
 
 /// Reads and preprocesses the patch whose anchor pixel `anchor_px` sits at crop index
 /// `(side / 2, side / 2)`. The side is the (square, supported) size of `fft`.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) fn normalized_patch(
     image: &dyn GrayscaleImage,
     anchor_px: (i32, i32),
@@ -140,7 +132,6 @@ pub(super) fn normalized_patch(
 
 /// Gaussian desired response, peaking at FFT index `(0, 0)` with wrapped axis distances. The
 /// transform must be a supported patch size (square, power of two, 8..=512).
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) fn gaussian_label(fft: &Fft2d, sigma_px: f64) -> Result<Vec<Complex>, NumericError> {
     let side = validate_side(fft.width(), fft.height())?;
     // The variance term must be positive and finite, and the largest exponent argument (the
@@ -168,7 +159,6 @@ pub(super) fn gaussian_label(fft: &Fft2d, sigma_px: f64) -> Result<Vec<Complex>,
 }
 
 /// Binary disk of `radius_px` centred at `(side / 2, side / 2)`, row-major, values 0 or 1.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed by later csrt slices"))]
 pub(super) fn support_mask(side: usize, radius_px: f64) -> Result<Vec<f64>, NumericError> {
     validate_side(side, side)?;
     validate_radius(radius_px)?;
