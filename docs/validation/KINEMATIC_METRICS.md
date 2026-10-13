@@ -168,7 +168,10 @@ only the surviving fragments.
 The returned confidence is the minimum confidence across the interval.
 
 Product labels such as **mean concentric velocity** must not be used until a separately validated
-process defines the concentric interval boundaries.
+process defines the concentric interval boundaries. The proposed boundary rule and the displayed-value
+contract for a future app are designed, not implemented or validated, in
+[`REP_PHASE_METRICS.md`](REP_PHASE_METRICS.md) and
+[ADR-0012](../adr/0012-portable-rep-and-phase-metrics-contract.md).
 
 ## Peak axis velocity
 
@@ -238,7 +241,7 @@ Correlation alone is not evidence of agreement.
 | Horizontal/vertical ROM | implemented with deterministic analytic tests |
 | Mean axis velocity over explicit interval | implemented with deterministic analytic tests |
 | Peak signed axis velocity over explicit interval | implemented with deterministic analytic tests |
-| Mean concentric velocity | unavailable until concentric boundaries are explicitly defined and validated |
+| Mean concentric velocity | unavailable until concentric boundaries are explicitly defined and validated; rule designed in ADR-0012 (Proposed), not implemented |
 | Automatic phase-specific metrics | unavailable in issue #11 |
 | Acceleration | not a validated M0 production metric |
 | Force / power | out of scope; barbell-derived values must not be presented as whole-body output |

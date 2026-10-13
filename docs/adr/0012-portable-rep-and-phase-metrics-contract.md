@@ -1,0 +1,203 @@
+# ADR-0012: Portable per-rep and lift-phase metrics contract
+
+- Status: Proposed
+- Date: 2026-10-13
+- Issue: #180 (child design of #80)
+- Related: ADR-0001, ADR-0003, ADR-0007, ADR-0008, #79, #58, #181, #179
+- Detail: [`docs/validation/REP_PHASE_METRICS.md`](../validation/REP_PHASE_METRICS.md)
+
+## Context
+
+The planned Android app shows mean and peak velocity, range of motion and duration per rep or lift
+phase. Two things already define parts of that:
+
+- `openbar-core` provides timestamped kinematics and explicit-interval primitives
+  (`mean_axis_velocity`, `peak_axis_velocity`, `range_of_motion`). It deliberately provides **no**
+  rep or phase segmentation, and `KINEMATIC_METRICS.md` forbids the label "mean concentric velocity"
+  until concentric boundaries are defined and validated.
+- The sibling `adaptive-training-recommender` (MIT) ships a versioned, source-neutral segmentation
+  (`concentric-segmentation-v1/v2`) and an OpenBar importer. The #79 agreement study pins that
+  consumer at commit `a74cb9dca24864af9f348bf9853fb6fe4f475521` and forbids changing its rule.
+
+An inventory (see the detail document) found that these two do not mean the same thing by "mean
+velocity", "ROM" or "duration" for the same rep, that the consumer segments only the concentric phase
+and has no lift-specific model, and that its completeness test is vacuously true at the series edge.
+A new app that reused either one by name would silently change the meaning of a displayed value.
+
+M1 is locked (ADR-0008, NO-GO / REWORK). Real-recording accuracy of ROM, mean and peak velocity is
+not established, and no recording condition is fully supported. This ADR is a design decision. It
+authorises no implementation.
+
+## Decision
+
+### 1. Ownership: one Rust implementation in `openbar-core`
+
+Rep detection, the concentric window rule and the per-rep metric values are authoritative in
+`openbar-core`, built on the existing `MetricPositionSample` and interval primitives (ADR-0001). The
+Android layer is presentation only: it formats units, localises, selects a rep, and seeks the video to
+a rep's timestamps. It computes nothing.
+
+No Kotlin, Dart or TypeScript port of the algorithm is authorised. The recommender's segmenter stays an
+independent consumer and a **parity reference**; OpenBar does not import the recommender app and does
+not vendor its code. If code is later copied, the source commit and MIT notice travel with it.
+
+The binding technology and UI toolkit are not decided here. ADR-0001 prefers Flutter; this contract is
+toolkit-neutral.
+
+### 2. Rule identity: `concentric-reps@1`
+
+The first portable rule matches the detection, completeness and window behaviour of
+`concentric-segmentation-v2` at the pinned commit, with the pinned constants (10 cm minimum rise, 0.5 ×
+largest rise, 0.85 completeness fraction, 0.05 m/s boundary floor, 1 cm maximum trim, 1.5 × median
+interval gap factor). Those constants are engineering choices recorded by the consumer; this repository
+has no evidence that derives them, and they are re-examined by evidence, not asserted.
+
+It differs from the consumer in exactly four ways: it consumes core samples and returns sampled
+timestamps; availability is decided by the policy in section 4; metric values are the core definitions
+in section 3; and every result carries the rule id, version, constants and kinematics provenance. Any
+change to a constant, the window logic or a metric definition is a new version. Readers fail closed on
+other versions.
+
+### 3. Displayed values use the core primitives over an explicit metric interval
+
+The **window** is the first and last concentric frame the rule reports. The **metric interval** is the
+sample before the window's first frame through its last frame. Its boundaries are sampled timestamps,
+so core accepts it without interpolation, and every upward segment the rule counted lies inside it.
+
+| Value | Definition |
+| --- | --- |
+| Duration | `t_end − t_start` of the metric interval |
+| Concentric ROM | core `range_of_motion` over the interval samples (vertical, +Y up) |
+| Mean concentric velocity | core `mean_axis_velocity` over the interval |
+| Peak concentric velocity | core `peak_axis_velocity` over the interval, with timestamp |
+| Completeness, availability, confidence | section 4 |
+
+Over this interval core covers exactly the segments the consumer averages, so the peak equals the
+consumer's by construction and the mean equals it on uniformly sampled data. They differ only when
+sample spacing varies, because core time-weights and the consumer does not. Duration and ROM are one
+segment longer than the consumer's, which fixes the consumer's own mean × duration ≠ ROM
+inconsistency. The consumer's unweighted sample mean is **not** a displayed value; if shown anywhere it
+is named differently and every comparison discloses the difference. Euclidean peak speed, acceleration,
+power and force are not displayed.
+
+The product label "mean concentric velocity" may appear only with the rule id and version, for a
+supported lift, and with the validation status ADR-0008 requires (unvalidated until #58 and #79
+evidence exists).
+
+### 4. Gaps, lost data, low confidence and incomplete reps
+
+Every detected rep is listed. Its metrics are `reported` or `withheld`; a withheld rep shows its
+window and reasons and no number, never zero.
+
+- `unsupported_segment`: a sample below `min_confidence` or an interval above `max_gap_s` inside the
+  metric interval (core `series_supported`).
+- `spans_gap`: a null velocity or an interval above 1.5 × the median interval inside or at the edge of
+  the rep's run. This is stricter than core, deliberately, so a peak inside an under-sampled stretch
+  cannot be missed.
+- `touches_series_edge`: the run begins at the first or ends at the last usable frame. Needed because
+  the completeness test is vacuously true at the start edge.
+
+An `incomplete` rep (ascent under 0.85 × the preceding descent) is reported and flagged partial, is
+excluded from set summaries and complete-rep counts by default, and has its own count. No boundary or
+value is interpolated across an unsupported span.
+
+### 5. Staged lift matrix
+
+The lift is declared by the user. Automatic exercise or pose recognition is out of scope.
+
+1. **Back squat.** Committed first stage, subject to M1 entry.
+2. **Snatch and clean without jerk.** Candidates only. They are in the #79 design, but a single upward
+   run per lift is not established: the bar can drop briefly while the lifter moves under it and rises
+   again on recovery. They join stage 1 only on #79 rep-count and pairing evidence.
+3. **Deadlift and bench press.** Separate evidence and decision per lift. The same rule may suffice;
+   that is not demonstrated.
+4. **Clean and jerk, jerk, other multi-stage lifts.** A lift-specific phase model, its own ADR and
+   evidence. The generic rule must not be used: the `clean-and-jerk-shaped` reference case shows it
+   reporting two reps for one lift and dropping the recovery.
+
+A declared lift with no supported profile shows the bar path and no rep or phase metrics, with an
+explicit "not supported for this lift" state. Phase names beyond `concentric` and `descent` are
+reserved and undefined.
+
+### 6. Parity and tolerances
+
+Executable expectations live in `validation/reference-cases/rep-metrics-v1.json`, schema
+`rep-metrics-reference-cases-v1`. Inputs are dyadic, so expected values are bit-reproducible. The
+checks are:
+
+- boundaries, rep count, completeness and withheld reasons: exact;
+- core values: absolute difference at most `1e-9` on the dyadic cases, the existing narrow canonical
+  tolerance on real data;
+- consumer-parity profile, if built for #79 comparison: equal after the consumer's legacy rounding;
+- Android binding versus native CLI: byte-identical serialized results for every case;
+- the pin's 200-case `concentricSegmentation.golden.json` replays through the Rust segmentation
+  primitive with exact boundary and flag agreement, so the primitive takes the consumer's frame shape
+  internally with an adapter from core samples.
+
+These cases are synthetic engineering expectations. They are not accuracy evidence and do not
+substitute for the #58 reference study.
+
+### 7. Persistence and export
+
+- `analysis-v1` is **unchanged**: no field, schema version, version constant, golden or fixture. Rep
+  results are a derived, recomputable view of a validated Analysis, a declared lift profile and a rule
+  version, consistent with `ANALYSIS_SCHEMA.md` (protocol results are typed and discriminated, not an
+  untyped map).
+- An app may cache a result keyed by the Analysis digest, rule id and version, and parameters, and must
+  recompute on any mismatch.
+- An exported rep-metrics file, if wanted, is a new versioned sidecar that references the Analysis by
+  source digest and kinematics provenance. It needs its own schema, golden and review in a follow-up
+  before any implementation. CSV is an adapter, never a source of truth.
+- The #79 pin, its method identities and its frozen artifacts are not modified.
+
+## Alternatives considered
+
+- **Port the recommender segmenter into the Android app.** Rejected. A second unversioned
+  implementation of measurement logic, against ADR-0001, and parity could only be tested, never
+  guaranteed.
+- **Embed the recommender app or its module as a runtime dependency.** Rejected. It couples OpenBar to
+  an app's release cycle and storage, and the issue excludes importing the whole app.
+- **Adopt the consumer's reported values as displayed.** Rejected. Its mean, duration and ROM cover
+  different segment sets, so the displayed numbers would be inconsistent with each other and with the
+  core primitives that M0 validated.
+- **Evaluate core over the consumer's window instead of the metric interval.** Rejected. It drops a
+  segment the consumer averages, so mean parity fails even on uniform sampling (up to 0.05 m/s on the
+  short synthetic windows), for no benefit.
+- **Persist reps inside `analysis-v1`.** Rejected. It would change a frozen contract and golden, and
+  rep structure is lift- and rule-specific rather than part of every Analysis.
+- **Treat clean and jerk as one positive-velocity run, or support all lifts by assertion.** Rejected;
+  excluded by the issue and shown wrong on the reference case.
+
+## Consequences
+
+Positive:
+
+- one definition per displayed value, identical across platforms because it is the same code;
+- the recommender comparison is explicit: the peak and (uniform) mean agree, the offsets are named;
+- loss, gaps and partial reps are visible instead of producing plausible numbers;
+- nothing frozen moves: `analysis-v1`, #79 and the pinned consumer are untouched.
+
+Costs and risks:
+
+- a new core module, golden corpus replay and binding are needed before any app work;
+- the displayed mean is not the number the recommender shows for variable-rate video; the real size of
+  that difference is unmeasured and must be measured before the two are called interchangeable;
+- the adopted constants have no derivation in this repository;
+- stage 1 is a single lift until #79 and #58 provide evidence;
+- the stricter relative-gap rule may withhold reps that core alone would report on irregular footage.
+
+## Owner decisions requested
+
+1. **Displayed mean.** Recommended: core time-weighted mean over the metric interval, as above.
+   Alternative: the consumer's sample mean under its own name. The recommendation keeps one metric
+   meaning and matches the consumer exactly on uniformly sampled video.
+2. **Recommender alignment.** Whether the recommender should later adopt a `v3` with the same interval
+   and time weighting. This is outside the #79 freeze and outside this ADR.
+3. **Snatch and clean in stage 1.** Recommended: only after #79 rep-count evidence.
+
+## Revisit when
+
+- #79 or #58 show the interval or constants are wrong for real recordings;
+- M1 entry is recorded GO or CONDITIONAL GO and the binding technology is chosen;
+- a stage 2 or stage 3 lift is taken up;
+- a sidecar export is required.
