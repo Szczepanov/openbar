@@ -162,6 +162,45 @@ Implications to test with annotated real clips:
 - Exhaustive SAD search over a plate-sized template is far slower than real time at realistic
   radii. Meeting the offline-speed gate needs a cheaper search or a different candidate.
 
+## Candidate C — `csrt-gray-v1` (experimental, under construction)
+
+A single-channel, fixed-support, fixed-scale correlation-filter variant in the CSRT family
+(Lukezic et al., CVPR 2017), written independently in `openbar-tracking::csrt`. It is **not yet a
+tracker**: no `ManualSeedTracker` implementation, CLI exposure or evidence exists, and nothing here
+selects it for production. The implementation plan is
+[`docs/plans/CSRT_GRAY_TRACKER_IMPLEMENTATION_PLAN.md`](../plans/CSRT_GRAY_TRACKER_IMPLEMENTATION_PLAN.md);
+the slice status is recorded there.
+
+| Slice | Content | Status |
+|-------|---------|--------|
+| S1 | deterministic FFT and transcendental-free math | merged (#171) |
+| S2 | patch geometry, feature preprocessing, Gaussian label, disk support | implemented, internal only |
+| S3–S5 | filter learning, tracker loop and loss policy, synthetic benchmark | not started |
+
+### S2 contract (internal; no public API)
+
+- **Crop.** Square, side the next power of two of `ceil(4 * radius_px + 1)`, minimum 8, maximum 512
+  (a prototype ceiling, not a measured phone budget). Crop `(i, j)` reads image
+  `(cx + i - side / 2, cy + j - side / 2)`; the anchor sits at crop index `(side / 2, side / 2)`.
+  Tracking is integer-pixel; fractional seed centres use the shared `rounded_point`.
+- **Edges.** A crop not fully inside the frame is *unavailable*: no padding, reflection, wrapping
+  or clipping. At the seed this is an error; on later frames it will become a loss. This is a
+  deliberate, conservative limitation.
+- **Features.** Mean-subtracted, scaled to unit population RMS, then multiplied by the separable
+  periodic Hann window, with no renormalisation afterwards. Mean and RMS come from exact integer
+  sums of the 8-bit intensities, so a flat crop has exactly zero variance. An RMS below one
+  intensity level is insufficient contrast and is reported in original intensity units.
+- **Label.** Gaussian with `sigma_px` peaking at FFT index `(0, 0)`, using wrapped axis distances
+  and the deterministic exponential. Only supported square patch sizes are accepted.
+- **Support.** Fixed binary disk of the seed radius centred at `(side / 2, side / 2)`, requiring
+  `4 * radius + 1 <= side`; the published method's adaptive spatial reliability is deliberately
+  omitted.
+- **Failures.** Invalid radius, sigma or patch size, and non-finite results, are typed
+  `NumericError`s, never plausible coordinates.
+
+Initial parameters (`sigma_px = 2`, loss and tracking PSR thresholds, learning rate, ADMM settings)
+are frozen in the plan for the later slices and have not been evaluated.
+
 ## Carry-forward recommendation
 
 Carry both candidates into real decoded-video benchmarking:

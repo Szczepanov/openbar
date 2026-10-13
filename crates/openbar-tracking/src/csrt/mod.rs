@@ -12,6 +12,7 @@
 
 mod detmath;
 mod fft;
+mod patch;
 
 use std::fmt;
 use std::ops::{Add, Mul, Sub};
@@ -121,6 +122,31 @@ pub(crate) enum NumericError {
     ExpOverflow {
         value: f64,
     },
+    /// A target radius that is not finite or not positive.
+    InvalidRadius {
+        value: f64,
+    },
+    /// A target radius whose patch would be wider than `max_side` (`patch::MAX_PATCH_SIDE`).
+    RadiusTooLarge {
+        radius_px: f64,
+        max_side: usize,
+    },
+    /// A support radius that violates `4 * radius + 1 <= side` for the given patch side.
+    RadiusExceedsPatch {
+        radius_px: f64,
+        side: usize,
+    },
+    /// A patch size that is not square, not a power of two, or outside `patch::MIN_PATCH_SIDE`
+    /// to `patch::MAX_PATCH_SIDE`. Raised before any allocation sized from the transform.
+    UnsupportedPatchSide {
+        width: usize,
+        height: usize,
+    },
+    /// A Gaussian width that is not finite and positive, or whose variance term or farthest
+    /// exponent argument is not finite (the variance underflows to zero or overflows).
+    InvalidSigma {
+        value: f64,
+    },
 }
 
 impl fmt::Display for NumericError {
@@ -155,6 +181,32 @@ impl fmt::Display for NumericError {
             Self::ExpOverflow { value } => {
                 write!(f, "exponential of {value} overflows f64")
             }
+            Self::InvalidRadius { value } => {
+                write!(f, "radius must be finite and positive, got {value}")
+            }
+            Self::RadiusTooLarge {
+                radius_px,
+                max_side,
+            } => write!(
+                f,
+                "radius {radius_px} needs a patch wider than the supported {max_side} px"
+            ),
+            Self::RadiusExceedsPatch { radius_px, side } => {
+                write!(
+                    f,
+                    "radius {radius_px} does not fit a {side} px patch (needs 4 * radius + 1 <= side)"
+                )
+            }
+            Self::UnsupportedPatchSide { width, height } => write!(
+                f,
+                "patch must be square with a supported power-of-two side, got {width}x{height}"
+            ),
+            Self::InvalidSigma { value } => {
+                write!(
+                    f,
+                    "sigma must be finite and positive with a finite variance term, got {value}"
+                )
+            }
         }
     }
 }
@@ -166,10 +218,11 @@ mod tests {
     use super::*;
 
     /// Every file in `src/csrt`; `every_csrt_file_is_scanned` keeps this list complete.
-    const SOURCES: [(&str, &str); 3] = [
+    const SOURCES: [(&str, &str); 4] = [
         ("detmath.rs", include_str!("detmath.rs")),
         ("fft.rs", include_str!("fft.rs")),
         ("mod.rs", include_str!("mod.rs")),
+        ("patch.rs", include_str!("patch.rs")),
     ];
 
     /// Identifiers banned outside test modules: libm transcendentals, `powi` (its precision is
@@ -367,6 +420,29 @@ mod tests {
                 "got NaN",
             ),
             (NumericError::ExpOverflow { value: 710.0 }, "710"),
+            (NumericError::InvalidRadius { value: -1.0 }, "got -1"),
+            (
+                NumericError::RadiusTooLarge {
+                    radius_px: 200.0,
+                    max_side: 512,
+                },
+                "radius 200 needs a patch wider than the supported 512",
+            ),
+            (
+                NumericError::RadiusExceedsPatch {
+                    radius_px: 9.0,
+                    side: 16,
+                },
+                "radius 9 does not fit a 16 px patch",
+            ),
+            (
+                NumericError::UnsupportedPatchSide {
+                    width: 8,
+                    height: 16,
+                },
+                "got 8x16",
+            ),
+            (NumericError::InvalidSigma { value: 0.0 }, "got 0"),
         ];
         for (error, needle) in cases {
             let message = error.to_string();
