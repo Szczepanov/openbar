@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/rep-metrics-reference-cases-v1.schema.json",
+  "title": "OpenBar rep and phase metrics reference cases",
+  "description": "Synthetic reference cases and expected values for the portable per-rep and lift-phase metrics contract (ADR-0012, docs/validation/REP_PHASE_METRICS.md). Not an Analysis document, not produced by an OpenBar implementation, and not accuracy evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_set_id",
+    "status",
+    "description",
+    "kinematics",
+    "pinned_consumer",
+    "tolerances",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "case_set_id": { "const": "rep-metrics-v1" },
+    "status": { "const": "reference_expectations_not_produced_by_an_openbar_implementation" },
+    "description": { "type": "string", "minLength": 1 },
+    "kinematics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "version", "max_gap_s", "min_confidence"],
+      "properties": {
+        "implementation": { "const": "backward-difference" },
+        "version": { "const": "1" },
+        "max_gap_s": { "type": "number", "exclusiveMinimum": 0 },
+        "min_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "pinned_consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "segmentation_rule", "licence"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "segmentation_rule": { "const": "concentric-segmentation-v2" },
+        "licence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["core_abs", "consumer_rounding"],
+      "properties": {
+        "core_abs": { "type": "number", "exclusiveMinimum": 0 },
+        "consumer_rounding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["time_s_dp", "velocity_mps_dp", "rom_cm_dp", "mode"],
+          "properties": {
+            "time_s_dp": { "type": "integer", "minimum": 0 },
+            "velocity_mps_dp": { "type": "integer", "minimum": 0 },
+            "rom_cm_dp": { "type": "integer", "minimum": 0 },
+            "mode": { "const": "ecmascript_math_round" }
+          }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "y_m", "confidence"],
+      "properties": {
+        "timestamp_s": { "type": "number", "minimum": 0 },
+        "y_m": { "type": "number" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "lift_shape", "description", "samples", "expected"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "lift_shape": {
+          "enum": ["back_squat_like", "deadlift_like", "clean_and_jerk_like"]
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "samples": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/sample" }
+        },
+        "expected": { "$ref": "#/$defs/expected" }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase_model",
+        "phase_model_reason",
+        "consumer_breaks",
+        "consumer_reps",
+        "reps",
+        "rejected_runs"
+      ],
+      "properties": {
+        "phase_model": { "enum": ["concentric_only", "lift_specific_required"] },
+        "phase_model_reason": { "type": ["string", "null"] },
+        "consumer_breaks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["before_index", "after_index", "reason"],
+            "properties": {
+              "before_index": { "type": "integer", "minimum": 0 },
+              "after_index": { "type": "integer", "minimum": 1 },
+              "reason": { "enum": ["null_velocity", "missing_sample"] }
+            }
+          }
+        },
+        "consumer_reps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/consumer_rep" }
+        },
+        "reps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rep" }
+        },
+        "rejected_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rejected_run" }
+        }
+      }
+    },
+    "rejected_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_sample_index", "end_sample_index", "rise_cm", "reason"],
+      "properties": {
+        "start_sample_index": { "type": "integer", "minimum": 0 },
+        "end_sample_index": { "type": "integer", "minimum": 1 },
+        "rise_cm": { "type": "number" },
+        "reason": { "enum": ["below_min_rise", "below_relative_rise"] }
+      }
+    },
+    "consumer_rep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "start_frame",
+        "end_frame",
+        "frame_count",
+        "run_start_frame_index",
+        "run_end_frame_index",
+        "start_time_s",
+        "end_time_s",
+        "duration_s",
+        "mean_velocity_mps",
+        "peak_velocity_mps",
+        "rom_cm",
+        "complete",
+        "exclusion"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "start_frame": { "type": "integer", "minimum": 1 },
+        "end_frame": { "type": "integer", "minimum": 1 },
+        "frame_count": { "type": "integer", "minimum": 1 },
+        "run_start_frame_index": {
+          "description": "Index into the consumer's usable frames (samples with a velocity), not into the sample array.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "run_end_frame_index": { "type": "integer", "minimum": 0 },
+        "start_time_s": { "type": "number", "minimum": 0 },
+        "end_time_s": { "type": "number", "minimum": 0 },
+        "duration_s": { "type": "number", "minimum": 0 },
+        "mean_velocity_mps": { "type": "number" },
+        "peak_velocity_mps": { "type": "number" },
+        "rom_cm": { "type": "number" },
+        "complete": { "type": "boolean" },
+        "exclusion": { "enum": [null, "spans_gap", "touches_series_edge"] }
+      }
+    },
+    "core_values": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration_s",
+        "rom_m",
+        "mean_velocity_mps",
+        "peak_velocity_mps",
+        "peak_timestamp_s",
+        "confidence"
+      ],
+      "properties": {
+        "duration_s": { "type": "number", "exclusiveMinimum": 0 },
+        "rom_m": { "type": "number", "minimum": 0 },
+        "mean_velocity_mps": { "type": "number" },
+        "peak_velocity_mps": { "type": "number" },
+        "peak_timestamp_s": { "type": "number", "minimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "consumer_unrounded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mean_velocity_mps", "peak_velocity_mps", "rom_cm"],
+      "properties": {
+        "mean_velocity_mps": { "type": "number" },
+        "peak_velocity_mps": { "type": "number" },
+        "rom_cm": { "type": "number" }
+      }
+    },
+    "rep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rep_index",
+        "start_sample_index",
+        "end_sample_index",
+        "start_timestamp_s",
+        "end_timestamp_s",
+        "interval_start_sample_index",
+        "interval_start_timestamp_s",
+        "completeness",
+        "preceding_descent_cm",
+        "availability",
+        "withheld_reasons",
+        "core_primitive_values",
+        "consumer_unrounded",
+        "mean_velocity_difference_mps"
+      ],
+      "properties": {
+        "rep_index": { "type": "integer", "minimum": 0 },
+        "start_sample_index": { "type": "integer", "minimum": 0 },
+        "end_sample_index": { "type": "integer", "minimum": 1 },
+        "start_timestamp_s": { "type": "number", "minimum": 0 },
+        "end_timestamp_s": { "type": "number", "minimum": 0 },
+        "interval_start_sample_index": { "type": "integer", "minimum": 0 },
+        "interval_start_timestamp_s": { "type": "number", "minimum": 0 },
+        "completeness": { "enum": ["complete", "incomplete", "undetermined"] },
+        "preceding_descent_cm": {
+          "description": "Centimetres, in the consumer's arithmetic, so the value can be compared with its golden. Core-owned metric values are in metres.",
+          "type": "number",
+          "minimum": 0
+        },
+        "availability": { "enum": ["reported", "withheld"] },
+        "withheld_reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["unsupported_segment", "spans_gap", "touches_series_edge"] }
+        },
+        "core_primitive_values": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/core_values" }]
+        },
+        "consumer_unrounded": { "$ref": "#/$defs/consumer_unrounded" },
+        "mean_velocity_difference_mps": { "type": ["number", "null"] }
+      }
+    }
+  }
+}
