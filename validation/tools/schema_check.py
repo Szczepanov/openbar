@@ -57,6 +57,7 @@ CATALOGUE: dict[str, tuple[str, ...]] = {
     "vbt-clip-assessment-v1.schema.json": ("validation/examples/vbt-clip-assessment.example.json",),
     "recording-support-v1.schema.json": ("validation/examples/recording-support.example.json",),
     "recording-envelope-study-v1.schema.json": ("validation/recording-envelope/m0-study-v1.json",),
+    "rep-metrics-reference-cases-v1.schema.json": ("validation/reference-cases/rep-metrics-v1.json",),
 }
 
 # Committed JSON documents that intentionally have no JSON Schema, with the reason.
@@ -73,6 +74,7 @@ COVERED_DIRS = (
     "validation/examples",
     "validation/benchmarks",
     "validation/recording-envelope",
+    "validation/reference-cases",
     "crates/openbar-core/tests/fixtures",
 )
 
