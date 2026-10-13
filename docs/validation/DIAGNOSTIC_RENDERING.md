@@ -1,7 +1,11 @@
 # Diagnostic Rendering
 
 Issue #13 adds deterministic diagnostic rendering to the M0 headless pipeline. The renderer is a
-debugging/validation surface, not the future product UI.
+debugging/validation surface, not the future product UI. The proposed contract for a playback
+screen that overlays the same canonical observations on the video, with player orientation, timeline
+binding and seek rules, is [`VIDEO_OVERLAY_CONTRACT.md`](VIDEO_OVERLAY_CONTRACT.md) (ADR-0013). That
+contract reuses this renderer's pixel-centre, loss-breaks-path and raw-only invariants and does not
+change this renderer.
 
 ## Command
 

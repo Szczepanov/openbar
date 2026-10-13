@@ -382,6 +382,9 @@ Tolerances a future implementation is held to:
 - Whether the displayed mean is the core interval mean (this contract's recommendation) or the
   consumer's sample mean, which is an owner decision recorded in ADR-0012.
 - The binding technology, UI toolkit and any Android packaging.
+- How a rep is shown over the video: seek target, highlight, and withheld-rep presentation are
+  specified, as assumptions on this proposal, in
+  [`VIDEO_OVERLAY_CONTRACT.md`](VIDEO_OVERLAY_CONTRACT.md) (ADR-0013).
 - Acceptance thresholds for rep metrics on real recordings. Those come from the #58 reference study
   and #79, not from the synthetic cases.
 - The lift-specific phase models for Stage 3 lifts.
