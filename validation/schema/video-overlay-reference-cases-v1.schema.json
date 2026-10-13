@@ -1,0 +1,567 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbar.local/schemas/video-overlay-reference-cases-v1.schema.json",
+  "title": "OpenBar video playback and bar-path overlay reference cases",
+  "description": "Synthetic reference cases and expected values for the video playback and bar-path overlay design contract (docs/validation/VIDEO_OVERLAY_CONTRACT.md). Not an Analysis document, not produced by an OpenBar implementation, and not accuracy evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_set_id",
+    "status",
+    "description",
+    "constants",
+    "transform_cases",
+    "timeline_cases",
+    "path_cases",
+    "navigation_cases"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "case_set_id": { "const": "video-overlay-v1" },
+    "status": { "const": "reference_expectations_not_produced_by_an_openbar_implementation" },
+    "description": { "type": "string", "minLength": 1 },
+    "constants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeline_binding_tolerance_us", "raster_tolerance_px"],
+      "properties": {
+        "timeline_binding_tolerance_us": { "type": "integer", "minimum": 0 },
+        "raster_tolerance_px": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "transform_cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/transform_case" }
+    },
+    "timeline_cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/timeline_case" }
+    },
+    "path_cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/path_case" }
+    },
+    "navigation_cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/navigation_case" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "refusal_reason": {
+      "enum": [
+        "analysis_invalid",
+        "source_mismatch",
+        "source_unverifiable",
+        "unsupported_sample_aspect_ratio",
+        "raster_mismatch",
+        "orientation_mismatch",
+        "orientation_unverifiable",
+        "timeline_unavailable",
+        "timeline_mismatch",
+        "seek_not_exact",
+        "rep_boundary_not_an_observation",
+        "rep_result_stale",
+        "analysis_superseded"
+      ]
+    },
+    "transform_status": {
+      "enum": [
+        "accepted",
+        "source_mismatch",
+        "source_unverifiable",
+        "unsupported_sample_aspect_ratio",
+        "raster_mismatch",
+        "orientation_mismatch",
+        "orientation_unverifiable"
+      ]
+    },
+    "binding_status": { "enum": ["ok", "timeline_unavailable", "timeline_mismatch"] },
+    "tracking_state": { "enum": ["tracked", "low_confidence", "lost"] },
+    "marker_state": {
+      "enum": ["tracked", "low_confidence", "lost", "not_analysed", "seeking", "none"]
+    },
+    "point": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "number" }
+    },
+    "nullable_point": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/point" }]
+    },
+    "integer_list": { "type": "array", "items": { "type": "integer" } },
+    "nullable_index": { "type": ["integer", "null"], "minimum": 0 },
+    "coordinate_rule": {
+      "if": {
+        "properties": { "tracking_state": { "const": "lost" } },
+        "required": ["tracking_state"]
+      },
+      "then": {
+        "not": { "anyOf": [{ "required": ["x_px"] }, { "required": ["y_px"] }] }
+      },
+      "else": { "required": ["x_px", "y_px"] }
+    },
+    "transform_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "analysis",
+        "video",
+        "player",
+        "view",
+        "expected_status"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string", "minLength": 1 },
+        "analysis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["display_width_px", "display_height_px", "source_sha256_present"],
+          "properties": {
+            "display_width_px": { "type": "integer", "minimum": 1 },
+            "display_height_px": { "type": "integer", "minimum": 1 },
+            "source_sha256_present": { "type": "boolean" }
+          }
+        },
+        "video": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coded_width_px",
+            "coded_height_px",
+            "source_rotation_deg",
+            "sample_aspect_ratio"
+          ],
+          "properties": {
+            "coded_width_px": { "type": "integer", "minimum": 1 },
+            "coded_height_px": { "type": "integer", "minimum": 1 },
+            "source_rotation_deg": { "enum": [0, 90, 180, 270] },
+            "sample_aspect_ratio": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "player": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raster_width_px",
+            "raster_height_px",
+            "applied_rotation_deg",
+            "conformance_pass"
+          ],
+          "properties": {
+            "raster_width_px": { "type": "integer", "minimum": 1 },
+            "raster_height_px": { "type": "integer", "minimum": 1 },
+            "applied_rotation_deg": { "enum": [0, 90, 180, 270, null] },
+            "conformance_pass": { "type": "boolean" }
+          }
+        },
+        "view": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width_px", "height_px", "zoom", "pan_x_px", "pan_y_px"],
+          "properties": {
+            "width_px": { "type": "integer", "minimum": 1 },
+            "height_px": { "type": "integer", "minimum": 1 },
+            "zoom": { "type": "number", "exclusiveMinimum": 0 },
+            "pan_x_px": { "type": "number" },
+            "pan_y_px": { "type": "number" }
+          }
+        },
+        "expected_status": { "$ref": "#/$defs/transform_status" },
+        "expected_scale": { "type": "number", "exclusiveMinimum": 0 },
+        "expected_content_rect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left_px", "top_px", "width_px", "height_px"],
+          "properties": {
+            "left_px": { "type": "number" },
+            "top_px": { "type": "number" },
+            "width_px": { "type": "number", "exclusiveMinimum": 0 },
+            "height_px": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/transform_point" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "expected_status": { "const": "accepted" } },
+            "required": ["expected_status"]
+          },
+          "then": { "required": ["expected_scale", "expected_content_rect", "points"] },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "required": ["expected_scale"] },
+                { "required": ["expected_content_rect"] },
+                { "required": ["points"] }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "transform_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_px", "probe", "screen_px"],
+      "properties": {
+        "coded_px": { "$ref": "#/$defs/point" },
+        "display_px": { "$ref": "#/$defs/point" },
+        "probe": { "enum": ["observation", "geometry_probe"] },
+        "unzoomed_screen_px": { "$ref": "#/$defs/point" },
+        "screen_px": { "$ref": "#/$defs/point" }
+      }
+    },
+    "timeline_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_s", "tracking_state"],
+      "properties": {
+        "frame_index": { "type": "integer", "minimum": 0 },
+        "timestamp_s": { "type": "number", "minimum": 0 },
+        "transform_status": {
+      "enum": [
+        "accepted",
+        "source_mismatch",
+        "source_unverifiable",
+        "unsupported_sample_aspect_ratio",
+        "raster_mismatch",
+        "orientation_mismatch",
+        "orientation_unverifiable"
+      ]
+    },
+    "binding_status": { "enum": ["ok", "timeline_unavailable", "timeline_mismatch"] },
+    "tracking_state": { "$ref": "#/$defs/tracking_state" },
+        "x_px": { "type": "number", "minimum": 0 },
+        "y_px": { "type": "number", "minimum": 0 }
+      },
+      "allOf": [{ "$ref": "#/$defs/coordinate_rule" }]
+    },
+    "timeline_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "stream",
+        "player_frame_timestamps_us",
+        "probed_frame_count",
+        "observations",
+        "expected_binding"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string", "minLength": 1 },
+        "stream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["time_base", "start_pts", "frame_pts"],
+          "properties": {
+            "time_base": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "integer", "minimum": 1 }
+            },
+            "start_pts": { "type": "integer" },
+            "frame_pts": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "integer" }
+            }
+          }
+        },
+        "player_frame_timestamps_us": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/integer_list" }]
+        },
+        "probed_frame_count": { "type": ["integer", "null"], "minimum": 0 },
+        "video": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coded_width_px",
+            "coded_height_px",
+            "source_rotation_deg",
+            "display_width_px",
+            "display_height_px"
+          ],
+          "properties": {
+            "coded_width_px": { "type": "integer", "minimum": 1 },
+            "coded_height_px": { "type": "integer", "minimum": 1 },
+            "source_rotation_deg": { "enum": [0, 90, 180, 270] },
+            "display_width_px": { "type": "integer", "minimum": 1 },
+            "display_height_px": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "metadata_nominal_fps": { "type": "number", "exclusiveMinimum": 0 },
+        "observations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/timeline_observation" }
+        },
+        "expected_binding": { "$ref": "#/$defs/expected_binding" },
+        "clock_queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/clock_query" }
+        },
+        "seek_queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/seek_query" }
+        },
+        "exact_seek_checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/exact_seek_check" }
+        }
+      }
+    },
+    "expected_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "$ref": "#/$defs/binding_status" },
+        "offset_us": { "type": "integer" },
+        "canonical_us": { "$ref": "#/$defs/integer_list" },
+        "offsets_us": { "$ref": "#/$defs/integer_list" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "ok" } }, "required": ["status"] },
+          "then": { "required": ["offset_us", "canonical_us", "offsets_us"] },
+          "else": { "not": { "required": ["offset_us"] } }
+        }
+      ]
+    },
+    "clock_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_position_us",
+        "player_position_us",
+        "expected_frame_index",
+        "expected_marker_state",
+        "expected_marker_px"
+      ],
+      "properties": {
+        "canonical_position_us": { "type": "integer" },
+        "player_position_us": { "type": "integer" },
+        "expected_frame_index": { "$ref": "#/$defs/nullable_index" },
+        "expected_marker_state": { "$ref": "#/$defs/marker_state" },
+        "expected_marker_px": { "$ref": "#/$defs/nullable_point" },
+        "naive_nominal_fps_index": { "type": "integer" }
+      }
+    },
+    "seek_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_position_us",
+        "presented_frame_index",
+        "requested_floor_frame_index",
+        "expected_marker_state",
+        "expected_observation_frame_index",
+        "expected_marker_px"
+      ],
+      "properties": {
+        "requested_position_us": { "type": "integer" },
+        "presented_frame_index": { "$ref": "#/$defs/nullable_index" },
+        "requested_floor_frame_index": { "$ref": "#/$defs/nullable_index" },
+        "expected_marker_state": { "$ref": "#/$defs/marker_state" },
+        "expected_observation_frame_index": { "$ref": "#/$defs/nullable_index" },
+        "expected_marker_px": { "$ref": "#/$defs/nullable_point" }
+      }
+    },
+    "exact_seek_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_timestamp_s",
+        "target_frame_index",
+        "presented_frame_index",
+        "expected_status"
+      ],
+      "properties": {
+        "target_timestamp_s": { "type": "number", "minimum": 0 },
+        "target_frame_index": { "type": "integer", "minimum": 0 },
+        "presented_frame_index": { "type": "integer", "minimum": 0 },
+        "expected_status": { "enum": ["ok", "seek_not_exact"] }
+      }
+    },
+    "path_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_index", "tracking_state"],
+      "properties": {
+        "frame_index": { "type": "integer", "minimum": 0 },
+        "transform_status": {
+      "enum": [
+        "accepted",
+        "source_mismatch",
+        "source_unverifiable",
+        "unsupported_sample_aspect_ratio",
+        "raster_mismatch",
+        "orientation_mismatch",
+        "orientation_unverifiable"
+      ]
+    },
+    "binding_status": { "enum": ["ok", "timeline_unavailable", "timeline_mismatch"] },
+    "tracking_state": { "$ref": "#/$defs/tracking_state" },
+        "x_px": { "type": "number", "minimum": 0 },
+        "y_px": { "type": "number", "minimum": 0 }
+      },
+      "allOf": [{ "$ref": "#/$defs/coordinate_rule" }]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation_indices", "edge_styles"],
+      "properties": {
+        "observation_indices": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "edge_styles": {
+          "type": "array",
+          "items": { "enum": ["solid", "dashed"] }
+        }
+      }
+    },
+    "path_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "observations",
+        "expected_runs",
+        "expected_marker_styles"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string", "minLength": 1 },
+        "observations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/path_observation" }
+        },
+        "expected_runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
+        "expected_marker_styles": {
+          "type": "array",
+          "items": { "enum": ["filled", "ring", "none"] }
+        },
+        "trail_cuts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["displayed_observation_index", "emphasised_runs", "dimmed_runs"],
+            "properties": {
+              "displayed_observation_index": { "type": "integer", "minimum": 0 },
+              "emphasised_runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
+              "dimmed_runs": { "type": "array", "items": { "$ref": "#/$defs/run" } }
+            }
+          }
+        }
+      }
+    },
+    "withheld_reason": { "enum": ["unsupported_segment", "spans_gap", "touches_series_edge"] },
+    "rep_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rep_index",
+        "interval_start_timestamp_s",
+        "end_timestamp_s",
+        "availability",
+        "withheld_reasons",
+        "completeness"
+      ],
+      "properties": {
+        "rep_index": { "type": "integer", "minimum": 0 },
+        "interval_start_timestamp_s": { "type": "number", "minimum": 0 },
+        "end_timestamp_s": { "type": "number", "minimum": 0 },
+        "availability": { "enum": ["reported", "withheld"] },
+        "withheld_reasons": { "type": "array", "items": { "$ref": "#/$defs/withheld_reason" } },
+        "completeness": { "enum": ["complete", "incomplete", "undetermined"] }
+      }
+    },
+    "navigation_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rep_index",
+        "seek_timestamp_s",
+        "highlight_start_timestamp_s",
+        "highlight_end_timestamp_s",
+        "availability",
+        "show_numbers",
+        "flags",
+        "withheld_reasons"
+      ],
+      "properties": {
+        "rep_index": { "type": "integer", "minimum": 0 },
+        "seek_timestamp_s": { "type": ["number", "null"], "minimum": 0 },
+        "highlight_start_timestamp_s": { "type": ["number", "null"], "minimum": 0 },
+        "highlight_end_timestamp_s": { "type": ["number", "null"], "minimum": 0 },
+        "availability": { "enum": ["reported", "withheld"] },
+        "show_numbers": { "type": "boolean" },
+        "flags": {
+          "type": "array",
+          "items": { "enum": ["incomplete", "undetermined", "rep_boundary_not_an_observation"] }
+        },
+        "withheld_reasons": { "type": "array", "items": { "$ref": "#/$defs/withheld_reason" } }
+      }
+    },
+    "navigation_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "expected_navigation"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "type": "string", "minLength": 1 },
+        "rep_metrics_case_id": { "$ref": "#/$defs/id" },
+        "observation_timestamps_s": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "reps": { "type": "array", "items": { "$ref": "#/$defs/rep_input" } },
+        "expected_navigation": { "type": "array", "items": { "$ref": "#/$defs/navigation_item" } }
+      },
+      "oneOf": [
+        {
+          "required": ["rep_metrics_case_id"],
+          "not": { "anyOf": [{ "required": ["observation_timestamps_s"] }, { "required": ["reps"] }] }
+        },
+        {
+          "required": ["observation_timestamps_s", "reps"],
+          "not": { "required": ["rep_metrics_case_id"] }
+        }
+      ]
+    }
+  }
+}
