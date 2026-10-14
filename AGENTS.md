@@ -144,7 +144,42 @@ may *suggest* the plate circle and the stick markers on a seed frame, but nothin
 human confirms or adjusts each clip on the session page. The seed notes record whether the plate
 centre and radius were accepted unchanged, adjusted, or placed by hand (`manual`); the stick-marker
 statuses are recorded in the session CSV and the session record. Fully automatic seeding without
-that confirmation stays out of scope. `analyze` is the real M0 measurement integration command. `render` is a diagnostic consumer of canonical analysis and must not reimplement or alter measurement logic. See `docs/validation/CLI_PIPELINE.md` and `docs/validation/DIAGNOSTIC_RENDERING.md`.
+that confirmation stays out of scope for the canonical pipeline and for production use. A
+research-only automatic proposal path is allowed once the owner records a PROCEED on #178 (see
+`docs/plans/AUTOMATIC_PLATE_SELECTION_PLAN.md`): its output stays machine-origin, is never labelled
+human-confirmed, and never enters the canonical `Analysis`. Until that decision exists, #178 is
+DEFER and nothing here changes what agents may build. `analyze` is the real M0 measurement integration command. `render` is a diagnostic consumer of canonical analysis and must not reimplement or alter measurement logic. See `docs/validation/CLI_PIPELINE.md` and `docs/validation/DIAGNOSTIC_RENDERING.md`.
+
+## Standing agent authority
+
+Goal: agents carry most of the work; the owner sets direction, decides scope and audits samples.
+The measurement rules above are not loosened by this section.
+
+Agents may do the following without asking first, on a feature branch:
+
+- docs-only changes and tests;
+- research-harness code under `research/`, and new code that is not a change to a boundary
+  listed under "Stop and ask";
+- run the applicable verification commands, fix failures the change itself caused, and open a PR;
+- re-run existing evaluations and report results as measured, including failures.
+
+Stop and ask the owner before:
+
+- changing `analysis-v1.golden.json`, a JSON schema, a `*_VERSION` constant or anything under
+  `validation/fixtures/`;
+- touching serialization, the tracker frame boundary or calibration semantics;
+- adding a dependency, model or media, or changing licensing;
+- opening, decoding, annotating or scoring a clip tagged `split-reserved-57`, or changing any
+  clip's `split-*` role after a freeze record exists (`docs/validation/PLATE_SELECTION_SPLIT.md`);
+- merging, force-pushing, or publishing outside the repository;
+- lifting a scope exclusion or recording a PROCEED/STOP decision, which are the owner's alone.
+
+Prefer a failing check over a waiting human. When a rule can be enforced mechanically, an agent
+should add or use that check instead of asking for review: `schema_check.py`, the golden-file
+test, `cargo deny`, the research runner's refusal of validation-purpose fixtures, and the
+determinism tests. Report any gap where a rule above has no mechanical check; do not paper over
+it. Humans audit a random sample plus every low-confidence or refused case; the sampling rate is
+set by the owner from evidence, not by an agent.
 
 ## Git
 
