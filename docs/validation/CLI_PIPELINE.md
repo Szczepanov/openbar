@@ -203,6 +203,60 @@ non-synthetic accuracy evidence. `oblique_45`, front, rear, unknown view, and
 handheld/panning/moving/unknown camera stability are rejected with exit code 4 before canonical
 analysis is written. See [RECORDING_ENVELOPE.md](RECORDING_ENVELOPE.md).
 
+#### Opt-in stage timings (`--timings-output`)
+
+`--timings-output <path>` additionally writes a stage-timing sidecar (#179) after the normal
+outputs. Without the flag, behaviour, stdout/stderr and output files are unchanged. With it, the
+canonical analysis and recording-support JSON stay byte-identical; timings are never embedded in
+them. The path must differ from `--output`, `--recording-support-output` and every explicit
+input (`--video`, `--manifest`, `--seed`, `--observations`) and from the resolved media file
+(checked once the fixture media path is resolved, before any output is written). These
+comparisons are on lexically normalised absolute paths (`.`/`..` removed, ASCII-case-insensitive
+on Windows); symlinks and hard links are not resolved. The existing `--recording-support-output`
+checks remain literal comparisons. The sidecar follows the same `--force` create/overwrite
+policy; without `--force`, an already existing sidecar path fails with exit code 7 before the
+pipeline runs, so no canonical output is written. A failure to write the sidecar is an output
+error (exit code 7), never silently skipped; if it happens at write time (for example an
+unwritable directory) the canonical outputs are already complete. If `analyze` itself fails, no
+sidecar is written.
+
+```json
+{
+  "schema_version": 1,
+  "timings_version": "analyze-stage-timings-v1",
+  "command": "analyze",
+  "stages_s": { "calibration": 0.0, "decode": 0.0 },
+  "total_s": 0.0
+}
+```
+
+All numbers are finite, non-negative seconds from the monotonic `std::time::Instant` clock (no
+wall-clock timestamps). `stages_s` keys are sorted; the stages currently emitted are:
+
+| Stage | Boundary |
+|-------|----------|
+| `setup` | manifest/fixture load, plate-diameter check, media path resolution, seed read, tracker construction |
+| `probe` | `ProbedVideo::open`: ffprobe/ffmpeg version checks, source SHA-256 and PTS timeline probe (not separable without changing `media`) |
+| `decode` | `ProbedVideo::decode` frame decode |
+| `recording_support` | recording-conditions derivation and `assess_recording_support` |
+| `tracking` | the tracker `track` call (init and per-frame tracking are one call in the Tracker API), or, with `--observations`, external prediction load/validation |
+| `calibration` | plate calibration construction and per-sample metric calibration |
+| `filtering` | `apply_filter` |
+| `kinematics` | `derive_kinematic_trajectory` |
+| `output_write` | writing the recording-support sidecar (if requested) and the canonical analysis file |
+
+`total_s` runs from before `setup` to just after the analysis write; the timings file's own write
+and the stderr diagnostics are excluded; argument parsing happens before the window and is
+outside `total_s` entirely. Stage durations are accumulated as `Duration`, so their sum does not
+exceed `total_s` within floating-point rounding of the serialized seconds. The remainder inside
+the window (`check_fixture_matches_media`, seed validation, filter resolution, the unsupported
+recording-status check, `Analysis` assembly and validation) is unattributed overhead and is not
+reported as an "other" stage.
+
+The sidecar is non-deterministic environment evidence. It is outside the canonical analysis
+contract, not subject to the determinism rule, and must not be compared byte-for-byte or used as
+measurement output.
+
 There is deliberately **no default observation source or production filter**. The caller must
 choose either an internal tracker family with `--tracker` or a validated external prediction with
 `--observations`, and must also choose the filter. Filtering evidence from #10 explicitly deferred

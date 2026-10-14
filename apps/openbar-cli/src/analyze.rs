@@ -15,6 +15,7 @@ use crate::media::{
     DecodedClip, FrameSourceOptions, MediaError, ProbedVideo, StreamProvenance,
     TimeRange as MediaTimeRange,
 };
+use crate::stage_timings::{write_timings, StageRecorder};
 use openbar_core::analysis::{
     Analysis, AnalysisIdentity, AnalysisProvenance, CalibratedTrajectory, Configuration,
     DerivedData, EnvironmentProvenance, FrameRateMetadata, ImplementationProvenance,
@@ -54,7 +55,7 @@ const USAGE: &str = "Usage: openbar-cli analyze (--video <path> | --manifest <pa
      \x20      --kinematics-max-gap-s <s> --kinematics-min-confidence <0..1> --output <analysis.json>\n\
      \x20      [--start-s <s> --end-s <s>] [--max-frame-memory-mib <MiB>] [--tracker-search-radius-px <px>]\n\
      \x20      [tracker-specific options] [filter-specific options] [--diagnostics <quiet|normal|verbose>]\n\
-     \x20      [--recording-support-output <support.json>] [--force]\n\
+     \x20      [--recording-support-output <support.json>] [--timings-output <timings.json>] [--force]\n\
 \n\
 Direct-video recording metadata (fixture mode reads these from the manifest):\n\
   --camera-view <side|oblique_45|front|rear|unknown>\n\
@@ -75,7 +76,10 @@ Filter options (there is deliberately no production default):\n\
           --filter-initial-velocity-variance-m2-s2 <v> --filter-confidence-window-samples <n>\n\
           --filter-max-gap-s <s>\n\
 \n\
-Machine-readable analysis is written only to --output. Diagnostics are written to stderr.";
+Machine-readable analysis is written only to --output. Diagnostics are written to stderr.\n\
+\n\
+Opt-in stage timings (non-deterministic environment evidence, never part of the analysis):\n\
+  --timings-output <timings.json> writes an analyze-stage-timings-v1 sidecar after the normal outputs.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrackerChoice {
@@ -117,6 +121,7 @@ struct Args {
     max_frame_bytes: u64,
     output: PathBuf,
     recording_support_output: Option<PathBuf>,
+    timings_output: Option<PathBuf>,
     diagnostics: DiagnosticsVerbosity,
     force: bool,
 }
@@ -189,33 +194,76 @@ pub fn run_cli() -> CliResult<()> {
 }
 
 fn run(args: &Args) -> CliResult<()> {
-    let fixture = match (&args.manifest, args.fixture_id.as_deref()) {
-        (Some(path), Some(fixture_id)) => Some(load_fixture(path, fixture_id)?),
-        _ => None,
-    };
-    if let Some(fixture) = fixture.as_ref() {
-        validate_fixture_plate_diameter(fixture, args.plate_diameter_m)?;
+    if let Some(path) = args.timings_output.as_deref() {
+        // Cheap pre-check so a doomed sidecar does not fail after canonical outputs are written.
+        // `write_timings` keeps its own create-new check for races.
+        if !args.force && path.exists() {
+            return Err(CliError::output(format!(
+                "failed to open timings output '{}': already exists (use --force to replace it)",
+                path.display()
+            )));
+        }
     }
-    let media_path = resolve_media_path(args, fixture.as_ref())?;
-    let seed = read_seed(&args.seed, args.fixture_id.as_deref())?;
-    let tracker = args
-        .tracker
-        .map(|choice| build_tracker(choice, args))
-        .transpose()?;
+    let mut recorder = StageRecorder::start();
+    let (analysis, clip, recording_support) = run_pipeline(args, &mut recorder)?;
+    recorder.finish();
+    emit_diagnostics(args, &analysis, &clip, &recording_support);
+    if let Some(path) = args.timings_output.as_deref() {
+        write_timings(path, &recorder.report()?, args.force)?;
+    }
+    Ok(())
+}
 
-    let probed = ProbedVideo::open(&media_path).map_err(classify_media_error)?;
+/// Runs the measurement pipeline, timing its natural stage boundaries. Timing never alters the
+/// values flowing through the pipeline or the canonical outputs.
+fn run_pipeline(
+    args: &Args,
+    recorder: &mut StageRecorder,
+) -> CliResult<(Analysis, DecodedClip, RecordingSupportAssessment)> {
+    let (fixture, media_path, seed, tracker) = recorder.time("setup", || {
+        let fixture = match (&args.manifest, args.fixture_id.as_deref()) {
+            (Some(path), Some(fixture_id)) => Some(load_fixture(path, fixture_id)?),
+            _ => None,
+        };
+        if let Some(fixture) = fixture.as_ref() {
+            validate_fixture_plate_diameter(fixture, args.plate_diameter_m)?;
+        }
+        let media_path = resolve_media_path(args, fixture.as_ref())?;
+        if args
+            .timings_output
+            .as_deref()
+            .is_some_and(|path| same_path(path, &media_path))
+        {
+            return Err(CliError::invalid_input(
+                "--timings-output must not overwrite the media file being analyzed",
+            ));
+        }
+        let seed = read_seed(&args.seed, args.fixture_id.as_deref())?;
+        let tracker = args
+            .tracker
+            .map(|choice| build_tracker(choice, args))
+            .transpose()?;
+        Ok::<_, CliError>((fixture, media_path, seed, tracker))
+    })?;
+
+    // `ProbedVideo::open` runs ffprobe/tool-version checks and hashes the source in one call.
+    let probed = recorder.time("probe", || {
+        ProbedVideo::open(&media_path).map_err(classify_media_error)
+    })?;
     let stream = probed.stream();
     let source_sha256 = probed.source_sha256().to_owned();
     if let Some(fixture) = fixture.as_ref() {
         check_fixture_matches_media(fixture, &source_sha256, &stream)?;
     }
 
-    let clip = probed
-        .decode(FrameSourceOptions {
-            selection: args.selection,
-            max_frame_bytes: args.max_frame_bytes,
-        })
-        .map_err(classify_media_error)?;
+    let clip = recorder.time("decode", || {
+        probed
+            .decode(FrameSourceOptions {
+                selection: args.selection,
+                max_frame_bytes: args.max_frame_bytes,
+            })
+            .map_err(classify_media_error)
+    })?;
 
     // Validate the seed against the decoded media before deriving any support metadata from it.
     // Otherwise an invalid target radius/timestamp could be reclassified as recording metadata
@@ -223,42 +271,50 @@ fn run(args: &Args) -> CliResult<()> {
     validate_seed(&seed, &stream, args.selection, &clip)?;
     let filter_config = args.filter.resolve(measured_fps(&clip))?;
 
-    let imported_observations = args
-        .observations
-        .as_deref()
-        .map(|path| {
-            let timeline = clip
-                .frames
-                .iter()
-                .map(|frame| DecodedTimelineFrame {
-                    timestamp_s: frame.timestamp_s,
-                    frame_index: frame.frame_index,
-                })
-                .collect::<Vec<_>>();
-            load_external_observations(
-                path,
-                args.fixture_id.as_deref(),
-                &source_sha256,
-                stream.display_width_px,
-                stream.display_height_px,
-                &timeline,
-                seed.seed().timestamp_s(),
-                SEED_TIMESTAMP_TOLERANCE_S,
-            )
-        })
-        .transpose()?;
+    // External-observation import is accounted to the "tracking" stage.
+    let imported_observations = recorder.time("tracking", || {
+        args.observations
+            .as_deref()
+            .map(|path| {
+                let timeline = clip
+                    .frames
+                    .iter()
+                    .map(|frame| DecodedTimelineFrame {
+                        timestamp_s: frame.timestamp_s,
+                        frame_index: frame.frame_index,
+                    })
+                    .collect::<Vec<_>>();
+                load_external_observations(
+                    path,
+                    args.fixture_id.as_deref(),
+                    &source_sha256,
+                    stream.display_width_px,
+                    stream.display_height_px,
+                    &timeline,
+                    seed.seed().timestamp_s(),
+                    SEED_TIMESTAMP_TOLERANCE_S,
+                )
+            })
+            .transpose()
+    })?;
 
-    let recording_conditions = recording_conditions(
-        args,
-        fixture.as_ref(),
-        &stream,
-        &clip,
-        seed.seed().target().diameter_px(),
-    );
-    let recording_support = assess_recording_support(&recording_conditions)
-        .map_err(|error| CliError::invalid_input(format!("invalid recording metadata: {error}")))?;
+    let (recording_conditions, recording_support) = recorder.time("recording_support", || {
+        let conditions = recording_conditions(
+            args,
+            fixture.as_ref(),
+            &stream,
+            &clip,
+            seed.seed().target().diameter_px(),
+        );
+        let support = assess_recording_support(&conditions).map_err(|error| {
+            CliError::invalid_input(format!("invalid recording metadata: {error}"))
+        })?;
+        Ok::<_, CliError>((conditions, support))
+    })?;
     if let Some(path) = args.recording_support_output.as_deref() {
-        write_recording_support(path, &recording_support, args.force)?;
+        recorder.time("output_write", || {
+            write_recording_support(path, &recording_support, args.force)
+        })?;
     }
     if recording_support.status == RecordingSupportStatus::Unsupported {
         let reasons = recording_support.unsupported_reason_codes().join(",");
@@ -267,27 +323,37 @@ fn run(args: &Args) -> CliResult<()> {
         )));
     }
 
-    let (raw_observations, tracker_provenance) =
-        measurement_observations(imported_observations, tracker, &clip, &seed)?;
-
-    let calibration = PlateDiameterCalibration::try_from_manual_seed(
-        args.plate_diameter_m,
-        seed.seed(),
-        calibration_quality_for_recording(&recording_conditions),
-    )
-    .map_err(|error| CliError::seed_calibration(format!("invalid plate calibration: {error}")))?;
-
-    let calibrated_samples = calibrate_measurements(&raw_observations, &calibration)?;
-    let filter_run = apply_filter(&calibrated_samples, filter_config).map_err(|error| {
-        CliError::invalid_input(format!("invalid filter configuration/input: {error}"))
+    // The Tracker API exposes one `track` call (init + per-frame tracking), so it is one stage.
+    let (raw_observations, tracker_provenance) = recorder.time("tracking", || {
+        measurement_observations(imported_observations, tracker, &clip, &seed)
     })?;
-    let kinematic = derive_kinematic_trajectory(
-        &filter_run.trajectory.samples,
-        KinematicsInput::Filtered,
-        args.kinematics,
-    )
-    .map_err(|error| {
-        CliError::invalid_input(format!("invalid kinematics configuration/input: {error}"))
+
+    let (calibration, calibrated_samples) = recorder.time("calibration", || {
+        let calibration = PlateDiameterCalibration::try_from_manual_seed(
+            args.plate_diameter_m,
+            seed.seed(),
+            calibration_quality_for_recording(&recording_conditions),
+        )
+        .map_err(|error| {
+            CliError::seed_calibration(format!("invalid plate calibration: {error}"))
+        })?;
+        let samples = calibrate_measurements(&raw_observations, &calibration)?;
+        Ok::<_, CliError>((calibration, samples))
+    })?;
+    let filter_run = recorder.time("filtering", || {
+        apply_filter(&calibrated_samples, filter_config).map_err(|error| {
+            CliError::invalid_input(format!("invalid filter configuration/input: {error}"))
+        })
+    })?;
+    let kinematic = recorder.time("kinematics", || {
+        derive_kinematic_trajectory(
+            &filter_run.trajectory.samples,
+            KinematicsInput::Filtered,
+            args.kinematics,
+        )
+        .map_err(|error| {
+            CliError::invalid_input(format!("invalid kinematics configuration/input: {error}"))
+        })
     })?;
 
     let analysis = Analysis::try_new(
@@ -324,9 +390,10 @@ fn run(args: &Args) -> CliResult<()> {
         ))
     })?;
 
-    write_analysis(&args.output, &analysis, args.force)?;
-    emit_diagnostics(args, &analysis, &clip, &recording_support);
-    Ok(())
+    recorder.time("output_write", || {
+        write_analysis(&args.output, &analysis, args.force)
+    })?;
+    Ok((analysis, clip, recording_support))
 }
 
 fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
@@ -369,6 +436,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     let seed = PathBuf::from(required(&mut values, "--seed")?);
     let output = PathBuf::from(required(&mut values, "--output")?);
     let recording_support_output = take_path(&mut values, "--recording-support-output");
+    let timings_output = take_path(&mut values, "--timings-output");
     let observations = take_path(&mut values, "--observations");
     let tracker_value = values.remove("--tracker");
     let tracker = match (tracker_value.as_deref(), observations.as_ref()) {
@@ -400,6 +468,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         observations.as_ref(),
         &output,
         recording_support_output.as_ref(),
+        timings_output.as_ref(),
     )?;
     let plate_diameter_m = parse_f64(
         &required(&mut values, "--plate-diameter-m")?,
@@ -517,6 +586,7 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         max_frame_bytes,
         output,
         recording_support_output,
+        timings_output,
         diagnostics,
         force,
     }))
@@ -593,6 +663,7 @@ fn is_known_value_flag(flag: &str) -> bool {
             | "--max-frame-memory-mib"
             | "--output"
             | "--recording-support-output"
+            | "--timings-output"
             | "--diagnostics"
     )
 }
@@ -653,11 +724,24 @@ fn validate_output_paths(
     observations: Option<&PathBuf>,
     output: &Path,
     recording_support_output: Option<&PathBuf>,
+    timings_output: Option<&PathBuf>,
 ) -> CliResult<()> {
     if recording_support_output.is_some_and(|path| path.as_path() == output) {
         return Err(CliError::invalid_input(
             "--recording-support-output must differ from --output",
         ));
+    }
+    if let Some(timings) = timings_output {
+        if same_path(timings, output) {
+            return Err(CliError::invalid_input(
+                "--timings-output must differ from --output",
+            ));
+        }
+        if recording_support_output.is_some_and(|path| same_path(timings, path)) {
+            return Err(CliError::invalid_input(
+                "--timings-output must differ from --recording-support-output",
+            ));
+        }
     }
 
     let explicit_inputs = [
@@ -685,7 +769,44 @@ fn validate_output_paths(
             )));
         }
     }
+    if let Some(timings) = timings_output {
+        if let Some((input_flag, _)) = explicit_inputs
+            .iter()
+            .find(|(_, input)| input.is_some_and(|input| same_path(input, timings)))
+        {
+            return Err(CliError::invalid_input(format!(
+                "--timings-output must not overwrite the explicit input path supplied by {input_flag}"
+            )));
+        }
+    }
     Ok(())
+}
+
+/// Lexically normalised absolute form: `.`/`..` removed, ASCII-lowercased on Windows. It does
+/// not touch the filesystem, so symlinks and hard links are not resolved.
+fn normalized_path(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut cleaned = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !cleaned.pop() {
+                    cleaned.push(component);
+                }
+            }
+            other => cleaned.push(other),
+        }
+    }
+    if cfg!(windows) {
+        PathBuf::from(cleaned.to_string_lossy().to_ascii_lowercase())
+    } else {
+        cleaned
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    normalized_path(a) == normalized_path(b)
 }
 
 fn parse_camera_view(value: &str) -> CliResult<CameraView> {
@@ -2165,6 +2286,193 @@ mod tests {
 
         let _ = fs::remove_file(output_a);
         let _ = fs::remove_file(output_b);
+    }
+
+    #[test]
+    fn timings_output_flag_parses_and_is_optional() {
+        let absent = parse_args(base_args("analysis.json")).unwrap().unwrap();
+        assert_eq!(absent.timings_output, None);
+
+        let mut args = base_args("analysis.json");
+        args.extend(strings(&["--timings-output", "timings.json"]));
+        let parsed = parse_args(args).unwrap().unwrap();
+        assert_eq!(parsed.timings_output, Some(PathBuf::from("timings.json")));
+    }
+
+    #[test]
+    fn timings_output_requires_value_and_rejects_duplicates() {
+        let mut missing = base_args("analysis.json");
+        missing.push("--timings-output".to_owned());
+        let error = parse_args(missing).unwrap_err();
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("--timings-output requires a value"));
+
+        let mut duplicate = base_args("analysis.json");
+        duplicate.extend(strings(&[
+            "--timings-output",
+            "a.json",
+            "--timings-output",
+            "b.json",
+        ]));
+        let error = parse_args(duplicate).unwrap_err();
+        assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+        assert!(error
+            .to_string()
+            .contains("--timings-output was given more than once"));
+    }
+
+    #[test]
+    fn timings_output_cannot_alias_other_paths() {
+        for (path, expected) in [
+            ("analysis.json", "must differ from --output"),
+            (
+                "support.json",
+                "must differ from --recording-support-output",
+            ),
+            ("seed.json", "must not overwrite the explicit input path"),
+        ] {
+            let mut args = base_args("analysis.json");
+            args.extend(strings(&["--recording-support-output", "support.json"]));
+            args.extend(strings(&["--timings-output", path]));
+            let error = parse_args(args).unwrap_err();
+            assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn timings_output_alias_detection_is_normalised() {
+        let mut cases = vec![
+            ("./analysis.json", "must differ from --output"),
+            ("sub/../analysis.json", "must differ from --output"),
+            (
+                "./support.json",
+                "must differ from --recording-support-output",
+            ),
+            (
+                "x/../seed.json",
+                "must not overwrite the explicit input path",
+            ),
+            ("./clip.mp4", "must not overwrite the explicit input path"),
+        ];
+        if cfg!(windows) {
+            cases.push(("ANALYSIS.JSON", "must differ from --output"));
+        }
+        for (path, expected) in cases {
+            let mut args = base_args("analysis.json");
+            args.extend(strings(&["--recording-support-output", "support.json"]));
+            args.extend(strings(&["--timings-output", path]));
+            let error = parse_args(args).unwrap_err();
+            assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+            assert!(error.to_string().contains(expected), "{path}: {error}");
+        }
+        let mut distinct = base_args("analysis.json");
+        distinct.extend(strings(&["--timings-output", "other/analysis.json"]));
+        assert!(parse_args(distinct).is_ok());
+    }
+
+    #[test]
+    fn existing_timings_output_fails_before_pipeline_without_force() {
+        let output = scratch_file("precheck-analysis.json");
+        let sidecar = scratch_file("precheck-sidecar.json");
+        let _ = fs::remove_file(&output);
+        fs::write(&sidecar, b"keep").unwrap();
+        let mut args = fixture_args(&output);
+        args.timings_output = Some(sidecar.clone());
+        let error = run(&args).expect_err("existing sidecar must fail up front");
+        assert_eq!(error.kind(), CliErrorKind::Output);
+        assert!(error.to_string().contains("--force"));
+        assert!(!output.exists(), "no canonical output may be written");
+        assert_eq!(fs::read(&sidecar).unwrap(), b"keep");
+        let _ = fs::remove_file(sidecar);
+    }
+
+    #[test]
+    fn timings_sidecar_does_not_change_analysis_bytes() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let plain = scratch_file("timings-plain.json");
+        let timed = scratch_file("timings-timed.json");
+        let support_plain = scratch_file("timings-support-plain.json");
+        let support_timed = scratch_file("timings-support-timed.json");
+        let sidecar = scratch_file("timings-sidecar.json");
+        for path in [&plain, &timed, &support_plain, &support_timed, &sidecar] {
+            let _ = fs::remove_file(path);
+        }
+
+        let mut plain_args = fixture_args(&plain);
+        plain_args.recording_support_output = Some(support_plain.clone());
+        run(&plain_args).expect("analysis without timings succeeds");
+        assert!(!sidecar.exists());
+
+        let mut timed_args = fixture_args(&timed);
+        timed_args.recording_support_output = Some(support_timed.clone());
+        timed_args.timings_output = Some(sidecar.clone());
+        run(&timed_args).expect("analysis with timings succeeds");
+
+        assert_eq!(fs::read(&plain).unwrap(), fs::read(&timed).unwrap());
+        assert_eq!(
+            fs::read(&support_plain).unwrap(),
+            fs::read(&support_timed).unwrap()
+        );
+
+        let text = fs::read_to_string(&sidecar).expect("timings file");
+        assert!(text.ends_with("}\n"));
+        let value: serde_json::Value = serde_json::from_str(&text).expect("timings JSON");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["timings_version"], "analyze-stage-timings-v1");
+        assert_eq!(value["command"], "analyze");
+        let stages = value["stages_s"].as_object().expect("stages_s object");
+        let mut keys = stages.keys().map(String::as_str).collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "calibration",
+                "decode",
+                "filtering",
+                "kinematics",
+                "output_write",
+                "probe",
+                "recording_support",
+                "setup",
+                "tracking",
+            ]
+        );
+        let sum = stages
+            .values()
+            .map(|value| value.as_f64().expect("number"))
+            .inspect(|seconds| assert!(seconds.is_finite() && *seconds >= 0.0))
+            .sum::<f64>();
+        let total = value["total_s"].as_f64().expect("total_s");
+        assert!(total.is_finite() && sum <= total + 1e-9, "{sum} > {total}");
+
+        let error = run(&timed_args).expect_err("existing outputs are not overwritten");
+        assert_eq!(error.kind(), CliErrorKind::Output);
+
+        for path in [plain, timed, support_plain, support_timed, sidecar] {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn unwritable_timings_output_is_an_output_error() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output = scratch_file("timings-fail-analysis.json");
+        let _ = fs::remove_file(&output);
+        let mut args = fixture_args(&output);
+        // A directory path cannot be opened as a file, so the sidecar write must fail loudly.
+        args.timings_output = Some(std::env::temp_dir());
+        args.force = true; // skip the existing-path pre-check so the write itself fails
+        let error = run(&args).expect_err("timings write failure must surface");
+        assert_eq!(error.kind(), CliErrorKind::Output);
+        assert!(error.to_string().contains("timings output"));
+        let _ = fs::remove_file(output);
     }
 
     fn external_fixture_args(output: &Path, observations: &Path) -> Args {
