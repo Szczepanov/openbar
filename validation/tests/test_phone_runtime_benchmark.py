@@ -432,7 +432,7 @@ class ExistingBehaviourTests(unittest.TestCase):
             {"reference_match": False}, [], production_candidate_frozen=True
         )
         self.assertEqual(gate["status"], "NOT MEASURABLE YET")
-        self.assertIn("Pixel 8", gate["evidence"])
+        self.assertIn("Xiaomi 14T Pro", gate["evidence"])
 
     def test_analyze_command_timings_flag_is_opt_in(self):
         args = (Path("b"), Path("m"), "f", Path("s"), 0.45, [], Path("o"), Path("r"))

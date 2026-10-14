@@ -41,7 +41,7 @@ KINEMATICS_MAX_GAP_S = "0.2"
 KINEMATICS_MIN_CONFIDENCE = "0"
 # Owner decision recorded 2026-10-01: the offline-speed gate targets phone-class hardware.
 REFERENCE_HARDWARE_POLICY = (
-    "The phone-class reference target is Google Pixel 8 under ADR-0009, but no gate-eligible "
+    "The phone-class reference target is Xiaomi 14T Pro under ADR-0009, but no gate-eligible "
     "reference-phone run over representative supported real clips is committed yet; desktop and "
     "non-reference timings are diagnostic only."
 )
@@ -531,7 +531,7 @@ def build_report(evidence: dict[str, Any]) -> str:
         f"- Canonical analysis JSON byte-identical across two end-to-end runs: "
         f"{evidence['determinism']['canonical_analysis_identical']}.",
         "- Runtime is recorded per tracker in the machine-readable evidence. The offline-speed gate remains",
-        "  NOT MEASURABLE YET until #59 records gate-eligible runs on the Pixel 8 reference runtime.",
+        "  NOT MEASURABLE YET until #59 records gate-eligible runs on the reference-phone runtime.",
         "",
         "## Failure cases and unsupported conditions",
         "",

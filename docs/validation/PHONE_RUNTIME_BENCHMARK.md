@@ -10,7 +10,8 @@ turning the experiment into a Flutter or production Android architecture project
 Reference target and runtime are defined by
 [ADR-0009](../adr/0009-m0-phone-runtime-benchmark-boundary.md):
 
-- physical **Google Pixel 8** (device codename shiba);
+- physical **Xiaomi 14T Pro** (model 2407FPN8EG, device codename rothko, Android 16; identity read
+  from the unit, see ADR-0009 Amendment 1);
 - Android arm64 runtime;
 - native release-built openbar-cli under Termux;
 - external ffmpeg/ffprobe under the existing ADR-0006 M0 decode boundary.
@@ -45,7 +46,7 @@ The provisional gate remains:
 
 A case explicitly marked representative for the gate is eligible only when it is:
 
-- executed on the designated Pixel 8 reference runtime;
+- executed on the designated Xiaomi 14T Pro reference runtime;
 - non-synthetic;
 - inside the evidence-backed supported recording envelope;
 - run with the frozen pipeline configuration;
@@ -87,7 +88,7 @@ document before collecting final #59 evidence.
 
 ## Phone setup
 
-One reproducible setup is Termux on the Pixel 8 with Rust, Python and FFmpeg available on PATH.
+One reproducible setup is Termux on the Xiaomi 14T Pro with Rust, Python and FFmpeg available on PATH.
 
 Example package setup:
 
@@ -104,6 +105,17 @@ From the repository checkout:
 
 Do not use debug cargo run timings for the gate. The harness executes target/release/openbar-cli
 directly.
+
+The reference unit reported manufacturer Xiaomi, model 2407FPN8EG, device rothko, ABI arm64-v8a,
+Android 16 (SDK 36). To re-check the identity the harness compares against (`REFERENCE_MODEL`,
+`REFERENCE_DEVICE`, `REFERENCE_ABI` in the tool):
+
+    for p in ro.product.manufacturer ro.product.model ro.product.device ro.product.cpu.abi \
+             ro.build.version.release ro.build.version.sdk; do echo "$p=$(getprop $p)"; done
+
+If `ro.product.device` is not `rothko`, correct the constant and ADR-0009 Amendment 1 to the
+observed value in the same change. Install Termux from F-Droid or
+GitHub releases; the Play Store build is outdated.
 
 ## Benchmark suite
 
