@@ -1,0 +1,146 @@
+# Plate-selection evaluation: clip roles and collection checklist
+
+Parent plan: [AUTOMATIC_PLATE_SELECTION_PLAN.md](../plans/AUTOMATIC_PLATE_SELECTION_PLAN.md) (#178).
+Date: 2026-10-14. Work type: **evidence preparation**. This document assigns roles to existing
+private clips and lists the collection and labelling the plan requires. It authorizes no
+detector, prototype, threshold or consumer behaviour; the plan's **DEFER** disposition stands
+until the owner records a separate PROCEED decision.
+
+## Goal
+
+Reduce human work in plate seeding by letting agents propose the seed, with the human moving
+from seeding every clip to auditing a sample. That needs independent evidence of how often an
+automatic proposal is right. Existing labels cannot supply it: they were made on one
+operator's footage, mostly after seeing proposals, and the held-out clips are reserved.
+
+## Roles
+
+Roles are immutable once a freeze record exists. They are recorded as `challenge_tags` in the
+private manifests (`validation/private/manifest.json`, `validation/private/vbt/manifest.json`);
+no schema change is needed. Tag meanings:
+
+| Tag | Role | Who may look at the clip | Count today |
+| --- | --- | --- | ---: |
+| `split-exploration` | Development / exploration: agents may inspect, tune and debug against these | agents and owner | 13 |
+| `split-reserved-57` | Reserved #57 held-out tracker/filter evidence. **Excluded** from plate-selection collection, inspection and tuning ([plan](../plans/AUTOMATIC_PLATE_SELECTION_PLAN.md#development-input-roles-and-independent-truth)) | nobody, for this work | 6 |
+| `split-frozen-eval` | Frozen development evaluation: unseen independent recording sessions, scored once per frozen candidate | owner labels; agents see only after the freeze record | 0 (to collect) |
+
+Current assignments:
+
+| Clip | Manifest | Existing purpose | Tag |
+| --- | --- | --- | --- |
+| self-snatch-ohs-side-001 | `private/manifest.json` | development | `split-exploration` |
+| self-hang-snatch-side-002 | `private/manifest.json` | development | `split-exploration` |
+| self-back-squat-side-002 | `private/manifest.json` | development | `split-exploration` |
+| self-clean-jerk-side-002 | `private/manifest.json` | development | `split-exploration` |
+| self-snatch-side-002 | `private/manifest.json` | development | `split-exploration` |
+| vbt-* (8 clips, one session) | `private/vbt/manifest.json` | development | `split-exploration` |
+| self-back-squat-side-001 | `private/manifest.json` | validation | `split-reserved-57` |
+| self-clean-jerk-side-001 | `private/manifest.json` | validation | `split-reserved-57` |
+| self-hang-snatch-side-003 | `private/manifest.json` | validation | `split-reserved-57` |
+| self-clean-pull-side-003 | `private/manifest.json` | validation | `split-reserved-57` |
+| self-clean-side-004 | `private/manifest.json` | validation | `split-reserved-57` |
+| self-clean-side-005 | `private/manifest.json` | validation | `split-reserved-57` |
+
+## What the existing clips can and cannot show
+
+Seed ground truth (centre, radius, timestamp at one frame) exists for 18 clips: 10 `self-*`
+seeds plus the 8 `vbt-*` seeds. `self-snatch-ohs-side-001` has no seed. Seeds were taken from
+the owner's first labelled frame, and the `vbt-*` geometry was adjusted after seeing proposals,
+so none of this is blind identity truth (see the plan's audit table).
+
+All exploration clips are fixed side view, good lighting, no occlusion, 450 mm plates, one
+lifter and one barn. They support debugging and baseline behaviour on easy footage. They do
+**not** support a claim about unfamiliar gyms, ambiguity or refusal.
+
+## Required rules
+
+- Split by recording session, not by clip. Clips from one session never cross roles.
+- A `split-exploration` clip may not become `split-frozen-eval`, and no role changes after
+  the freeze record.
+- No candidate code, threshold or parameter is tuned on `split-frozen-eval` clips. A candidate
+  revised after unblinding makes that split development-only and needs a new frozen split.
+- `split-reserved-57` clips are not opened, decoded, annotated or scored by this work.
+- Labels come before any candidate output is seen. Model agreement, tracker consensus and
+  a human accepting a proposal are not truth.
+- The initial baseline is **descriptive**: counts, denominators and Wilson intervals, with no
+  pass/promotion verdict (plan, "Freeze and scoring protocol"). Any autonomy gate, audit
+  sampling rate or auto-accept threshold is a later, separately approved decision made from
+  this evidence. Nothing here proposes one.
+
+## Collection target for `split-frozen-eval`
+
+The plan's required challenge matrix is the target. The minimum below is a proposal for the
+owner to confirm, not a plan requirement: the plan says only to report insufficient evidence
+when independent sessions are unavailable.
+
+- At least **3 recording sessions**, each on a different day, and at least 2 different
+  places or lighting setups.
+- About **3–5 clips per session**, roughly 12–15 in total.
+- Coverage across the sessions, each row at least once:
+
+| Challenge | Expected policy | Suggested `purpose` |
+| --- | --- | --- |
+| Clean side-on plate before lift | selectable | development |
+| Several plates on the bar, another bar or background circles in frame | select outer rim, or refuse if ambiguous | development |
+| Bystander walking through frame | selectable or refuse | development |
+| Partly occluded or cropped rim (rack upright, legs, frame edge) | select only if resolvable | development |
+| Smaller plate or mixed plate sizes (record the real diameter) | selectable, diameter edited | development |
+| Plate appears after the lift has started | full-lift refusal | boundary |
+| No plate / no lift target | no-target refusal | boundary |
+| Oblique, front, or moving camera | unsupported refusal | ood |
+| Rotated display and variable frame rate | selectable | development |
+
+Do not duplicate any video already hashed in the manifests (the novelty exclusion set in
+[VBT_AGREEMENT_STUDY_STATUS.md](../analysis/VBT_AGREEMENT_STUDY_STATUS.md)).
+
+## Checklist for the owner
+
+Do these in order. Steps 1–3 can start today; steps 5 onward need the owner's PROCEED.
+
+1. **Confirm the roles.** Read the tables above. If you disagree with any assignment, say so
+   before step 2; the tags are applied by the manifest edit in this change.
+2. **Confirm the collection target** (sessions, clips, matrix). Change the numbers above if
+   they are wrong for your situation.
+3. **Film the sessions.** Keep the original files untouched, one file per attempt, camera
+   fixed except in the oblique and moving-camera clips. Note place, date, plate diameter and
+   whether anyone else was in frame.
+4. **Copy to private storage and check novelty.** Put files under `validation/private/media/`.
+   Compute each SHA-256 and confirm it appears in no existing manifest:
+
+   ```bash
+   sha256sum validation/private/media/<new-file>.mp4
+   grep -rl "<that-hash>" validation/private/manifest.json validation/private/vbt/manifest.json
+   ```
+
+   No output from `grep` means the hash is new. Never commit the video.
+5. **Add manifest entries.** Copy a similar existing fixture entry in
+   `validation/private/manifest.json`, set a fresh `id`, the hash, the purpose from the table
+   and the real conditions. Add the tags `split-frozen-eval` and the challenge name. Run:
+
+   ```bash
+   python validation/tools/schema_check.py
+   ```
+
+6. **Label blind.** For each clip record: target identity, whether automatic selection
+   should be accepted or refused (and why), the seed-frame circle (centre, radius, PTS) and
+   the movement-onset PTS. The plan asks for two annotators who do not see candidate
+   overlays or scores. A second person is best; if you must be both, do the second pass at
+   least a day later without opening the first. Use the existing tools described in
+   [ANNOTATION.md](ANNOTATION.md) and [MANUAL_TARGET_SEED.md](MANUAL_TARGET_SEED.md). Keep
+   both labels and note disagreements; do not overwrite one with the other.
+7. **Record the owner decision on #178.** State DEFER or PROCEED. PROCEED must cite the plan
+   revision, the allowed research entry point, the input split in this document, the
+   candidate configurations, the resource budget and the stop criteria.
+8. **Hand over to agents.** Only after step 7, ask for the freeze record (hashed manifest,
+   labels, candidate code and configuration, frame-search horizon, refusal rules, repeat
+   count) to be created before the first scored run. Agents then build the research harness
+   against `split-exploration`, and score `split-frozen-eval` once.
+
+If steps 3–6 are not completed, the correct report is "insufficient independent evidence",
+not a result on the exploration clips.
+
+## Not changed by this document
+
+No code, schema, version constant, golden file, fixture or ADR changes. The role tags live
+only in the git-ignored private manifests. This document is the committed record of the split.
