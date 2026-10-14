@@ -9,7 +9,7 @@ produce a pass or fail. It does not choose the numbers. Every value that needs a
 listed in [Owner decisions](#owner-decisions-required) and stays **PENDING** until the owner records
 it here.
 
-It extends, and does not replace, the [Pixel 8 phone runtime benchmark](PHONE_RUNTIME_BENCHMARK.md)
+It extends, and does not replace, the [phone runtime benchmark](PHONE_RUNTIME_BENCHMARK.md)
 and [ADR-0009](../adr/0009-m0-phone-runtime-benchmark-boundary.md).
 
 ## Relationship to the existing M0 gate
@@ -34,7 +34,7 @@ desktop timings, from the synthetic benchmark, or from "what the harness happens
 
 | Parameter | Value | What the decision must settle |
 | --- | --- | --- |
-| Target phone(s) | PENDING | Whether the Pixel 8 reference (ADR-0009) is also the product reference, and whether a lower-tier phone is added. |
+| Target phone(s) | Reference: Xiaomi 14T Pro (decided, ADR-0009 Amendment 1). Product reference and any lower-tier phone: PENDING | Whether the 14T Pro is also the product reference, and whether a lower-tier phone is added. It is a high-end phone, so a pass on it supports no minimum-spec claim. |
 | Clip duration(s) | PENDING | The selected lift duration the budget applies to (for example a single set versus a trimmed rep window). |
 | Resolution / frame rate / codec | PENDING | Per-case values (for example 1080p 30 fps H.264 and HEVC; 4K only if supported). Variable-frame-rate sources are in scope per ADR-0006. |
 | Display rotation | PENDING | Which rotation metadata values are in the workload; rotated phone footage is the common case. |
@@ -238,7 +238,7 @@ paths.
 | #176 tracker | Implemented as a library only; no `analyze` or `tracker-run` wiring, so it cannot yet be timed on a phone. Wiring and real-video evaluation are separate work. |
 | Owner decisions above | No numeric threshold may be applied until recorded. |
 | Android app import and overlay path | Not built. App-level evidence waits for an approved mobile implementation. |
-| Pixel 8 availability | Without the device, delivery is the contract and harness only. |
+| Reference phone identity | The Xiaomi 14T Pro codename (`rothko`) comes from public reports until the first artifact confirms it. Without a run, delivery is the contract and harness only. |
 
 Next steps once unblocked: record the owner decisions here; freeze the candidate and clip set; run
 the harness with `--stage-timings` on the reference phone; retain the artifact under the checklist

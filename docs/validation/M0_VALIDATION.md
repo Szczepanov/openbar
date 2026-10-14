@@ -50,7 +50,7 @@ Rework tracking:
 
 ### Reference phone runtime for #59
 
-ADR-0009 designates a physical **Google Pixel 8** as the M0 reference phone. The evidence harness
+ADR-0009 designates a physical **Xiaomi 14T Pro** as the M0 reference phone (amended from the Pixel 8; see ADR-0009 Amendment 1). The evidence harness
 runs the release-built native ARM64 Rust CLI under Termux while retaining ADR-0006 external
 FFmpeg/FFprobe as the experimental decode boundary.
 

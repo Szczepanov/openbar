@@ -340,7 +340,7 @@ def run(args) -> dict:
     timing = {"schema_version": 1, "study_version": io.VERSION, "fixture_id": args.fixture,
               "processing_wall_s": time.perf_counter() - start, "measurement_compute_s": elapsed_s,
               "frames": len(absolute), "environment": provenance["environment"],
-              "note": "Desktop diagnostic only; includes full decoder drain, excludes coarse producer cost. Not Pixel 8 runtime."}
+              "note": "Desktop diagnostic only; includes full decoder drain, excludes coarse producer cost. Not reference-phone runtime."}
     io.write(args.output_dir / "runtime.json", timing)
     return {"frames": len(absolute), "absolute_tracked": sum(s["state"] == "tracked" for s in absolute),
             "relative_measured": sum(r["delta_px"] is not None for r in relative),
