@@ -149,7 +149,8 @@ Do these in order. Steps 1–3 can start today; steps 5 onward need the owner's 
 7. **Record the owner decision on #178.** State DEFER or PROCEED. PROCEED must cite the plan
    revision, the allowed research entry point, the input split in this document, the
    candidate configurations, the resource budget and the stop criteria.
-8. **Hand over to agents.** Only after step 7, ask for the freeze record (hashed manifest,
+8. **Hand over to agents.** Only after step 7, ask for the freeze record
+   ([template](PLATE_SELECTION_FREEZE_RECORD.md); hashed manifest,
    labels, candidate code and configuration, frame-search horizon, refusal rules, repeat
    count) to be created before the first scored run. Agents then build the research harness
    against `split-exploration`, and score `split-frozen-eval` once.
