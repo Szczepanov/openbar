@@ -197,7 +197,7 @@ Audit of `validation/tools/phone_runtime_benchmark.py` before this change:
 | Cold versus warm | No | First `analyze` repeat versus later repeats, with the limitation stated |
 | Stage timing | Only `tracker-run` decode and track; ffprobe folded into decode | Optional `--stage-timings` using the new `analyze --timings-output` sidecar |
 | Tail statistics with failures | Any failed run nulled every median and ratio; failed durations were not kept | Statistics over completed runs, withheld when any run failed; failed durations and exit codes listed |
-| Peak RSS | Yes | Unchanged |
+| Peak RSS | Parent process only on kernels without `task/<pid>/children` (first phone run, 2026-10-14: 7.2 MiB, parent only, discarded as invalid) | Process tree found from `/proc` stat parent PIDs; an unenumerable tree gives no RSS (`process_tree_rss_complete: false`) and the gate stays NOT MEASURABLE YET |
 | Thermal and battery | Before/after only | Unchanged; slowdown across repeats reported |
 | Output byte equality across repeats | No (outputs written, never compared) | Compared and recorded |
 | Product target and qualifying status | No | Explicit `NON-QUALIFYING DIAGNOSTIC` block; no PASS/FAIL |
