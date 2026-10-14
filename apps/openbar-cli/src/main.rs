@@ -8,6 +8,7 @@ mod kinematic_reference;
 mod media;
 mod render;
 mod sha256;
+mod stage_timings;
 mod tracker_experiment;
 mod tracker_run;
 mod validate_analysis;
