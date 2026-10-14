@@ -32,8 +32,8 @@ A fast synthetic/development run is not evidence that the product gate passes.
 ### Reference hardware
 
 The M0 reference phone is the **Xiaomi 14T Pro** (MediaTek Dimensity 9300+), using the 64-bit
-Android ARM runtime. Its expected Android device codename is **rothko**, taken from public reports
-and not yet read from a unit (see Amendment 1).
+Android ARM runtime. Its Android device codename is **rothko** (model 2407FPN8EG), read from the
+owner's unit on 2026-10-14 (see Amendment 1).
 
 This is a fixed physical-device target, not an emulator class or a desktop performance proxy.
 
@@ -182,10 +182,11 @@ Consequences:
 - `validation/tools/phone_runtime_benchmark.py` identifies the new device
   (`REFERENCE_MODEL`, `REFERENCE_DEVICE`). It still requires arm64, Android and Termux, and still
   fails closed: any other device is NOT MEASURABLE.
-- The codename `rothko` is from public reports, not from a unit. The first artifact's
-  `environment.observed` (model, `device_codename`, ABI, Android release) must confirm it. If it
-  differs, correct the constant and this ADR to the observed value in the same change that adds that
-  evidence. Until then `reference_match` stays false on a mismatch and the gate stays NOT MEASURABLE.
+- The identity was read from the owner's unit with `getprop` on 2026-10-14: manufacturer Xiaomi,
+  model 2407FPN8EG, device `rothko`, ABI `arm64-v8a`, Android 16 (SDK 36). The first harness
+  artifact's `environment.observed` repeats it. If a later artifact disagrees, correct the constant
+  and this ADR to the observed value in the same change. Any mismatch keeps `reference_match` false
+  and the gate NOT MEASURABLE.
 - The vendor Android build may hide battery or thermal readings from Termux. They are then `null`,
   as for any device, and the run is reviewed rather than inferred.
 - Whether this phone is also the product reference, and whether a lower-tier phone is added, remains
