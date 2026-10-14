@@ -5,8 +5,10 @@ import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "validation" / "tools"
@@ -501,6 +503,211 @@ class ArtifactAssemblyTests(unittest.TestCase):
             module.warning_line("c1"),
             "phone-runtime-benchmark: warning: analysis bytes differed across repeats for case c1",
         )
+
+
+def _write_proc(root, pid, ppid, comm="x", rss_kib=100, children_file=None):
+    entry = root / str(pid)
+    entry.mkdir(parents=True)
+    (entry / "stat").write_text(f"{pid} ({comm}) S {ppid} 1 1 0 -1 0\n", encoding="utf-8")
+    (entry / "status").write_text(f"Name:\tx\nVmRSS:\t{rss_kib} kB\n", encoding="utf-8")
+    if children_file is not None:
+        task = entry / "task" / str(pid)
+        task.mkdir(parents=True)
+        (task / "children").write_text(children_file, encoding="utf-8")
+
+
+SLEEPER = [sys.executable, "-c", "import time; time.sleep(0.3)"]
+
+
+class ProcessTreeTests(unittest.TestCase):
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.root = Path(self._temp.name)
+
+    def test_ppid_after_last_paren(self):
+        self.assertEqual(module.parse_ppid("12 (a b) c) S 7 1 1"), 7)
+        self.assertEqual(module.parse_ppid("12 (plain) S 5 1 1"), 5)
+        self.assertIsNone(module.parse_ppid("garbage"))
+        self.assertIsNone(module.parse_ppid("12 (x) S notanumber 1"))
+        self.assertIsNone(module.parse_ppid("12 (x) S"))
+        self.assertIsNone(module.parse_ppid(""))
+
+    def test_bfs_over_stat_scan_excludes_unrelated(self):
+        _write_proc(self.root, 10, 1, comm="cli (weird) name", rss_kib=1000)
+        _write_proc(self.root, 11, 10, rss_kib=2000)
+        _write_proc(self.root, 12, 11, rss_kib=4000)
+        _write_proc(self.root, 99, 1, rss_kib=50000)
+        found, complete, present = module.descendants_status(10, self.root)
+        self.assertEqual((sorted(found), complete, present), ([11, 12], True, True))
+        self.assertEqual(module.process_tree_rss(10, self.root), (7000, True, True))
+
+    def test_children_file_is_ignored(self):
+        _write_proc(self.root, 10, 1, children_file="11 ")
+        _write_proc(self.root, 11, 999, children_file="")
+        _write_proc(self.root, 12, 10)
+        found, complete, _ = module.descendants_status(10, self.root)
+        self.assertTrue(complete)
+        self.assertEqual(found, [12])
+
+    def test_unlistable_proc_root_is_incomplete(self):
+        self.assertEqual(
+            module.descendants_status(10, self.root / "missing"), ([], False, False)
+        )
+        self.assertEqual(
+            module.process_tree_rss(10, self.root / "missing"), (None, False, False)
+        )
+
+    def test_no_readable_stat_files_is_incomplete(self):
+        (self.root / "10").mkdir()
+        self.assertEqual(module.descendants_status(10, self.root), ([], False, False))
+
+    def test_no_children_but_scan_ok_is_complete(self):
+        _write_proc(self.root, 10, 1, rss_kib=300)
+        _write_proc(self.root, 99, 1)
+        self.assertEqual(module.descendants_status(10, self.root), ([], True, True))
+        self.assertEqual(module.process_tree_rss(10, self.root), (300, True, True))
+
+    def test_root_missing_from_successful_scan(self):
+        _write_proc(self.root, 99, 1)
+        found, complete, present = module.descendants_status(10, self.root)
+        self.assertEqual((found, complete, present), ([], True, False))
+        self.assertFalse(module.sample_is_complete(complete, present, root_alive=True))
+        self.assertTrue(module.sample_is_complete(complete, present, root_alive=False))
+        self.assertTrue(module.sample_is_complete(True, True, root_alive=True))
+
+    def test_truncated_or_empty_stat_is_incomplete(self):
+        _write_proc(self.root, 10, 1)
+        _write_proc(self.root, 11, 10)
+        (self.root / "12").mkdir()
+        (self.root / "12" / "stat").write_text("", encoding="utf-8")
+        found, complete, _ = module.descendants_status(10, self.root)
+        self.assertEqual(found, [11])
+        self.assertFalse(complete)
+        (self.root / "12" / "stat").write_text("12 (x", encoding="utf-8")
+        self.assertFalse(module.descendants_status(10, self.root)[1])
+
+    def test_permission_error_on_stat_entry_is_incomplete(self):
+        _write_proc(self.root, 10, 1)
+        _write_proc(self.root, 11, 10)
+        real = Path.read_text
+
+        def fake(path, *args, **kwargs):
+            if path.parent.name == "11" and path.name == "stat":
+                raise PermissionError("denied")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", fake):
+            found, complete, present = module.descendants_status(10, self.root)
+        self.assertEqual((found, complete, present), ([], False, True))
+
+    def test_vanished_stat_entry_stays_complete(self):
+        _write_proc(self.root, 10, 1)
+        (self.root / "11").mkdir()  # no stat file: raced exit
+        self.assertEqual(module.descendants_status(10, self.root), ([], True, True))
+
+    def test_status_permission_error_is_incomplete_but_vanished_is_fine(self):
+        _write_proc(self.root, 10, 1, rss_kib=100)
+        _write_proc(self.root, 11, 10, rss_kib=200)
+        real = Path.read_text
+
+        def fake(path, *args, **kwargs):
+            if path.parent.name == "11" and path.name == "status":
+                raise PermissionError("denied")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", fake):
+            self.assertEqual(module.process_tree_rss(10, self.root), (100, False, True))
+        (self.root / "11" / "status").unlink()
+        self.assertEqual(module.process_tree_rss(10, self.root), (100, True, True))
+
+    def test_run_timed_incomplete_tree_reports_no_peak(self):
+        result = module.run_timed(
+            [sys.executable, "-c", "pass"], cwd=ROOT, proc_root=self.root / "missing"
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIsNone(result["peak_process_tree_rss_mib"])
+        self.assertIs(result["process_tree_rss_complete"], False)
+        for key in ("wall_s", "stdout", "stderr", "rss_samples", "rss_mean_scan_ms"):
+            self.assertIn(key, result)
+        self.assertGreaterEqual(result["rss_samples"], 1)
+
+    def test_run_timed_root_absent_from_scan_while_alive_is_incomplete(self):
+        _write_proc(self.root, 99999999, 1, rss_kib=500)
+        result = module.run_timed(SLEEPER, cwd=ROOT, proc_root=self.root)
+        self.assertIs(result["process_tree_rss_complete"], False)
+        self.assertIsNone(result["peak_process_tree_rss_mib"])
+
+    def test_crashed_sampler_is_not_complete(self):
+        calls = []
+
+        def flaky(pid, proc_root=None):
+            calls.append(pid)
+            if len(calls) == 1:
+                return 7000, True, True
+            raise RuntimeError("boom")
+
+        with mock.patch.object(module, "process_tree_rss", flaky):
+            result = module.run_timed(SLEEPER, cwd=ROOT)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertIs(result["process_tree_rss_complete"], False)
+        self.assertIsNone(result["peak_process_tree_rss_mib"])
+
+    def test_sampler_still_running_after_join_timeout_is_not_complete(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def blocking(pid, proc_root=None):
+            release.wait(5.0)
+            return 7000, True, True
+
+        with mock.patch.object(module, "process_tree_rss", blocking), mock.patch.object(
+            module, "SAMPLER_JOIN_TIMEOUT_S", 0.05
+        ):
+            result = module.run_timed(
+                [sys.executable, "-c", "pass"], cwd=ROOT
+            )
+        self.assertIs(result["process_tree_rss_complete"], False)
+        self.assertIsNone(result["peak_process_tree_rss_mib"])
+
+    def test_rss_sampling_summary(self):
+        runs = [
+            {"rss_samples": 2, "rss_mean_scan_ms": 1.0},
+            {"rss_samples": 2, "rss_mean_scan_ms": 3.0},
+        ]
+        self.assertEqual(
+            module.summarize_rss_sampling(runs), {"rss_samples": 4, "rss_mean_scan_ms": 2.0}
+        )
+        self.assertEqual(
+            module.summarize_rss_sampling([{"rss_samples": 0, "rss_mean_scan_ms": None}]),
+            {"rss_samples": 0, "rss_mean_scan_ms": None},
+        )
+
+    def test_incomplete_rss_makes_gate_not_measurable(self):
+        runs = [
+            {"returncode": 0, "wall_s": 1.0, "peak_process_tree_rss_mib": 7.0,
+             "process_tree_rss_complete": True},
+            {"returncode": 0, "wall_s": 1.0, "peak_process_tree_rss_mib": None,
+             "process_tree_rss_complete": False},
+        ]
+        end_to_end = module.summarize_repeats(runs, 10.0)
+        self.assertIsNone(end_to_end["peak_process_tree_rss_mib"])
+        case = {
+            "id": "a", "representative_for_gate": True, "source_kind": "real",
+            "recording_support_status": "supported", "end_to_end": end_to_end,
+        }
+        gate = module.assess_gate(
+            {"reference_match": True}, [case, {**case, "id": "b"}],
+            production_candidate_frozen=True,
+        )
+        self.assertEqual(gate["status"], "NOT MEASURABLE YET")
+        self.assertIn("RSS", gate["evidence"])
+
+    def test_old_format_runs_default_to_complete(self):
+        self.assertTrue(module.run_rss_complete({}))
+        self.assertFalse(module.run_rss_complete({"process_tree_rss_complete": False}))
+        summary = module.summarize_repeats([_run(1.0)], 2.0)
+        self.assertEqual(summary["peak_process_tree_rss_mib"], 10.0)
 
 
 if __name__ == "__main__":

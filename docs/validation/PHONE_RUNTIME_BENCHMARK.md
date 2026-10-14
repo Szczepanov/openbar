@@ -234,6 +234,22 @@ Two different memory observations are retained:
 The second is deterministic and explains the current ADR-0006/ADR-0005 buffering cost. It is not a
 replacement for RSS.
 
+The process tree is always derived from the parent PIDs in `/proc/<pid>/stat`; the
+`task/<pid>/children` file is not used, because some kernels lack it (observed on the Xiaomi 14T
+Pro, Android 16) and where present it lists only the main thread's children. A harness that read
+only that file would have reported the parent process alone and excluded the ffmpeg/ffprobe
+children. The peak is reported as unavailable (`process_tree_rss_complete: false`, gate NOT
+MEASURABLE YET) instead of undercounting when `/proc` cannot be scanned, a stat or status file of a
+live process cannot be read or parsed, the harness's own process is missing from the scan while it
+runs, the sampler thread fails or does not finish, or no RSS value was read. One incomplete repeat
+makes the whole case's peak unavailable, because the case peak is a maximum over repeats.
+"Complete" means the tree was fully enumerated at each 20 ms sample, not that every short-lived
+process between two samples was caught.
+
+A full `/proc` scan runs at every sample and has a CPU cost that is inside the measured wall time.
+Each case records `rss_samples` and `rss_mean_scan_ms` under `latency_diagnostics` so that cost is
+visible.
+
 If process-tree RSS is inaccessible on the phone, the run stays NOT MEASURABLE YET rather than
 silently substituting the deterministic buffer estimate.
 

@@ -490,46 +490,147 @@ def environment() -> dict[str, Any]:
     }
 
 
-def descendants(pid: int) -> list[int]:
+PROC_ROOT = Path("/proc")
+RSS_SAMPLE_INTERVAL_S = 0.02
+SAMPLER_JOIN_TIMEOUT_S = 1.0
+RSS_COMPLETE_KEY = "process_tree_rss_complete"
+VANISHED = (FileNotFoundError, ProcessLookupError)
+
+
+def parse_ppid(stat_text: str) -> int | None:
+    """Parent PID from a /proc/<pid>/stat line.
+
+    comm is parenthesised and may itself contain spaces and parentheses, so fields are read
+    only from the text after the LAST ')'. After it: state, then ppid.
+    """
+    _, sep, rest = stat_text.rpartition(")")
+    fields = rest.split()
+    if not sep or len(fields) < 2:
+        return None
+    try:
+        return int(fields[1])
+    except ValueError:
+        return None
+
+
+def scan_proc(proc_root: Path) -> tuple[dict[int, list[int]], set[int], bool] | None:
+    """Scan every <proc_root>/<pid>/stat: (parent -> children, parsed pids, scan complete).
+
+    A process vanishing mid-scan (ENOENT/ESRCH) is normal and skipped. Any other read error, or
+    an unparseable stat of a live entry, makes the scan incomplete. None means the root could not
+    be listed or no stat file was parsed at all (the tree cannot be trusted).
+    """
+    try:
+        entries = [entry for entry in proc_root.iterdir() if entry.name.isdigit()]
+    except OSError:
+        return None
+    children: dict[int, list[int]] = {}
+    known: set[int] = set()
+    complete = True
+    for entry in entries:
+        try:
+            text = entry.joinpath("stat").read_text(encoding="utf-8", errors="replace")
+        except VANISHED:
+            continue
+        except OSError:
+            complete = False
+            continue
+        ppid = parse_ppid(text)
+        if ppid is None:
+            complete = False
+            continue
+        known.add(int(entry.name))
+        children.setdefault(ppid, []).append(int(entry.name))
+    return (children, known, complete) if known else None
+
+
+def descendants_status(pid: int, proc_root: Path = PROC_ROOT) -> tuple[list[int], bool, bool]:
+    """(descendants of pid, walk complete, pid itself present in the scan).
+
+    The tree always comes from stat parent PIDs: the task/<pid>/children file is absent on some
+    kernels (observed on Android 16) and only lists the main thread's children, so it is not used.
+    """
+    scan = scan_proc(proc_root)
+    if scan is None:
+        return [], False, False
+    children, known, complete = scan
     found: list[int] = []
     stack = [pid]
     seen = {pid}
     while stack:
-        current = stack.pop()
-        children_file = Path(f"/proc/{current}/task/{current}/children")
-        try:
-            child_ids = [int(value) for value in children_file.read_text().split()]
-        except (OSError, ValueError):
-            child_ids = []
-        for child in child_ids:
+        for child in children.get(stack.pop(), []):
             if child not in seen:
                 seen.add(child)
                 found.append(child)
                 stack.append(child)
-    return found
+    return found, complete, pid in known
 
 
-def rss_kib(pid: int) -> int | None:
+def descendants(pid: int, proc_root: Path = PROC_ROOT) -> list[int]:
+    return descendants_status(pid, proc_root)[0]
+
+
+def rss_status(pid: int, proc_root: Path = PROC_ROOT) -> tuple[int | None, bool]:
+    """(VmRSS in KiB or None, readable). A vanished process is readable-with-no-value."""
     try:
-        lines = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = (proc_root / str(pid) / "status").read_text(encoding="utf-8", errors="replace").splitlines()
+    except VANISHED:
+        return None, True
     except OSError:
-        return None
+        return None, False
     for line in lines:
         if line.startswith("VmRSS:"):
             try:
-                return int(line.split()[1])
+                return int(line.split()[1]), True
             except (ValueError, IndexError):
-                return None
-    return None
+                return None, False
+    return None, True
 
 
-def process_tree_rss_kib(pid: int) -> int | None:
-    values = [rss_kib(candidate) for candidate in [pid, *descendants(pid)]]
-    known = [value for value in values if value is not None]
-    return sum(known) if known else None
+def rss_kib(pid: int, proc_root: Path = PROC_ROOT) -> int | None:
+    return rss_status(pid, proc_root)[0]
 
 
-def run_timed(command: list[str], *, cwd: Path) -> dict[str, Any]:
+def process_tree_rss(
+    pid: int, proc_root: Path = PROC_ROOT
+) -> tuple[int | None, bool, bool]:
+    """(summed RSS KiB or None, tree fully enumerated and every member readable, root in scan)."""
+    found, complete, root_present = descendants_status(pid, proc_root)
+    total = 0
+    known = False
+    for candidate in [pid, *found]:
+        value, readable = rss_status(candidate, proc_root)
+        complete = complete and readable
+        if value is not None:
+            total += value
+            known = True
+    return (total if known else None), complete, root_present
+
+
+def sample_is_complete(tree_complete: bool, root_present: bool, root_alive: bool) -> bool:
+    """A live root must appear in the scan; otherwise /proc is the wrong namespace or view."""
+    return tree_complete and (root_present or not root_alive)
+
+
+def run_rss_complete(run: dict[str, Any]) -> bool:
+    """Completeness of a run's RSS. run_timed always sets the key; inputs from before the key
+    existed (old-format dicts) are treated as complete."""
+    return bool(run.get(RSS_COMPLETE_KEY, True))
+
+
+def summarize_rss_sampling(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    samples = sum(int(run.get("rss_samples", 0)) for run in runs)
+    if samples == 0:
+        return {"rss_samples": 0, "rss_mean_scan_ms": None}
+    weighted = sum(
+        int(run["rss_samples"]) * float(run["rss_mean_scan_ms"])
+        for run in runs
+        if run.get("rss_mean_scan_ms") is not None
+    )
+    return {"rss_samples": samples, "rss_mean_scan_ms": weighted / samples}
+
+
+def run_timed(command: list[str], *, cwd: Path, proc_root: Path = PROC_ROOT) -> dict[str, Any]:
     started = time.perf_counter()
     try:
         process = subprocess.Popen(
@@ -543,31 +644,59 @@ def run_timed(command: list[str], *, cwd: Path) -> dict[str, Any]:
         raise BenchmarkError(f"failed to start {command[0]}: {error}") from error
 
     peak_rss_kib: int | None = None
+    tree_complete = True
+    sampler_failed = False
+    sample_count = 0
+    scan_total_s = 0.0
     stop = threading.Event()
 
-    def sample() -> None:
-        nonlocal peak_rss_kib
-        while not stop.is_set():
-            current = process_tree_rss_kib(process.pid)
-            if current is not None:
-                peak_rss_kib = current if peak_rss_kib is None else max(peak_rss_kib, current)
-            if process.poll() is not None:
-                break
-            stop.wait(0.02)
-        current = process_tree_rss_kib(process.pid)
+    def take_sample() -> None:
+        nonlocal peak_rss_kib, tree_complete, sample_count, scan_total_s
+        scan_started = time.perf_counter()
+        current, complete, root_present = process_tree_rss(process.pid, proc_root)
+        scan_total_s += time.perf_counter() - scan_started
+        sample_count += 1
+        # Checked after the scan: an unreaped root stays in /proc (even as a zombie).
+        root_alive = process.poll() is None
+        tree_complete = tree_complete and sample_is_complete(complete, root_present, root_alive)
         if current is not None:
             peak_rss_kib = current if peak_rss_kib is None else max(peak_rss_kib, current)
+
+    def sample() -> None:
+        nonlocal sampler_failed
+        try:
+            # A full /proc scan per sample is a small CPU cost inside the measured wall time.
+            while not stop.is_set():
+                take_sample()
+                if process.poll() is not None:
+                    break
+                stop.wait(RSS_SAMPLE_INTERVAL_S)
+            take_sample()
+        except BaseException:  # noqa: BLE001 - any sampler failure must invalidate the RSS
+            sampler_failed = True
 
     sampler = threading.Thread(target=sample, daemon=True)
     sampler.start()
     stdout, stderr = process.communicate()
     stop.set()
-    sampler.join(timeout=1.0)
+    sampler.join(timeout=SAMPLER_JOIN_TIMEOUT_S)
     wall_s = time.perf_counter() - started
+    # An incompletely enumerated tree (e.g. unscannable /proc), a crashed or still-running
+    # sampler would report only part of the tree and look like a plausible low number, so
+    # report no RSS at all instead.
+    rss_complete = (
+        tree_complete
+        and not sampler_failed
+        and not sampler.is_alive()
+        and peak_rss_kib is not None
+    )
     return {
         "returncode": process.returncode,
         "wall_s": wall_s,
-        "peak_process_tree_rss_mib": None if peak_rss_kib is None else peak_rss_kib / 1024.0,
+        "peak_process_tree_rss_mib": peak_rss_kib / 1024.0 if rss_complete else None,
+        RSS_COMPLETE_KEY: rss_complete,
+        "rss_samples": sample_count,
+        "rss_mean_scan_ms": scan_total_s * 1000.0 / sample_count if sample_count else None,
         "stdout": stdout,
         "stderr": stderr,
     }
@@ -680,6 +809,16 @@ def tracker_command(
     ]
 
 
+def _peak_rss(runs: list[dict[str, Any]]) -> float | None:
+    # Any run with an incompletely enumerated process tree makes the peak unknown, not partial.
+    if not all(run_rss_complete(run) for run in runs):
+        return None
+    return max(
+        (run["peak_process_tree_rss_mib"] for run in runs if run["peak_process_tree_rss_mib"] is not None),
+        default=None,
+    )
+
+
 def summarize_repeats(runs: list[dict[str, Any]], media_span_s: float) -> dict[str, Any]:
     if not runs or media_span_s <= 0:
         raise BenchmarkError("runtime summary requires at least one run and a positive media span")
@@ -690,21 +829,17 @@ def summarize_repeats(runs: list[dict[str, Any]], media_span_s: float) -> dict[s
             "median_wall_s": None,
             "median_processing_to_media_ratio": None,
             "max_processing_to_media_ratio": None,
-            "peak_process_tree_rss_mib": max(
-                (run["peak_process_tree_rss_mib"] for run in runs if run["peak_process_tree_rss_mib"] is not None),
-                default=None,
-            ),
+            "peak_process_tree_rss_mib": _peak_rss(runs),
         }
     walls = [float(run["wall_s"]) for run in runs]
     ratios = [wall / media_span_s for wall in walls]
-    rss = [run["peak_process_tree_rss_mib"] for run in runs if run["peak_process_tree_rss_mib"] is not None]
     return {
         "completed_runs": len(runs),
         "failed_runs": 0,
         "median_wall_s": statistics.median(walls),
         "median_processing_to_media_ratio": statistics.median(ratios),
         "max_processing_to_media_ratio": max(ratios),
-        "peak_process_tree_rss_mib": max(rss) if rss else None,
+        "peak_process_tree_rss_mib": _peak_rss(runs),
     }
 
 
@@ -876,6 +1011,7 @@ def evaluate_case(
     after_thermal = thermal_snapshot()
     after_battery = battery_snapshot()
     latency = summarize_latency(analyze_runs, media_span_s)
+    latency.update(summarize_rss_sampling(analyze_runs))
     latency["determinism"] = determinism_report(
         [read_optional_bytes(case_dir / f"analysis-{i + 1}.json") for i in range(repeats)],
         [read_optional_bytes(case_dir / f"recording-support-{i + 1}.json") for i in range(repeats)],
@@ -905,6 +1041,7 @@ def evaluate_case(
         "selected_media_span_s": media_span_s,
         "repeats": repeats,
         "end_to_end": summarize_repeats(analyze_runs, media_span_s),
+        RSS_COMPLETE_KEY: all(run_rss_complete(run) for run in analyze_runs),
         "latency_diagnostics": latency,
         "stage_diagnostics": stage,
         "battery_before": before_battery,
