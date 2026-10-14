@@ -8,7 +8,9 @@ thermal observations are environment evidence, not deterministic measurement dat
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -41,8 +43,324 @@ TRACKER_TIMING_RE = re.compile(
 )
 
 
+TIMINGS_VERSION = "analyze-stage-timings-v1"
+TIMINGS_SUM_TOLERANCE_S = 1e-6
+COLD_DEFINITION = (
+    "first analyze repeat in this harness invocation, run after the tracker-run "
+    "stage-diagnostic passes have already read the same media; OS file cache and CPU state "
+    "not controlled, so it is NOT a verified cold start"
+)
+LATENCY_CONTRACT = "docs/validation/ANDROID_LATENCY_EVIDENCE.md"
+LATENCY_MISSING_STAGES = [
+    "import request / app path",
+    "overlay preparation",
+    "per-rep metrics (analyze computes none)",
+]
+SMALL_N_THRESHOLD = 20
+SIDECAR_KEYS = {"schema_version", "timings_version", "command", "stages_s", "total_s"}
+
+
 class BenchmarkError(RuntimeError):
     pass
+
+
+def percentile_nearest_rank(values: list[float], p: float) -> float:
+    """Deterministic nearest-rank percentile (docs/validation/BENCHMARK.md).
+
+    rank = ceil(p * n), one-indexed over the ascending-sorted values; ``0 < p <= 1``.
+    """
+    if not isinstance(p, (int, float)) or not math.isfinite(p) or not 0.0 < p <= 1.0:
+        raise BenchmarkError("percentile must be in (0, 1]")
+    if not values:
+        raise BenchmarkError("percentile requires at least one value")
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values):
+        raise BenchmarkError("percentile requires finite numeric values")
+    ordered = sorted(values)
+    rank = max(1, math.ceil(p * len(ordered)))
+    return float(ordered[rank - 1])
+
+
+def tail_statistics(values: list[float]) -> dict[str, float]:
+    return {
+        "median": float(statistics.median(values)),
+        "p95": percentile_nearest_rank(values, 0.95),
+        "max": float(max(values)),
+    }
+
+
+def warm_slowdown_ratio(runs: list[dict[str, Any]]) -> float | None:
+    """Wall of the last warm repeat over the first warm repeat (warm = repeats 2..n).
+
+    Observation only; it must not be used to infer thermal throttling.
+    """
+    warm = runs[1:]
+    if len(warm) < 2:
+        return None
+    first, last = warm[0], warm[-1]
+    if first["returncode"] != 0 or last["returncode"] != 0 or not float(first["wall_s"]) > 0:
+        return None
+    return float(last["wall_s"]) / float(first["wall_s"])
+
+
+def summarize_latency(runs: list[dict[str, Any]], media_span_s: float) -> dict[str, Any]:
+    """Non-qualifying latency diagnostics.
+
+    Failed runs exit early (no timeout), so their short walls would make tails look better.
+    Statistics are therefore computed over completed runs only and are all null (with
+    ``unmeasurable_reason``) when any run failed; failed runs are listed, never dropped.
+
+    "Cold" is the first analyze repeat within this harness invocation only. It is NOT a
+    verified OS-page-cache-cold or fresh-process-after-reboot state (see COLD_DEFINITION).
+    ``warm_slowdown_ratio`` needs at least 3 repeats and is null otherwise.
+    """
+    if not runs or not media_span_s > 0:
+        raise BenchmarkError("latency summary requires at least one run and a positive media span")
+    failed_runs = [run for run in runs if run["returncode"] != 0]
+    result: dict[str, Any] = {
+        "qualifying": False,
+        "cold_definition": COLD_DEFINITION,
+        "n_runs": len(runs),
+        "small_n": len(runs) < SMALL_N_THRESHOLD,
+        "failed_runs": len(failed_runs),
+        "failed_run_wall_s": [float(run["wall_s"]) for run in failed_runs],
+        "failed_run_returncodes": [run["returncode"] for run in failed_runs],
+    }
+    if failed_runs:
+        result.update(
+            {
+                "unmeasurable_reason": "one or more runs failed",
+                "cold_run_wall_s": None,
+                "warm_run_wall_s": None,
+                "warm_median_wall_s": None,
+                "median_wall_s": None,
+                "p95_wall_s": None,
+                "max_wall_s": None,
+                "median_processing_to_media_ratio": None,
+                "p95_processing_to_media_ratio": None,
+                "max_processing_to_media_ratio": None,
+                "warm_slowdown_ratio": None,
+            }
+        )
+        return result
+    walls = [float(run["wall_s"]) for run in runs]
+    ratios = [wall / media_span_s for wall in walls]
+    wall_stats = tail_statistics(walls)
+    ratio_stats = tail_statistics(ratios)
+    warm = walls[1:]
+    result.update(
+        {
+            "unmeasurable_reason": None,
+            "cold_run_wall_s": walls[0],
+            "warm_run_wall_s": warm,
+            "warm_median_wall_s": float(statistics.median(warm)) if warm else None,
+            "median_wall_s": wall_stats["median"],
+            "p95_wall_s": wall_stats["p95"],
+            "max_wall_s": wall_stats["max"],
+            "median_processing_to_media_ratio": ratio_stats["median"],
+            "p95_processing_to_media_ratio": ratio_stats["p95"],
+            "max_processing_to_media_ratio": ratio_stats["max"],
+            "warm_slowdown_ratio": warm_slowdown_ratio(runs),
+        }
+    )
+    return result
+
+
+def build_latency_evidence(
+    *, production_candidate_frozen: bool, reference_match: bool, stage_timings_requested: bool
+) -> dict[str, Any]:
+    reasons = [
+        "the product latency target has no owner-approved value",
+        "production candidate "
+        + ("is frozen for this study" if production_candidate_frozen else "is not frozen (#57)"),
+        "reference device "
+        + ("matched" if reference_match else "did not match (Google Pixel 8 Termux runtime)"),
+        "app import and overlay stages are not measured",
+    ]
+    return {
+        "status": "NON-QUALIFYING DIAGNOSTIC",
+        "qualifying": False,
+        "reason": "Diagnostics only, never a PASS/FAIL for the product target: "
+        + "; ".join(reasons)
+        + ".",
+        "contract": LATENCY_CONTRACT,
+        "product_target_declared": False,
+        "production_candidate_frozen": production_candidate_frozen,
+        "reference_match": reference_match,
+        "stage_timings_requested": stage_timings_requested,
+        "missing_stages": list(LATENCY_MISSING_STAGES),
+    }
+
+
+def build_artifact(
+    *,
+    evaluated_commit_id: str,
+    env: dict[str, Any],
+    cases: list[dict[str, Any]],
+    production_candidate_frozen: bool,
+    stage_timings_requested: bool,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "benchmark_version": BENCHMARK_VERSION,
+        "evaluated_commit": evaluated_commit_id,
+        "frozen_configuration": {
+            "production_candidate_frozen": production_candidate_frozen,
+            "tracker": f"{PROBE_TRACKER_ID}@1",
+            "filter": "raw-identity@1",
+            "kinematics": "backward-difference@1",
+            "kinematics_max_gap_s": float(KINEMATICS_MAX_GAP_S),
+            "kinematics_min_confidence": float(KINEMATICS_MIN_CONFIDENCE),
+            "decode_boundary": "ADR-0006 external ffmpeg/ffprobe process",
+        },
+        "environment": env,
+        "cases": cases,
+        "latency_evidence": build_latency_evidence(
+            production_candidate_frozen=production_candidate_frozen,
+            reference_match=bool(env["reference_match"]),
+            stage_timings_requested=stage_timings_requested,
+        ),
+        "diagnostics_warnings": diagnostics_warnings(cases),
+        "gate": assess_gate(
+            env, cases, production_candidate_frozen=production_candidate_frozen
+        ),
+    }
+
+
+def warning_line(case_id: str) -> str:
+    return (
+        "phone-runtime-benchmark: warning: analysis bytes differed across repeats "
+        f"for case {case_id}"
+    )
+
+
+def _identical(blobs: list[bytes | None]) -> bool | None:
+    present = [blob for blob in blobs if blob is not None]
+    if len(set(present)) > 1:
+        return False
+    if not present or len(present) != len(blobs):
+        return None
+    return True
+
+
+def determinism_report(
+    analysis_blobs: list[bytes | None], support_blobs: list[bytes | None]
+) -> dict[str, Any]:
+    """Byte comparison of per-run outputs; None entries are runs that produced no file."""
+    first = next((blob for blob in analysis_blobs if blob is not None), None)
+    return {
+        "analysis_bytes_identical": _identical(analysis_blobs),
+        "recording_support_bytes_identical": _identical(support_blobs),
+        "compared_runs": sum(blob is not None for blob in analysis_blobs),
+        "recording_support_compared_runs": sum(blob is not None for blob in support_blobs),
+        "analysis_sha256": None if first is None else hashlib.sha256(first).hexdigest(),
+    }
+
+
+def read_optional_bytes(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def diagnostics_warnings(cases: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(case["id"])
+        for case in cases
+        if False
+        in (
+            case["latency_diagnostics"]["determinism"]["analysis_bytes_identical"],
+            case["latency_diagnostics"]["determinism"]["recording_support_bytes_identical"],
+        )
+    ]
+
+
+def _finite_non_negative(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
+
+
+def parse_stage_timings_sidecar(text: str) -> dict[str, Any]:
+    try:
+        value = json.loads(text)
+    except ValueError as error:
+        raise BenchmarkError("stage-timings sidecar is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise BenchmarkError("stage-timings sidecar must be a JSON object")
+    if set(value) - SIDECAR_KEYS:
+        raise BenchmarkError("stage-timings sidecar has unknown top-level keys")
+    version = value.get("schema_version")
+    if type(version) is not int or version != 1:
+        raise BenchmarkError("stage-timings sidecar schema_version must be integer 1")
+    if value.get("command") != "analyze":
+        raise BenchmarkError("stage-timings sidecar command must be analyze")
+    if value.get("timings_version") != TIMINGS_VERSION:
+        raise BenchmarkError("stage-timings sidecar timings_version mismatch")
+    stages = value.get("stages_s")
+    if not isinstance(stages, dict) or not all(
+        isinstance(name, str) and _finite_non_negative(seconds) for name, seconds in stages.items()
+    ):
+        raise BenchmarkError("stage-timings stages_s must map names to finite non-negative seconds")
+    total = value.get("total_s")
+    if not _finite_non_negative(total):
+        raise BenchmarkError("stage-timings total_s must be finite and non-negative")
+    if total < sum(stages.values()) - TIMINGS_SUM_TOLERANCE_S:
+        raise BenchmarkError("stage-timings stages exceed total_s")
+    return {"stages_s": {k: float(v) for k, v in stages.items()}, "total_s": float(total)}
+
+
+def read_stage_timings(path: Path, run_number: int) -> tuple[dict[str, Any] | None, str | None]:
+    """Return (timing, None) or (None, note); notes never contain local paths."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None, f"run {run_number}: stage-timings sidecar missing or unreadable"
+    try:
+        return parse_stage_timings_sidecar(text), None
+    except BenchmarkError as error:
+        return None, f"run {run_number}: {error}"
+
+
+def aggregate_stage_timings(
+    timings: list[dict[str, Any] | None] | None, notes: list[str]
+) -> dict[str, Any]:
+    """Aggregate per-run sidecars; stage names are opaque and only common ones are reported."""
+    if timings is None:
+        return {"available": False, "reason": "not requested"}
+    valid = [timing for timing in timings if timing is not None]
+    if not valid:
+        return {"available": False, "reason": "no valid stage-timings sidecar", "notes": list(notes)}
+    common = set(valid[0]["stages_s"])
+    for timing in valid[1:]:
+        common &= set(timing["stages_s"])
+    stages: dict[str, Any] = {}
+    for name in sorted(common):
+        series = [timing["stages_s"][name] for timing in valid]
+        stats = tail_statistics(series)
+        stages[name] = {
+            "n": len(series),
+            "median_s": stats["median"],
+            "p95_s": stats["p95"],
+            "max_s": stats["max"],
+        }
+    unattributed = [timing["total_s"] - sum(timing["stages_s"].values()) for timing in valid]
+    result: dict[str, Any] = {
+        "available": True,
+        "runs_with_timings": len(valid),
+        "stages": stages,
+        "unattributed_median_s": float(statistics.median(unattributed)),
+    }
+    all_notes = list(notes)
+    dropped = sorted(set().union(*(set(t["stages_s"]) for t in valid)) - common)
+    if dropped:
+        all_notes.append("stages missing from some run and not aggregated: " + ", ".join(dropped))
+    if all_notes:
+        result["notes"] = all_notes
+    return result
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -305,8 +623,9 @@ def analyze_command(
     selection: list[str],
     output: Path,
     support_output: Path,
+    timings_output: Path | None = None,
 ) -> list[str]:
-    return [
+    command = [
         str(binary),
         "analyze",
         "--manifest",
@@ -333,6 +652,9 @@ def analyze_command(
         "--output",
         str(output),
     ]
+    if timings_output is not None:
+        command += ["--timings-output", str(timings_output)]
+    return command
 
 
 def tracker_command(
@@ -469,6 +791,7 @@ def evaluate_case(
     case: dict[str, Any],
     repeats: int,
     work_dir: Path,
+    stage_timings_requested: bool = False,
 ) -> dict[str, Any]:
     manifest_path, seed_path, fixture_id, plate_diameter_m, selection = case_args(case, suite_dir)
     manifest = read_json(manifest_path)
@@ -515,12 +838,15 @@ def evaluate_case(
         raise BenchmarkError(f"{case_id}: no usable {PROBE_TRACKER_ID} tracker timing was produced")
 
     analyze_runs: list[dict[str, Any]] = []
+    sidecar_timings: list[dict[str, Any] | None] = []
+    sidecar_notes: list[str] = []
     support_status: str | None = None
     before_battery = battery_snapshot()
     before_thermal = thermal_snapshot()
     for index in range(repeats):
         analysis_output = case_dir / f"analysis-{index + 1}.json"
         support_output = case_dir / f"recording-support-{index + 1}.json"
+        timings_output = case_dir / f"stage-timings-{index + 1}.json" if stage_timings_requested else None
         result = run_timed(
             analyze_command(
                 binary,
@@ -531,10 +857,16 @@ def evaluate_case(
                 selection,
                 analysis_output,
                 support_output,
+                timings_output,
             ),
             cwd=root,
         )
         analyze_runs.append(result)
+        if timings_output is not None:
+            timing, note = read_stage_timings(timings_output, index + 1)
+            sidecar_timings.append(timing)
+            if note is not None:
+                sidecar_notes.append(note)
         if support_output.exists():
             current = str(read_json(support_output).get("status", "unknown"))
             if support_status is None:
@@ -543,6 +875,14 @@ def evaluate_case(
                 raise BenchmarkError(f"{case_id}: recording-support status changed across repeated runs")
     after_thermal = thermal_snapshot()
     after_battery = battery_snapshot()
+    latency = summarize_latency(analyze_runs, media_span_s)
+    latency["determinism"] = determinism_report(
+        [read_optional_bytes(case_dir / f"analysis-{i + 1}.json") for i in range(repeats)],
+        [read_optional_bytes(case_dir / f"recording-support-{i + 1}.json") for i in range(repeats)],
+    )
+    latency["stage_timings"] = aggregate_stage_timings(
+        sidecar_timings if stage_timings_requested else None, sidecar_notes
+    )
 
     stage = {
         "median_decode_wall_s": statistics.median(item["decode_wall_s"] for item in stage_timings),
@@ -565,6 +905,7 @@ def evaluate_case(
         "selected_media_span_s": media_span_s,
         "repeats": repeats,
         "end_to_end": summarize_repeats(analyze_runs, media_span_s),
+        "latency_diagnostics": latency,
         "stage_diagnostics": stage,
         "battery_before": before_battery,
         "battery_after": after_battery,
@@ -594,6 +935,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--binary", type=Path, default=Path("target/release/openbar-cli"))
     parser.add_argument("--repeats", type=int, default=REPEATS_DEFAULT)
+    parser.add_argument(
+        "--stage-timings",
+        action="store_true",
+        help="pass --timings-output to analyze and aggregate stage timings (off by default)",
+    )
     args = parser.parse_args(argv)
 
     if args.repeats < 2:
@@ -623,32 +969,19 @@ def main(argv: list[str] | None = None) -> int:
                     case=case,
                     repeats=args.repeats,
                     work_dir=Path(temp),
+                    stage_timings_requested=args.stage_timings,
                 )
                 for case in cases_spec
             ]
-        artifact = {
-            "schema_version": SCHEMA_VERSION,
-            "benchmark_version": BENCHMARK_VERSION,
-            "evaluated_commit": evaluated_commit(root),
-            "frozen_configuration": {
-                "production_candidate_frozen": bool(
-                    suite.get("production_candidate_frozen", False)
-                ),
-                "tracker": f"{PROBE_TRACKER_ID}@1",
-                "filter": "raw-identity@1",
-                "kinematics": "backward-difference@1",
-                "kinematics_max_gap_s": float(KINEMATICS_MAX_GAP_S),
-                "kinematics_min_confidence": float(KINEMATICS_MIN_CONFIDENCE),
-                "decode_boundary": "ADR-0006 external ffmpeg/ffprobe process",
-            },
-            "environment": env,
-            "cases": cases,
-            "gate": assess_gate(
-                env,
-                cases,
-                production_candidate_frozen=bool(suite.get("production_candidate_frozen", False)),
-            ),
-        }
+        artifact = build_artifact(
+            evaluated_commit_id=evaluated_commit(root),
+            env=env,
+            cases=cases,
+            production_candidate_frozen=bool(suite.get("production_candidate_frozen", False)),
+            stage_timings_requested=args.stage_timings,
+        )
+        for case_id in artifact["diagnostics_warnings"]:
+            print(warning_line(case_id), file=sys.stderr)
         write_json(output_path, artifact)
         print(f"phone runtime evidence: {output_path}")
         print(f"offline-processing gate: {artifact['gate']['status']}")
