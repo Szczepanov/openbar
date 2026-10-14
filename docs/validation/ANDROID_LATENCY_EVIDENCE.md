@@ -238,7 +238,7 @@ paths.
 | #176 tracker | Implemented as a library only; no `analyze` or `tracker-run` wiring, so it cannot yet be timed on a phone. Wiring and real-video evaluation are separate work. |
 | Owner decisions above | No numeric threshold may be applied until recorded. |
 | Android app import and overlay path | Not built. App-level evidence waits for an approved mobile implementation. |
-| Reference phone identity | The Xiaomi 14T Pro codename (`rothko`) comes from public reports until the first artifact confirms it. Without a run, delivery is the contract and harness only. |
+| Reference phone run | The unit's identity is confirmed (model 2407FPN8EG, `rothko`, arm64-v8a, Android 16), but no harness run on it exists. Without one, delivery is the contract and harness only. |
 
 Next steps once unblocked: record the owner decisions here; freeze the candidate and clip set; run
 the harness with `--stage-timings` on the reference phone; retain the artifact under the checklist

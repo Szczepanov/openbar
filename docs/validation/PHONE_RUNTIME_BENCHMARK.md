@@ -10,8 +10,8 @@ turning the experiment into a Flutter or production Android architecture project
 Reference target and runtime are defined by
 [ADR-0009](../adr/0009-m0-phone-runtime-benchmark-boundary.md):
 
-- physical **Xiaomi 14T Pro** (expected device codename rothko, confirmed by the first artifact; see
-  ADR-0009 Amendment 1);
+- physical **Xiaomi 14T Pro** (model 2407FPN8EG, device codename rothko, Android 16; identity read
+  from the unit, see ADR-0009 Amendment 1);
 - Android arm64 runtime;
 - native release-built openbar-cli under Termux;
 - external ffmpeg/ffprobe under the existing ADR-0006 M0 decode boundary.
@@ -106,14 +106,15 @@ From the repository checkout:
 Do not use debug cargo run timings for the gate. The harness executes target/release/openbar-cli
 directly.
 
-Before the first run, confirm the device identity the harness will compare against
-(`REFERENCE_MODEL`, `REFERENCE_DEVICE`, `REFERENCE_ABI` in the tool):
+The reference unit reported manufacturer Xiaomi, model 2407FPN8EG, device rothko, ABI arm64-v8a,
+Android 16 (SDK 36). To re-check the identity the harness compares against (`REFERENCE_MODEL`,
+`REFERENCE_DEVICE`, `REFERENCE_ABI` in the tool):
 
     for p in ro.product.manufacturer ro.product.model ro.product.device ro.product.cpu.abi \
              ro.build.version.release ro.build.version.sdk; do echo "$p=$(getprop $p)"; done
 
 If `ro.product.device` is not `rothko`, correct the constant and ADR-0009 Amendment 1 to the
-observed value in the same change that adds the first evidence. Install Termux from F-Droid or
+observed value in the same change. Install Termux from F-Droid or
 GitHub releases; the Play Store build is outdated.
 
 ## Benchmark suite
