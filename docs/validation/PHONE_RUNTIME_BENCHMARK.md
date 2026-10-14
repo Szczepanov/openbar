@@ -176,6 +176,30 @@ The JSON artifact records:
 Review the artifact before committing it if private fixtures are involved. The harness does not emit
 media frames, coordinates, seed notes, local stderr or local file paths in the aggregate JSON.
 
+## Latency diagnostics (#179)
+
+The artifact also carries, per case, a `latency_diagnostics` block and, at the top level, a
+`latency_evidence` block. They are additive: the ADR-0009 `gate`, `end_to_end` and
+`stage_diagnostics` content and the artifact version are unchanged.
+
+`latency_diagnostics` records the cold (first) and warm `analyze` repeats, median, p95
+(nearest-rank) and maximum wall time over completed repeats, and whether the canonical analysis and
+recording-support bytes were identical across repeats. If any repeat failed, the statistics are
+withheld and the failed durations and exit codes are listed instead. `qualifying` is always `false`:
+no product latency target is approved. The cold repeat is only the first `analyze` repeat in the
+invocation, run after the `tracker-run` diagnostic passes have read the same media; it is not a
+verified cold start.
+
+Optional:
+
+    --stage-timings
+
+passes `--timings-output` to `openbar-cli analyze` and aggregates the per-stage sidecar. It is off by
+default so the gated runs are unchanged. See
+[ANDROID_LATENCY_EVIDENCE.md](ANDROID_LATENCY_EVIDENCE.md) for the metric definitions, the owner
+decisions still required, evidence classes and what a CLI timing can and cannot claim. A CLI timing
+is not app-level completion.
+
 ## Decode/tracker split
 
 tracker-run already reports decode and tracker wall times. The phone harness reuses that existing

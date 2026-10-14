@@ -63,6 +63,10 @@ representative real clips inside a supported recording envelope, and
 `validation/tools/phone_runtime_benchmark.py` is run on the reference phone. See
 [`PHONE_RUNTIME_BENCHMARK.md`](PHONE_RUNTIME_BENCHMARK.md).
 
+The separate product question of import-to-results latency in seconds is defined, with its pending
+owner decisions, in [`ANDROID_LATENCY_EVIDENCE.md`](ANDROID_LATENCY_EVIDENCE.md) (#179). It does not
+change this gate.
+
 ## Dataset dimensions
 
 The fixture set should vary:
