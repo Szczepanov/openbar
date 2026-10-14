@@ -25,8 +25,8 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 BENCHMARK_VERSION = "phone-runtime-benchmark-v1"
-REFERENCE_MODEL = "Google Pixel 8"
-REFERENCE_DEVICE = "shiba"
+REFERENCE_MODEL = "Xiaomi 14T Pro"
+REFERENCE_DEVICE = "rothko"
 REFERENCE_ABI = "arm64-v8a"
 REFERENCE_RUNTIME = "Termux native arm64 release openbar-cli + external ffmpeg/ffprobe"
 REPEATS_DEFAULT = 3
@@ -173,7 +173,7 @@ def build_latency_evidence(
         "production candidate "
         + ("is frozen for this study" if production_candidate_frozen else "is not frozen (#57)"),
         "reference device "
-        + ("matched" if reference_match else "did not match (Google Pixel 8 Termux runtime)"),
+        + ("matched" if reference_match else "did not match (Xiaomi 14T Pro Termux runtime)"),
         "app import and overlay stages are not measured",
     ]
     return {
@@ -723,7 +723,7 @@ def assess_gate(
     if not env["reference_match"]:
         return {
             "status": "NOT MEASURABLE YET",
-            "evidence": "Runtime diagnostics were not collected on the designated Google Pixel 8 reference runtime.",
+            "evidence": "Runtime diagnostics were not collected on the designated Xiaomi 14T Pro reference runtime.",
             "rationale": "A non-reference device cannot satisfy the phone-class performance gate.",
         }
     gate_cases = [case for case in cases if case["representative_for_gate"]]

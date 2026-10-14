@@ -162,7 +162,7 @@ The output contains absolute and fused `tracker-prediction-v1` streams, separate
 sidecars, and separate desktop timing. Prediction/sidecar bytes exclude runtime. Provenance retains
 git commit/dirty state, source/helper/input hashes, full configurations, dependency and decoder
 versions, and thread settings. Timing includes selected measurement computation and full decoder
-drain, but excludes the already computed coarse producer. It cannot satisfy the Pixel 8 full-path
+drain, but excludes the already computed coarse producer. It cannot satisfy the reference-phone full-path
 runtime gate.
 
 The manual seed is emitted with tracker confidence `1.0`, matching its role as the deterministic
@@ -250,7 +250,7 @@ Independent synchronized reference capture remains pending. Use the existing
 Freeze axes, intervals, calibration, filtering, definitions, synchronization and uncertainties before
 comparison. WL Analysis or same-video marker agreement cannot close the physical accuracy gates.
 
-Pixel 8 measurement remains pending. Use the existing
+Reference-phone measurement remains pending. Use the existing
 [phone runtime protocol](../../docs/validation/PHONE_RUNTIME_BENCHMARK.md) after candidate/envelope freeze.
 Any future research pipeline must time its complete producer path, not just `analyze --observations`.
 Current desktop sidecars do not prove deployability or speed on the phone.

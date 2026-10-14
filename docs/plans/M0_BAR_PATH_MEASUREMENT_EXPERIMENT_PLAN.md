@@ -629,7 +629,7 @@ Reject/defer YOLO26 if:
 - it does not improve the downstream measurement;
 - dataset size/generalization is inadequate;
 - licence cost/obligation is disproportionate;
-- runtime/memory prevents Pixel 8 viability;
+- runtime/memory prevents reference-phone viability;
 - a permissively licensed/localizer alternative provides equivalent evidence.
 
 ## 12. Phase 6 — development selection and freeze
@@ -730,10 +730,10 @@ The study must definition-match:
 The existing filmed stick and WL Analysis agreement may remain secondary development/comparison
 evidence, not substitutes for independent physical ground truth.
 
-### P8.2 — Pixel 8 runtime
+### P8.2 — Reference-phone runtime
 
 After a candidate is frozen and the recording envelope is sufficiently defined, run the existing
-#59/ADR-0009 phone benchmark on the Google Pixel 8.
+#59/ADR-0009 phone benchmark on the reference phone (Xiaomi 14T Pro after ADR-0009 Amendment 1).
 
 Measure the full frozen path required for the candidate, not an isolated model microbenchmark.
 
@@ -826,7 +826,7 @@ redistribution rights, or private coordinates whose publication has not been app
 | YOLO helps but licensing is incompatible | retain evidence, find permissive replacement or obtain separate licence |
 | Held-out candidate fails | reject/iterate on development; do not retune on held-out |
 | Tracking passes but physical velocity fails | investigate calibration/timing/filtering; do not blame tracker automatically |
-| Physical reference passes but Pixel 8 runtime fails | optimize implementation/runtime without weakening accuracy |
+| Physical reference passes but reference-phone runtime fails | optimize implementation/runtime without weakening accuracy |
 
 ## 20. Promotion boundary
 
@@ -837,7 +837,7 @@ A production promotion requires:
 - held-out #57 evidence;
 - independent physical/kinematic evidence where the claim depends on kinematics;
 - supported recording-envelope evidence;
-- Pixel 8 runtime evidence;
+- Reference-phone runtime evidence;
 - dependency/licence review;
 - a separate ADR if the durable architecture changes;
 - schema/version review if persisted semantics change.
@@ -854,6 +854,6 @@ and phase-specific pending inputs.
 
 The current complete candidates are not eligible for freeze: geometry loses too much squat/clean
 evidence, despite useful partial snatch and relative-displacement results. Marker capture, dense
-development repeatability, independent reference and Pixel 8 measurements remain pending. No
+development repeatability, independent reference and reference-phone measurements remain pending. No
 held-out fixture was processed and no production default, schema or gate changed. The learned
 localizer trigger was not established, so that conditional phase did not start.

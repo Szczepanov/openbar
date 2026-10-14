@@ -1,9 +1,9 @@
 # ADR-0009: M0 phone runtime benchmark boundary
 
-- Status: Accepted
+- Status: Accepted (amended 2026-10-14, see Amendment 1)
 - Date: 2026-10-02
 - Issue: #59
-- Related: #12, #14, #16, #53, #57
+- Related: #12, #14, #16, #53, #57, #179
 
 ## Context
 
@@ -31,23 +31,25 @@ A fast synthetic/development run is not evidence that the product gate passes.
 
 ### Reference hardware
 
-The M0 reference phone is **Google Pixel 8** (Android device codename **shiba**), using the
-64-bit Android ARM runtime.
+The M0 reference phone is the **Xiaomi 14T Pro** (MediaTek Dimensity 9300+), using the 64-bit
+Android ARM runtime. Its expected Android device codename is **rothko**, taken from public reports
+and not yet read from a unit (see Amendment 1).
 
 This is a fixed physical-device target, not an emulator class or a desktop performance proxy.
 
 The benchmark artifact records the observed model, device codename, ABI, Android release/SDK,
-available memory and tool versions. A run that does not identify the expected Pixel 8 / arm64
-environment cannot satisfy the gate.
+available memory and tool versions. A run that does not identify the expected reference device /
+arm64 environment cannot satisfy the gate. The codename `rothko` is shared with the Redmi K70
+Ultra, which uses the same board, so the observed model string is kept in the artifact for review.
 
 Why this target:
 
-- it is a concrete, reproducible commodity Android phone rather than an abstract CPU class;
-- it is modern enough to represent the intended first Android runtime without making the newest
-  flagship the minimum hardware assumption;
+- it is a concrete physical Android arm64 phone the project can actually measure on, rather than an
+  abstract CPU class;
 - freezing one device makes performance regressions comparable across pipeline revisions.
 
-This ADR does not define a minimum supported consumer phone. It defines the M0 evidence reference.
+Limit: this is a high-end SoC. A pass on it says nothing about lower-tier phones. This ADR does
+not define a minimum supported consumer phone. It defines the M0 evidence reference.
 
 ### Executable/runtime boundary
 
@@ -100,7 +102,7 @@ time, because the user waits for the complete offline analysis rather than for a
 The harness may run on any machine for diagnostics, but a gate status can be assigned only when:
 
 - the suite explicitly records that #57 has frozen the production tracker/filter candidate;
-- the observed runtime matches the designated physical Pixel 8 reference environment;
+- the observed runtime matches the designated physical reference-phone environment;
 - at least two cases are explicitly marked representative for the gate;
 - those cases are non-synthetic real lifting clips;
 - their recording-support status is supported, not warning/unknown;
@@ -151,7 +153,7 @@ Final #59 gate evidence still requires:
 
 1. the frozen candidate from #57;
 2. representative clips inside a supported envelope from #53;
-3. execution of the benchmark on the designated Pixel 8;
+3. execution of the benchmark on the designated reference phone;
 4. review of the resulting timing, memory and thermal/battery observations.
 
 ## ADR-0006 disposition
@@ -161,9 +163,33 @@ reference phone and preserves the existing timestamp/frame contract.
 
 The benchmark must not extrapolate desktop FFmpeg results to mobile.
 
-If the Pixel 8 evidence shows external-process decode to be a material blocker, excessive memory
+If the reference-phone evidence shows external-process decode to be a material blocker, excessive memory
 pressure from whole-clip buffering, or a runtime incompatibility, create a separate issue and ADR
 before implementing a native decoder or streaming tracker boundary.
+
+## Amendment 1 (2026-10-14, #179): reference phone
+
+The original decision (2026-10-02) designated the **Google Pixel 8** (codename `shiba`). The
+project owner does not have that device and does have a Xiaomi 14T Pro, so the reference phone is
+now the **Xiaomi 14T Pro**.
+
+No Pixel 8 evidence was ever collected and the gate was NOT MEASURABLE YET, so no recorded result is
+invalidated. The original rationale that the reference should not be the newest flagship is not
+carried over: the 14T Pro is a high-end phone, and the gate result applies to it only.
+
+Consequences:
+
+- `validation/tools/phone_runtime_benchmark.py` identifies the new device
+  (`REFERENCE_MODEL`, `REFERENCE_DEVICE`). It still requires arm64, Android and Termux, and still
+  fails closed: any other device is NOT MEASURABLE.
+- The codename `rothko` is from public reports, not from a unit. The first artifact's
+  `environment.observed` (model, `device_codename`, ABI, Android release) must confirm it. If it
+  differs, correct the constant and this ADR to the observed value in the same change that adds that
+  evidence. Until then `reference_match` stays false on a mismatch and the gate stays NOT MEASURABLE.
+- The vendor Android build may hide battery or thermal readings from Termux. They are then `null`,
+  as for any device, and the run is reviewed rather than inferred.
+- Whether this phone is also the product reference, and whether a lower-tier phone is added, remains
+  an owner decision in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
 
 ## Consequences
 
@@ -189,6 +215,6 @@ Revisit this ADR when:
 
 - #57 selects a different tracker/filter configuration;
 - #53 promotes representative real recording conditions to supported;
-- Pixel 8 evidence assigns PASS or FAIL to the performance gate;
+- reference-phone evidence assigns PASS or FAIL to the performance gate;
 - external-process decode or frame buffering is shown to require an architecture follow-up;
 - a later product milestone chooses the production Android media/runtime boundary.
