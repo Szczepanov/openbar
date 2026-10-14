@@ -46,6 +46,7 @@ import refine_circle
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "validation" / "tools"))
+import held_out_guard  # noqa: E402
 import label_package  # noqa: E402  (shared probe/decode contract with the labelling tool)
 
 SPIKE_VERSION = "spike-1"
@@ -281,7 +282,7 @@ def load_inputs(manifest_path: Path, fixture_id: str, seed_path: Path, allow_hel
     fixture = next((f for f in manifest["fixtures"] if f["id"] == fixture_id), None)
     if fixture is None:
         raise SpikeError(f"fixture {fixture_id!r} is not in {manifest_path}")
-    if fixture["purpose"] == "validation" and not allow_held_out:
+    if held_out_guard.is_held_out(fixture) and not allow_held_out:
         raise SpikeError(f"{fixture_id} is a held-out validation fixture; tune on development fixtures only")
     seed = json.loads(seed_path.read_text(encoding="utf-8"))
     if seed.get("fixture_id") not in (None, fixture_id):

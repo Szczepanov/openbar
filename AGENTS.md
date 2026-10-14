@@ -176,8 +176,8 @@ Stop and ask the owner before:
 
 Prefer a failing check over a waiting human. When a rule can be enforced mechanically, an agent
 should add or use that check instead of asking for review: `schema_check.py`, the golden-file
-test, `cargo deny`, the research runner's refusal of validation-purpose fixtures, and the
-determinism tests. Report any gap where a rule above has no mechanical check; do not paper over
+test, `cargo deny`, the held-out refusal (`validation/tools/held_out_guard.py`, covering
+`purpose: validation` and the `split-reserved-57` tag), and the determinism tests. Report any gap where a rule above has no mechanical check; do not paper over
 it. Humans audit a random sample plus every low-confidence or refused case; the sampling rate is
 set by the owner from evidence, not by an agent.
 
