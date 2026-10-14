@@ -51,6 +51,7 @@ sys.path.insert(0, str(GPU_DIR))
 
 import centres  # noqa: E402
 import download_models  # noqa: E402
+import held_out_guard  # noqa: E402
 import label_package  # noqa: E402
 import point_motion  # noqa: E402
 
@@ -214,7 +215,7 @@ def load_inputs(manifest_path: Path, fixture_id: str, seed_path: Path, allow_hel
     fixture = next((f for f in manifest["fixtures"] if f["id"] == fixture_id), None)
     if fixture is None:
         raise GpuTrackerError(f"fixture {fixture_id!r} is not in {manifest_path}")
-    if fixture["purpose"] == "validation" and not allow_held_out:
+    if held_out_guard.is_held_out(fixture) and not allow_held_out:
         raise GpuTrackerError(f"{fixture_id} is a held-out validation fixture; tune on development fixtures only")
     seed = json.loads(seed_path.read_text(encoding="utf-8"))
     if seed.get("fixture_id") not in (None, fixture_id):

@@ -32,6 +32,7 @@ TIMESTAMP_TOLERANCE_S = 0.0005
 OPENBAR_BASELINES = ("template-sad-v1", "local-contrast-centroid-v1")
 
 sys.path.insert(0, str(ROOT / "validation" / "tools"))
+import held_out_guard  # noqa: E402
 import tracker_filter_selection as tfs  # noqa: E402
 
 
@@ -238,7 +239,7 @@ def fixture_inputs(
     fixture = next((f for f in manifest["fixtures"] if f["id"] == fixture_id), None)
     if fixture is None:
         raise SystemExit(f"error: {fixture_id} is not in {manifest_path}")
-    if fixture["purpose"] == "validation" and not allow_held_out:
+    if held_out_guard.is_held_out(fixture) and not allow_held_out:
         raise SystemExit(f"error: {fixture_id} is a held-out validation fixture")
     annotations = manifest_path.parent / "annotations" / f"{fixture_id}.annotation-v1.json"
     seed = manifest_path.parent / "seeds" / f"{fixture_id}.manual-target-seed-v1.json"
