@@ -122,13 +122,30 @@ Do these in order. Steps 1–3 can start today; steps 5 onward need the owner's 
    python validation/tools/schema_check.py
    ```
 
-6. **Label blind.** For each clip record: target identity, whether automatic selection
-   should be accepted or refused (and why), the seed-frame circle (centre, radius, PTS) and
-   the movement-onset PTS. The plan asks for two annotators who do not see candidate
-   overlays or scores. A second person is best; if you must be both, do the second pass at
-   least a day later without opening the first. Use the existing tools described in
-   [ANNOTATION.md](ANNOTATION.md) and [MANUAL_TARGET_SEED.md](MANUAL_TARGET_SEED.md). Keep
-   both labels and note disagreements; do not overwrite one with the other.
+6. **Label blind.** Do not use `vbt_session.py` for this: it pre-fills a machine suggestion,
+   which leaks the candidate into the label. Use the plain frame labeller
+   (`label_package.py`, see [MANUAL_TARGET_SEED.md](MANUAL_TARGET_SEED.md)). Keep the output
+   outside the production seed directory, under `validation/private/frozen-eval/`.
+
+   For each clip that should be *selected*, create a package at a time before the first
+   movement, click the plate, and convert the downloaded CSV:
+
+   ```bash
+   python validation/tools/label_package.py --manifest validation/private/manifest.json --fixture <id> --at-s <seconds> --annotator-id <a-or-b> --output-dir validation/private/frozen-eval/work/<id>.<a-or-b>
+   # open index.html: click centre, Shift+click rim, press 1/2/3 for quality, download CSV
+   python validation/tools/annotations.py seed --manifest validation/private/manifest.json --metadata validation/private/frozen-eval/work/<id>.<a-or-b>/metadata.json --csv <downloaded.csv> --output validation/private/frozen-eval/seeds/<id>.<a-or-b>.manual-target-seed-v1.json
+   ```
+
+   For every clip, including refusal cases, add one row per annotator to
+   `validation/private/frozen-eval/labels.csv` (interim format; the freeze record will pin it):
+   `fixture_id,annotator,expected_policy,movement_onset_s,target_description,diameter_m,notes`,
+   where `expected_policy` is `select`, `refuse_ambiguous`, `refuse_no_target`,
+   `refuse_unsupported` or `refuse_no_pre_movement`. Refusal clips have no seed file.
+
+   The plan asks for two annotators who do not see candidate overlays or scores. A second
+   person is best; if you must be both, do the second pass (`b`) at least a day later without
+   opening the first. Keep both labels and note disagreements; do not overwrite one with
+   the other.
 7. **Record the owner decision on #178.** State DEFER or PROCEED. PROCEED must cite the plan
    revision, the allowed research entry point, the input split in this document, the
    candidate configurations, the resource budget and the stop criteria.
