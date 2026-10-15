@@ -1157,6 +1157,16 @@ fn nearest_rank(sorted: &[f64], quantile: f64) -> f64 {
 
 fn render_report(result: &ReferenceStudyResult) -> String {
     let mut report = String::new();
+    render_header(&mut report, result);
+    render_coverage(&mut report, result);
+    render_gate_status(&mut report, &result.gates);
+    render_evaluated_cases(&mut report, &result.cases);
+    render_reference_provenance(&mut report, &result.reference);
+    render_limitations(&mut report, &result.limitations);
+    report
+}
+
+fn render_header(report: &mut String, result: &ReferenceStudyResult) {
     report.push_str("# M0 independent kinematic reference report\n\n");
     report.push_str(&format!("- Study: `{}`\n", result.study_id));
     report.push_str(&format!("- Purpose: {}\n", result.purpose));
@@ -1179,7 +1189,9 @@ fn render_report(result: &ReferenceStudyResult) -> String {
         "- Timestamp alignment: `{}`; synchronization: {}\n\n",
         result.construct.timestamp_alignment, result.reference.synchronization
     ));
+}
 
+fn render_coverage(report: &mut String, result: &ReferenceStudyResult) {
     report.push_str("## Coverage\n\n");
     report.push_str(&format!(
         "{} cases: {} evaluated, {} expected-supported failures, {} unsupported; {} reference samples evaluated.\n\n",
@@ -1214,28 +1226,31 @@ fn render_report(result: &ReferenceStudyResult) -> String {
             case.failure_reason.as_deref().unwrap_or("")
         ));
     }
+}
 
+fn render_gate_status(report: &mut String, gates: &GateResults) {
     report.push_str("\n## Gate status\n\n");
     report
         .push_str("| Gate | Original target | Status | Observed MAE | Bias | Effective target |\n");
     report.push_str("| --- | ---: | --- | ---: | ---: | ---: |\n");
-    render_gate_row(&mut report, "ROM MAE", "m", &result.gates.rom_mae_m);
+    render_gate_row(report, "ROM MAE", "m", &gates.rom_mae_m);
     render_gate_row(
-        &mut report,
+        report,
         "Mean velocity MAE",
         "m/s",
-        &result.gates.mean_velocity_mae_mps,
+        &gates.mean_velocity_mae_mps,
     );
     render_gate_row(
-        &mut report,
+        report,
         "Peak velocity MAE",
         "m/s",
-        &result.gates.peak_velocity_mae_mps,
+        &gates.peak_velocity_mae_mps,
     );
+}
 
+fn render_evaluated_cases(report: &mut String, cases: &[CaseResult]) {
     report.push_str("\n## Evaluated cases\n\n");
-    for case in result
-        .cases
+    for case in cases
         .iter()
         .filter(|case| case.outcome == CaseOutcome::Evaluated)
     {
@@ -1268,27 +1283,30 @@ fn render_report(result: &ReferenceStudyResult) -> String {
             metrics.peak_velocity_error_mps
         ));
     }
+}
 
+fn render_reference_provenance(report: &mut String, reference: &ReferenceProvenance) {
     report.push_str("## Reference provenance and uncertainty\n\n");
-    report.push_str(&format!("- Protocol: {}\n", result.reference.protocol));
+    report.push_str(&format!("- Protocol: {}\n", reference.protocol));
     report.push_str(&format!(
         "- Coordinate alignment: {}\n",
-        result.reference.coordinate_alignment
+        reference.coordinate_alignment
     ));
     report.push_str(&format!(
         "- Rights/access: {}\n",
-        result.reference.rights_or_access
+        reference.rights_or_access
     ));
-    if let Some(notes) = result.reference.notes.as_deref() {
+    if let Some(notes) = reference.notes.as_deref() {
         report.push_str(&format!("- Notes: {notes}\n"));
     }
+}
 
+fn render_limitations(report: &mut String, limitations: &[&str]) {
     report.push_str("\n## Scope and limitations\n\n");
-    for limitation in &result.limitations {
+    for limitation in limitations {
         report.push_str(&format!("- {limitation}\n"));
     }
     report.push('\n');
-    report
 }
 
 fn render_gate_row(report: &mut String, name: &str, unit: &str, gate: &GateResult) {
@@ -1386,6 +1404,105 @@ mod tests {
         let reference = [sample(0.0, 0.0), sample(0.15, 0.15), sample(0.2, 0.2)];
         let error = exact_aligned_samples(&source, &reference, "calibrated").unwrap_err();
         assert!(error.contains("interpolation is not allowed"));
+    }
+
+    #[test]
+    fn render_report_formats_expected_sections() {
+        let result = ReferenceStudyResult {
+            schema_version: RESULT_SCHEMA_VERSION,
+            study_id: "test-study-01".to_string(),
+            evidence_class: EvidenceClass::IndependentPhysicalReference,
+            purpose: "Verification of report rendering".to_string(),
+            reference: ReferenceProvenance {
+                source_type: ReferenceSourceType::ControlledGeometricRig,
+                system: "Rig Alpha".to_string(),
+                protocol: "Standard Protocol v1".to_string(),
+                synchronization: "Hardware Trigger".to_string(),
+                coordinate_alignment: "Laser Aligned".to_string(),
+                rights_or_access: "Open Access".to_string(),
+                notes: Some("Test notes".to_string()),
+            },
+            construct: ConstructContract {
+                coordinate_convention: MetricCoordinateConvention::ReferenceCentreXRightYUp,
+                axis: StudyAxis::VerticalY,
+                interval_semantics: "closed_exact_sample_boundaries".to_string(),
+                mean_velocity_definition: "axis_displacement_over_interval_duration".to_string(),
+                peak_velocity_definition: "maximum_signed_axis_velocity".to_string(),
+                timestamp_alignment: "exact_sample_timestamp".to_string(),
+                calibration_method: CalibrationMethod::PlateDiameter,
+                calibration_method_version: PLATE_DIAMETER_CALIBRATION_METHOD_VERSION,
+                kinematics: ExpectedKinematics {
+                    implementation: VELOCITY_METHOD_IMPLEMENTATION.to_string(),
+                    version: VELOCITY_METHOD_VERSION.to_string(),
+                    max_gap_s: 0.2,
+                    min_confidence: 0.5,
+                },
+            },
+            summary: StudySummary {
+                total_cases: 1,
+                evaluated_cases: 1,
+                failed_supported_cases: 0,
+                unsupported_cases: 0,
+                evaluated_reference_samples: 10,
+            },
+            cases: vec![CaseResult {
+                id: "case-01".to_string(),
+                condition: "Normal speed".to_string(),
+                outcome: CaseOutcome::Evaluated,
+                reference_sample_count: 10,
+                reference_uncertainty: Some(ReferenceUncertainty {
+                    position_m: 0.001,
+                    velocity_mps: 0.005,
+                    method: "Rig sensor precision".to_string(),
+                }),
+                failure_reason: None,
+                metrics: Some(CaseMetrics {
+                    calibrated_position_error_m: ErrorDistribution {
+                        count: 10,
+                        mae: 0.002,
+                        rmse: 0.0025,
+                        bias: 0.001,
+                        p50_absolute: 0.002,
+                        p90_absolute: 0.003,
+                        p95_absolute: 0.0035,
+                        max_absolute: 0.004,
+                    },
+                    reference_rom_m: 0.5,
+                    openbar_rom_m: 0.501,
+                    rom_error_m: 0.001,
+                    reference_mean_velocity_mps: 0.8,
+                    openbar_mean_velocity_mps: 0.802,
+                    mean_velocity_error_mps: 0.002,
+                    reference_peak_velocity_mps: 1.2,
+                    reference_peak_timestamp_s: 0.5,
+                    openbar_peak_velocity_mps: 1.205,
+                    openbar_peak_timestamp_s: 0.5,
+                    peak_velocity_error_mps: 0.005,
+                }),
+                openbar_provenance: None,
+            }],
+            gates: GateResults {
+                rom_mae_m: evaluate_gate(0.01, &[0.001], 0, None),
+                mean_velocity_mae_mps: evaluate_gate(0.05, &[0.002], 0, None),
+                peak_velocity_mae_mps: evaluate_gate(0.10, &[0.005], 0, None),
+            },
+            limitations: vec!["Limitation A"],
+        };
+
+        let report = render_report(&result);
+        assert!(report.contains("# M0 independent kinematic reference report"));
+        assert!(report.contains("- Study: `test-study-01`"));
+        assert!(report.contains("## Coverage"));
+        assert!(report.contains("case-01"));
+        assert!(report.contains("## Gate status"));
+        assert!(report.contains("ROM MAE"));
+        assert!(report.contains("## Evaluated cases"));
+        assert!(report.contains("### case-01 — Normal speed"));
+        assert!(report.contains("## Reference provenance and uncertainty"));
+        assert!(report.contains("- Protocol: Standard Protocol v1"));
+        assert!(report.contains("- Notes: Test notes"));
+        assert!(report.contains("## Scope and limitations"));
+        assert!(report.contains("- Limitation A"));
     }
 
     #[test]
