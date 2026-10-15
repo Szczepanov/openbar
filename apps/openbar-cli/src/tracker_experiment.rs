@@ -122,6 +122,94 @@ pub fn run_cli() -> AnyResult<()> {
     Ok(())
 }
 
+struct PreparedScenario {
+    frames: Vec<GrayFrame>,
+    manual_seed: ManualTargetSeed,
+    truth: Vec<GroundTruthSample>,
+    selected_media_duration_s: f64,
+}
+
+impl PreparedScenario {
+    fn frame_samples<'a>(&'a self, timestamps: &[f64]) -> Vec<FrameSample<'a>> {
+        self.frames
+            .iter()
+            .zip(timestamps)
+            .enumerate()
+            .map(|(index, (image, timestamp_s))| FrameSample {
+                timestamp_s: *timestamp_s,
+                frame_index: Some(index as u64),
+                image,
+            })
+            .collect()
+    }
+}
+
+fn prepare_scenario(scenario: &Scenario) -> AnyResult<PreparedScenario> {
+    validate_scenario(scenario)?;
+    let frames = scenario
+        .rendered_centers
+        .iter()
+        .zip(&scenario.target_intensities)
+        .zip(&scenario.rendered_radii)
+        .zip(&scenario.hide_right_half)
+        .map(|(((center, intensity), radius), hide)| {
+            render_frame(*center, *intensity, *radius, *hide)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let manual_seed = scenario_seed(scenario.truth_centers[0], scenario.timestamps[0])?;
+    let truth = scenario
+        .truth_centers
+        .iter()
+        .zip(&scenario.timestamps)
+        .map(|(center, timestamp_s)| GroundTruthSample {
+            timestamp_s: *timestamp_s,
+            center: PixelPoint::new(f64::from(center.0), f64::from(center.1)),
+        })
+        .collect::<Vec<_>>();
+    let selected_media_duration_s = scenario.timestamps.last().copied().unwrap_or_default()
+        - scenario.timestamps.first().copied().unwrap_or_default();
+
+    Ok(PreparedScenario {
+        frames,
+        manual_seed,
+        truth,
+        selected_media_duration_s,
+    })
+}
+
+fn evaluate_tracker_on_scenario(
+    tracker: TrackerKind<'_>,
+    scenario: &Scenario,
+    prepared: &PreparedScenario,
+    frame_samples: &[FrameSample<'_>],
+    parameters: BenchmarkParameters,
+) -> AnyResult<ScenarioResult> {
+    let started = Instant::now();
+    let run = tracker.track(frame_samples, &prepared.manual_seed)?;
+    let runtime_s = started.elapsed().as_secs_f64();
+    let metrics = evaluate_tracker_case(&prepared.truth, &run.benchmark_predictions(), parameters)?;
+    let identity = &run.tracker;
+
+    Ok(ScenarioResult {
+        scenario: scenario.name,
+        factor: scenario.factor,
+        tracker_id: identity.id.clone(),
+        tracker_implementation: identity.implementation.clone(),
+        tracker_version: identity.version.clone(),
+        tracker_config: identity.config.clone(),
+        confidence_semantics: identity.confidence_semantics.clone(),
+        metrics,
+        loss_reasons: loss_reason_counts(&run),
+        low_confidence_samples: low_confidence_count(&run),
+        mean_reported_confidence: mean_confidence(&run),
+        high_confidence_error_over_2px: high_confidence_error_count(&run, &prepared.truth),
+        runtime_ms: runtime_s * 1_000.0,
+        selected_media_duration_s: prepared.selected_media_duration_s,
+        media_seconds_per_wall_second: (runtime_s > 0.0)
+            .then_some(prepared.selected_media_duration_s / runtime_s),
+    })
+}
+
 fn run_experiment() -> AnyResult<ExperimentArtifact> {
     let parameters = BenchmarkParameters {
         timestamp_tolerance_s: 0.0,
@@ -132,68 +220,20 @@ fn run_experiment() -> AnyResult<ExperimentArtifact> {
     let mut results = Vec::new();
 
     for scenario in scenarios() {
-        validate_scenario(&scenario)?;
-        let frames = scenario
-            .rendered_centers
-            .iter()
-            .zip(&scenario.target_intensities)
-            .zip(&scenario.rendered_radii)
-            .zip(&scenario.hide_right_half)
-            .map(|(((center, intensity), radius), hide)| {
-                render_frame(*center, *intensity, *radius, *hide)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let frame_samples = frames
-            .iter()
-            .zip(&scenario.timestamps)
-            .enumerate()
-            .map(|(index, (image, timestamp_s))| FrameSample {
-                timestamp_s: *timestamp_s,
-                frame_index: Some(index as u64),
-                image,
-            })
-            .collect::<Vec<_>>();
-        let manual_seed = scenario_seed(scenario.truth_centers[0], scenario.timestamps[0])?;
-        let truth = scenario
-            .truth_centers
-            .iter()
-            .zip(&scenario.timestamps)
-            .map(|(center, timestamp_s)| GroundTruthSample {
-                timestamp_s: *timestamp_s,
-                center: PixelPoint::new(f64::from(center.0), f64::from(center.1)),
-            })
-            .collect::<Vec<_>>();
+        let prepared = prepare_scenario(&scenario)?;
+        let frame_samples = prepared.frame_samples(&scenario.timestamps);
 
         for tracker in [
             TrackerKind::Template(&template),
             TrackerKind::Contrast(&contrast),
         ] {
-            let started = Instant::now();
-            let run = tracker.track(&frame_samples, &manual_seed)?;
-            let runtime_s = started.elapsed().as_secs_f64();
-            let metrics = evaluate_tracker_case(&truth, &run.benchmark_predictions(), parameters)?;
-            let selected_media_duration_s = scenario.timestamps.last().copied().unwrap_or_default()
-                - scenario.timestamps.first().copied().unwrap_or_default();
-            let identity = &run.tracker;
-
-            results.push(ScenarioResult {
-                scenario: scenario.name,
-                factor: scenario.factor,
-                tracker_id: identity.id.clone(),
-                tracker_implementation: identity.implementation.clone(),
-                tracker_version: identity.version.clone(),
-                tracker_config: identity.config.clone(),
-                confidence_semantics: identity.confidence_semantics.clone(),
-                metrics,
-                loss_reasons: loss_reason_counts(&run),
-                low_confidence_samples: low_confidence_count(&run),
-                mean_reported_confidence: mean_confidence(&run),
-                high_confidence_error_over_2px: high_confidence_error_count(&run, &truth),
-                runtime_ms: runtime_s * 1_000.0,
-                selected_media_duration_s,
-                media_seconds_per_wall_second: (runtime_s > 0.0)
-                    .then_some(selected_media_duration_s / runtime_s),
-            });
+            results.push(evaluate_tracker_on_scenario(
+                tracker,
+                &scenario,
+                &prepared,
+                &frame_samples,
+                parameters,
+            )?);
         }
     }
 
