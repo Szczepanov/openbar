@@ -396,6 +396,33 @@ fn run_pipeline(
     Ok((analysis, clip, recording_support))
 }
 
+#[derive(Debug)]
+struct SourceArgs {
+    video: Option<PathBuf>,
+    manifest: Option<PathBuf>,
+    fixture_id: Option<String>,
+}
+
+#[derive(Debug)]
+struct CameraArgs {
+    camera_view: Option<CameraView>,
+    camera_movement: Option<CameraMovement>,
+    approx_yaw_deg: Option<f64>,
+    approx_pitch_deg: Option<f64>,
+    camera_roll_deg: Option<f64>,
+    camera_distance_m: Option<f64>,
+}
+
+#[derive(Debug)]
+struct TrackerOptions {
+    search_radius_px: Option<u32>,
+    template_low_confidence_nmad: Option<f64>,
+    template_max_nmad: Option<f64>,
+    contrast_min_seed_contrast: Option<f64>,
+    contrast_min_mass_ratio: Option<f64>,
+    contrast_low_confidence_mass_ratio: Option<f64>,
+}
+
 fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     if args
         .iter()
@@ -406,153 +433,36 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
 
     let (mut values, force) = collect_flag_values(&args)?;
 
-    let video = take_path(&mut values, "--video");
-    let manifest = take_path(&mut values, "--manifest");
-    let fixture_id = values.remove("--fixture");
-    validate_source_selection(video.as_ref(), manifest.as_ref(), fixture_id.as_deref())?;
-
-    let camera_view = values
-        .remove("--camera-view")
-        .map(|value| parse_camera_view(&value))
-        .transpose()?;
-    let camera_movement = values
-        .remove("--camera-movement")
-        .map(|value| parse_camera_movement(&value))
-        .transpose()?;
-    let approx_yaw_deg = take_parsed(&mut values, "--approx-yaw-deg")?;
-    let approx_pitch_deg = take_parsed(&mut values, "--approx-pitch-deg")?;
-    let camera_roll_deg = take_parsed(&mut values, "--camera-roll-deg")?;
-    let camera_distance_m = take_parsed(&mut values, "--camera-distance-m")?;
-    validate_recording_metadata_source(
-        manifest.as_ref(),
-        camera_view,
-        camera_movement,
-        approx_yaw_deg,
-        approx_pitch_deg,
-        camera_roll_deg,
-        camera_distance_m,
-    )?;
+    let source = parse_source_args(&mut values)?;
+    let camera = parse_camera_args(&mut values, source.manifest.as_ref())?;
 
     let seed = PathBuf::from(required(&mut values, "--seed")?);
     let output = PathBuf::from(required(&mut values, "--output")?);
     let recording_support_output = take_path(&mut values, "--recording-support-output");
     let timings_output = take_path(&mut values, "--timings-output");
     let observations = take_path(&mut values, "--observations");
-    let tracker_value = values.remove("--tracker");
-    let tracker = match (tracker_value.as_deref(), observations.as_ref()) {
-        (Some(_), Some(_)) => {
-            return Err(CliError::invalid_input(
-                "--tracker and --observations are mutually exclusive; provide exactly one",
-            ));
-        }
-        (None, None) => {
-            return Err(CliError::invalid_input(
-                "analyze requires exactly one of --tracker <template|contrast> or --observations <path>",
-            ));
-        }
-        (Some(value), None) => Some(match value {
-            "template" => TrackerChoice::Template,
-            "contrast" => TrackerChoice::Contrast,
-            value => {
-                return Err(CliError::invalid_input(format!(
-                    "--tracker must be 'template' or 'contrast', got '{value}'"
-                )));
-            }
-        }),
-        (None, Some(_)) => None,
-    };
+    let tracker = parse_tracker_choice(&mut values, observations.as_ref())?;
+
     validate_output_paths(
-        video.as_ref(),
-        manifest.as_ref(),
+        source.video.as_ref(),
+        source.manifest.as_ref(),
         &seed,
         observations.as_ref(),
         &output,
         recording_support_output.as_ref(),
         timings_output.as_ref(),
     )?;
-    let plate_diameter_m = parse_f64(
-        &required(&mut values, "--plate-diameter-m")?,
-        "--plate-diameter-m",
-    )?;
-    if !plate_diameter_m.is_finite() || plate_diameter_m <= 0.0 {
-        return Err(CliError::seed_calibration(
-            "--plate-diameter-m must be finite and positive",
-        ));
-    }
 
-    let tracker_search_radius_px = take_parsed(&mut values, "--tracker-search-radius-px")?;
-    let template_low_confidence_nmad = take_parsed(&mut values, "--template-low-confidence-nmad")?;
-    let template_max_nmad = take_parsed(&mut values, "--template-max-nmad")?;
-    let contrast_min_seed_contrast = take_parsed(&mut values, "--contrast-min-seed-contrast")?;
-    let contrast_min_mass_ratio = take_parsed(&mut values, "--contrast-min-mass-ratio")?;
-    let contrast_low_confidence_mass_ratio =
-        take_parsed(&mut values, "--contrast-low-confidence-mass-ratio")?;
-    validate_tracker_specific_options(
-        tracker,
-        tracker_search_radius_px,
-        template_low_confidence_nmad,
-        template_max_nmad,
-        contrast_min_seed_contrast,
-        contrast_min_mass_ratio,
-        contrast_low_confidence_mass_ratio,
-    )?;
+    let plate_diameter_m = parse_plate_diameter(&mut values)?;
+    let tracker_options = parse_tracker_options(&mut values, tracker)?;
 
     let filter_name = required(&mut values, "--filter")?;
     let filter = parse_filter_config(&filter_name, &mut values)?;
 
-    let kinematics = KinematicsConfig::try_new(
-        parse_f64(
-            &required(&mut values, "--kinematics-max-gap-s")?,
-            "--kinematics-max-gap-s",
-        )?,
-        parse_f32(
-            &required(&mut values, "--kinematics-min-confidence")?,
-            "--kinematics-min-confidence",
-        )?,
-    )
-    .map_err(|error| CliError::invalid_input(format!("invalid kinematics config: {error}")))?;
-
-    let selection = match (values.remove("--start-s"), values.remove("--end-s")) {
-        (None, None) => None,
-        (Some(start), Some(end)) => Some(
-            MediaTimeRange::try_new(parse_f64(&start, "--start-s")?, parse_f64(&end, "--end-s")?)
-                .map_err(classify_media_error)?,
-        ),
-        _ => {
-            return Err(CliError::invalid_input(
-                "--start-s and --end-s must be provided together",
-            ));
-        }
-    };
-
-    let max_frame_memory_mib = values
-        .remove("--max-frame-memory-mib")
-        .map(|value| parse_u64(&value, "--max-frame-memory-mib"))
-        .transpose()?
-        .unwrap_or(DEFAULT_MAX_FRAME_MEMORY_MIB);
-    if max_frame_memory_mib == 0 {
-        return Err(CliError::invalid_input(
-            "--max-frame-memory-mib must be greater than zero",
-        ));
-    }
-    let max_frame_bytes = max_frame_memory_mib
-        .checked_mul(1024 * 1024)
-        .ok_or_else(|| CliError::invalid_input("--max-frame-memory-mib is too large"))?;
-
-    let diagnostics = match values
-        .remove("--diagnostics")
-        .unwrap_or_else(|| "normal".to_owned())
-        .as_str()
-    {
-        "quiet" => DiagnosticsVerbosity::Quiet,
-        "normal" => DiagnosticsVerbosity::Normal,
-        "verbose" => DiagnosticsVerbosity::Verbose,
-        value => {
-            return Err(CliError::invalid_input(format!(
-                "--diagnostics must be quiet, normal, or verbose, got '{value}'"
-            )));
-        }
-    };
+    let kinematics = parse_kinematics_config(&mut values)?;
+    let selection = parse_selection(&mut values)?;
+    let max_frame_bytes = parse_max_frame_bytes(&mut values)?;
+    let diagnostics = parse_diagnostics(&mut values)?;
 
     if let Some((flag, _)) = values.first_key_value() {
         return Err(CliError::invalid_input(format!(
@@ -561,25 +471,25 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
     }
 
     Ok(Some(Args {
-        video,
-        manifest,
-        fixture_id,
-        camera_view,
-        camera_movement,
-        approx_yaw_deg,
-        approx_pitch_deg,
-        camera_roll_deg,
-        camera_distance_m,
+        video: source.video,
+        manifest: source.manifest,
+        fixture_id: source.fixture_id,
+        camera_view: camera.camera_view,
+        camera_movement: camera.camera_movement,
+        approx_yaw_deg: camera.approx_yaw_deg,
+        approx_pitch_deg: camera.approx_pitch_deg,
+        camera_roll_deg: camera.camera_roll_deg,
+        camera_distance_m: camera.camera_distance_m,
         seed,
         plate_diameter_m,
         tracker,
         observations,
-        tracker_search_radius_px,
-        template_low_confidence_nmad,
-        template_max_nmad,
-        contrast_min_seed_contrast,
-        contrast_min_mass_ratio,
-        contrast_low_confidence_mass_ratio,
+        tracker_search_radius_px: tracker_options.search_radius_px,
+        template_low_confidence_nmad: tracker_options.template_low_confidence_nmad,
+        template_max_nmad: tracker_options.template_max_nmad,
+        contrast_min_seed_contrast: tracker_options.contrast_min_seed_contrast,
+        contrast_min_mass_ratio: tracker_options.contrast_min_mass_ratio,
+        contrast_low_confidence_mass_ratio: tracker_options.contrast_low_confidence_mass_ratio,
         filter,
         kinematics,
         selection,
@@ -590,6 +500,177 @@ fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
         diagnostics,
         force,
     }))
+}
+
+fn parse_source_args(values: &mut BTreeMap<String, String>) -> CliResult<SourceArgs> {
+    let video = take_path(values, "--video");
+    let manifest = take_path(values, "--manifest");
+    let fixture_id = values.remove("--fixture");
+    validate_source_selection(video.as_ref(), manifest.as_ref(), fixture_id.as_deref())?;
+    Ok(SourceArgs {
+        video,
+        manifest,
+        fixture_id,
+    })
+}
+
+fn parse_camera_args(
+    values: &mut BTreeMap<String, String>,
+    manifest: Option<&PathBuf>,
+) -> CliResult<CameraArgs> {
+    let camera_view = values
+        .remove("--camera-view")
+        .map(|value| parse_camera_view(&value))
+        .transpose()?;
+    let camera_movement = values
+        .remove("--camera-movement")
+        .map(|value| parse_camera_movement(&value))
+        .transpose()?;
+    let approx_yaw_deg = take_parsed(values, "--approx-yaw-deg")?;
+    let approx_pitch_deg = take_parsed(values, "--approx-pitch-deg")?;
+    let camera_roll_deg = take_parsed(values, "--camera-roll-deg")?;
+    let camera_distance_m = take_parsed(values, "--camera-distance-m")?;
+    validate_recording_metadata_source(
+        manifest,
+        camera_view,
+        camera_movement,
+        approx_yaw_deg,
+        approx_pitch_deg,
+        camera_roll_deg,
+        camera_distance_m,
+    )?;
+    Ok(CameraArgs {
+        camera_view,
+        camera_movement,
+        approx_yaw_deg,
+        approx_pitch_deg,
+        camera_roll_deg,
+        camera_distance_m,
+    })
+}
+
+fn parse_tracker_choice(
+    values: &mut BTreeMap<String, String>,
+    observations: Option<&PathBuf>,
+) -> CliResult<Option<TrackerChoice>> {
+    let tracker_value = values.remove("--tracker");
+    match (tracker_value.as_deref(), observations) {
+        (Some(_), Some(_)) => Err(CliError::invalid_input(
+            "--tracker and --observations are mutually exclusive; provide exactly one",
+        )),
+        (None, None) => Err(CliError::invalid_input(
+            "analyze requires exactly one of --tracker <template|contrast> or --observations <path>",
+        )),
+        (Some(value), None) => match value {
+            "template" => Ok(Some(TrackerChoice::Template)),
+            "contrast" => Ok(Some(TrackerChoice::Contrast)),
+            value => Err(CliError::invalid_input(format!(
+                "--tracker must be 'template' or 'contrast', got '{value}'"
+            ))),
+        },
+        (None, Some(_)) => Ok(None),
+    }
+}
+
+fn parse_plate_diameter(values: &mut BTreeMap<String, String>) -> CliResult<f64> {
+    let plate_diameter_m = parse_f64(
+        &required(values, "--plate-diameter-m")?,
+        "--plate-diameter-m",
+    )?;
+    if !plate_diameter_m.is_finite() || plate_diameter_m <= 0.0 {
+        return Err(CliError::seed_calibration(
+            "--plate-diameter-m must be finite and positive",
+        ));
+    }
+    Ok(plate_diameter_m)
+}
+
+fn parse_tracker_options(
+    values: &mut BTreeMap<String, String>,
+    tracker: Option<TrackerChoice>,
+) -> CliResult<TrackerOptions> {
+    let search_radius_px = take_parsed(values, "--tracker-search-radius-px")?;
+    let template_low_confidence_nmad = take_parsed(values, "--template-low-confidence-nmad")?;
+    let template_max_nmad = take_parsed(values, "--template-max-nmad")?;
+    let contrast_min_seed_contrast = take_parsed(values, "--contrast-min-seed-contrast")?;
+    let contrast_min_mass_ratio = take_parsed(values, "--contrast-min-mass-ratio")?;
+    let contrast_low_confidence_mass_ratio =
+        take_parsed(values, "--contrast-low-confidence-mass-ratio")?;
+    validate_tracker_specific_options(
+        tracker,
+        search_radius_px,
+        template_low_confidence_nmad,
+        template_max_nmad,
+        contrast_min_seed_contrast,
+        contrast_min_mass_ratio,
+        contrast_low_confidence_mass_ratio,
+    )?;
+    Ok(TrackerOptions {
+        search_radius_px,
+        template_low_confidence_nmad,
+        template_max_nmad,
+        contrast_min_seed_contrast,
+        contrast_min_mass_ratio,
+        contrast_low_confidence_mass_ratio,
+    })
+}
+
+fn parse_kinematics_config(values: &mut BTreeMap<String, String>) -> CliResult<KinematicsConfig> {
+    KinematicsConfig::try_new(
+        parse_f64(
+            &required(values, "--kinematics-max-gap-s")?,
+            "--kinematics-max-gap-s",
+        )?,
+        parse_f32(
+            &required(values, "--kinematics-min-confidence")?,
+            "--kinematics-min-confidence",
+        )?,
+    )
+    .map_err(|error| CliError::invalid_input(format!("invalid kinematics config: {error}")))
+}
+
+fn parse_selection(values: &mut BTreeMap<String, String>) -> CliResult<Option<MediaTimeRange>> {
+    match (values.remove("--start-s"), values.remove("--end-s")) {
+        (None, None) => Ok(None),
+        (Some(start), Some(end)) => Ok(Some(
+            MediaTimeRange::try_new(parse_f64(&start, "--start-s")?, parse_f64(&end, "--end-s")?)
+                .map_err(classify_media_error)?,
+        )),
+        _ => Err(CliError::invalid_input(
+            "--start-s and --end-s must be provided together",
+        )),
+    }
+}
+
+fn parse_max_frame_bytes(values: &mut BTreeMap<String, String>) -> CliResult<u64> {
+    let max_frame_memory_mib = values
+        .remove("--max-frame-memory-mib")
+        .map(|value| parse_u64(&value, "--max-frame-memory-mib"))
+        .transpose()?
+        .unwrap_or(DEFAULT_MAX_FRAME_MEMORY_MIB);
+    if max_frame_memory_mib == 0 {
+        return Err(CliError::invalid_input(
+            "--max-frame-memory-mib must be greater than zero",
+        ));
+    }
+    max_frame_memory_mib
+        .checked_mul(1024 * 1024)
+        .ok_or_else(|| CliError::invalid_input("--max-frame-memory-mib is too large"))
+}
+
+fn parse_diagnostics(values: &mut BTreeMap<String, String>) -> CliResult<DiagnosticsVerbosity> {
+    match values
+        .remove("--diagnostics")
+        .unwrap_or_else(|| "normal".to_owned())
+        .as_str()
+    {
+        "quiet" => Ok(DiagnosticsVerbosity::Quiet),
+        "normal" => Ok(DiagnosticsVerbosity::Normal),
+        "verbose" => Ok(DiagnosticsVerbosity::Verbose),
+        value => Err(CliError::invalid_input(format!(
+            "--diagnostics must be quiet, normal, or verbose, got '{value}'"
+        ))),
+    }
 }
 
 fn collect_flag_values(args: &[String]) -> CliResult<(BTreeMap<String, String>, bool)> {
