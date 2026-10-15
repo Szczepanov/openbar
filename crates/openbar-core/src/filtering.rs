@@ -1476,42 +1476,4 @@ mod tests {
             Err(FilterError::InvalidConfidenceWindow { .. })
         ));
     }
-
-    #[test]
-    #[ignore]
-    fn bench_savitzky_golay_performance() {
-        let input = (0..10_000)
-            .map(|index| {
-                let t = index as f64 / 120.0;
-                let x = 0.2 + 0.3 * t - 0.4 * t.powi(2) + 0.2 * t.powi(3) - 0.1 * t.powi(4)
-                    + 0.05 * t.powi(5);
-                sample(t, x, -0.1 + 0.8 * t)
-            })
-            .collect::<Vec<_>>();
-
-        let config = FilterConfig::SavitzkyGolay {
-            window: 11,
-            window_s: None,
-            polynomial_order: 5,
-            max_gap_s: 1.0,
-        };
-
-        // Warm up
-        for _ in 0..5 {
-            let _ = apply_filter(&input, config).unwrap();
-        }
-
-        let start = std::time::Instant::now();
-        let iterations = 50;
-        for _ in 0..iterations {
-            let _ = apply_filter(&input, config).unwrap();
-        }
-        let elapsed = start.elapsed();
-        println!(
-            "bench_savitzky_golay_performance: {:?} total for {} iterations ({:?} per iter)",
-            elapsed,
-            iterations,
-            elapsed / iterations
-        );
-    }
 }
