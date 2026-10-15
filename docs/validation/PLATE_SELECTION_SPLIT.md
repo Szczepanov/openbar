@@ -55,7 +55,10 @@ lifter and one barn. They support debugging and baseline behaviour on easy foota
 
 ## Required rules
 
-- Split by recording session, not by clip. Clips from one session never cross roles.
+- Split by recording session, not by clip. Clips from one session never cross roles. This is checked by
+  `python validation/tools/manifest_roles.py --manifest validation/private/manifest.json` (session = `session-YYYYMMDD`
+  tag, else the `VID_YYYYMMDD_` file-name date; exit 1 on a breach). The 2026-10-02 session is a known breach
+  (development and reserved clips share that day); it can only be passed explicitly with `--accept session-20261002`.
 - A `split-exploration` clip may not become `split-frozen-eval`, and no role changes after
   the freeze record.
 - No candidate code, threshold or parameter is tuned on `split-frozen-eval` clips. A candidate

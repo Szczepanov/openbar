@@ -296,12 +296,27 @@ def probe(media: Path) -> dict[str, Any]:
     ).stdout)
 
 
+def select_expression(indices: list[int]) -> str:
+    """FFmpeg `select` expression that is true on exactly the given frame indices.
+
+    The terms are joined as a balanced tree, not a flat `a+b+c+...` chain: FFmpeg's expression parser
+    recurses once per chained term and fails to initialise the filter ("Cannot allocate memory") from about
+    110 terms, while the balanced form stays shallow up to MAX_FRAMES. Term order is preserved.
+    """
+    if not indices:
+        raise PackageError("no frame indices to select")
+    terms = [f"eq(n\\,{index})" for index in indices]
+    while len(terms) > 1:
+        terms = [f"({terms[i]}+{terms[i + 1]})" if i + 1 < len(terms) else terms[i] for i in range(0, len(terms), 2)]
+    return terms[0]
+
+
 def extract(media: Path, indices: list[int], expected_pts: list[int], frames_dir: Path, fixture: dict[str, Any]) -> list[Path]:
     frames_dir.mkdir(parents=True, exist_ok=True)
     require_safe_output(fixture, frames_dir)  # also catches a symlinked frames/ directory
     for stale in [*frames_dir.glob("frame_*.png"), *frames_dir.glob("tmp_*.png")]:
         stale.unlink()
-    select = "+".join(f"eq(n\\,{index})" for index in indices)
+    select = select_expression(indices)
     completed = run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "info", "-autorotate", "-i", str(media),
                      "-map", "0:v:0", "-vf", f"select='{select}',showinfo", "-fps_mode", "passthrough",
                      "-enc_time_base", "demux", str(frames_dir / "tmp_%06d.png")])
