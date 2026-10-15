@@ -78,16 +78,25 @@ struct Scenario {
 }
 
 pub fn run_cli() -> AnyResult<()> {
-    let args = env::args().skip(2).collect::<Vec<_>>();
+    run_cli_from_args(env::args().skip(2))
+}
+
+fn run_cli_from_args<I, S>(args: I) -> AnyResult<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args = args.into_iter().collect::<Vec<_>>();
     let mut output_path: Option<PathBuf> = None;
     let mut index = 0usize;
     while index < args.len() {
-        match args[index].as_str() {
+        match args[index].as_ref() {
             "--output" => {
                 index += 1;
                 output_path = Some(PathBuf::from(
                     args.get(index)
-                        .ok_or_else(|| data_error("--output requires a path"))?,
+                        .ok_or_else(|| data_error("--output requires a path"))?
+                        .as_ref(),
                 ));
             }
             "--help" | "-h" => {
@@ -485,4 +494,205 @@ fn render_summary(artifact: &ExperimentArtifact) -> String {
 
 fn data_error(message: impl Into<String>) -> Box<dyn Error> {
     Box::new(io::Error::new(io::ErrorKind::InvalidData, message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn run_experiment_produces_valid_artifact_and_scenarios() {
+        let artifact = run_experiment().expect("experiment should run without error");
+        assert_eq!(artifact.schema_version, 1);
+        assert_eq!(artifact.experiment_version, "m0-first-trackers-v1");
+        assert!(!artifact.results.is_empty());
+
+        // Every scenario is evaluated by both trackers, exactly once.
+        let actual: BTreeSet<(&str, &str)> = artifact
+            .results
+            .iter()
+            .map(|r| (r.scenario, r.tracker_id.as_str()))
+            .collect();
+        let expected: BTreeSet<(&str, &str)> = [
+            "stationary",
+            "slow-translation",
+            "fast-translation",
+            "full-occlusion-reentry",
+            "appearance-low-contrast",
+            "partial-occlusion",
+            "smaller-target",
+        ]
+        .into_iter()
+        .flat_map(|scenario| {
+            ["template-sad-v1", "local-contrast-centroid-v1"]
+                .into_iter()
+                .map(move |tracker| (scenario, tracker))
+        })
+        .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(artifact.results.len(), expected.len());
+
+        let summary = render_summary(&artifact);
+        assert!(summary.contains("OpenBar first tracker comparison"));
+        assert!(summary.contains("Recommendation:"));
+    }
+
+    #[test]
+    fn validate_scenario_detects_misaligned_inputs() {
+        let mut scenario = scenarios()[0].clone();
+        scenario.timestamps.pop(); // create misalignment
+        let err = validate_scenario(&scenario).unwrap_err();
+        assert!(err.to_string().contains("misaligned inputs"));
+    }
+
+    #[test]
+    fn validate_scenario_rejects_empty_inputs() {
+        let mut empty_scenario = scenarios()[0].clone();
+        empty_scenario.timestamps.clear();
+        empty_scenario.truth_centers.clear();
+        empty_scenario.rendered_centers.clear();
+        empty_scenario.target_intensities.clear();
+        empty_scenario.rendered_radii.clear();
+        empty_scenario.hide_right_half.clear();
+        let err_empty = validate_scenario(&empty_scenario).unwrap_err();
+        assert!(err_empty.to_string().contains("misaligned inputs"));
+    }
+
+    #[test]
+    fn run_cli_handles_help_and_errors() {
+        assert!(run_cli_from_args(["--help"]).is_ok());
+        assert!(run_cli_from_args(["-h"]).is_ok());
+
+        let err_missing = run_cli_from_args(["--output"]).unwrap_err();
+        assert!(err_missing.to_string().contains("--output requires a path"));
+
+        let err_unknown = run_cli_from_args(["--unknown-flag"]).unwrap_err();
+        assert!(err_unknown
+            .to_string()
+            .contains("unknown tracker-experiment argument"));
+    }
+
+    struct TempDir(PathBuf);
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn run_cli_writes_output_file() {
+        let temp_dir = TempDir(
+            std::env::temp_dir().join(format!("openbar-tracker-experiment-{}", std::process::id())),
+        );
+        let _ = fs::remove_dir_all(&temp_dir.0);
+        let output_file = temp_dir.0.join("subfolder").join("output.json");
+
+        run_cli_from_args(["--output", output_file.to_str().unwrap()]).expect("run should succeed");
+
+        let content = fs::read_to_string(&output_file).expect("output file written");
+        assert!(content.ends_with('\n'));
+        let value: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["experiment_version"], "m0-first-trackers-v1");
+        assert_eq!(value["results"].as_array().map(Vec::len), Some(14));
+    }
+
+    #[test]
+    fn loss_counts_low_confidence_and_mean_confidence_from_run() {
+        let dummy_diagnostics = openbar_tracking::TrackerDiagnostics {
+            quality_score: None,
+            displacement_px: None,
+            reacquired_after_loss: false,
+        };
+        let mut run = TrackerRun {
+            tracker: openbar_tracking::TrackerIdentity {
+                id: "test".into(),
+                implementation: "test".into(),
+                version: "1.0".into(),
+                config: BTreeMap::new(),
+                confidence_semantics: "unit".into(),
+            },
+            seed_timestamp_s: 0.0,
+            observations: vec![
+                openbar_tracking::TrackerObservation {
+                    timestamp_s: 0.0,
+                    frame_index: Some(0),
+                    target_bounds_px: None,
+                    visibility: openbar_tracking::TrackerVisibilityState::Unknown,
+                    diagnostics: dummy_diagnostics,
+                    state: TrackerObservationState::Tracked {
+                        center: PixelPoint::new(10.0, 10.0),
+                        confidence: 0.9,
+                    },
+                },
+                openbar_tracking::TrackerObservation {
+                    timestamp_s: 0.1,
+                    frame_index: Some(1),
+                    target_bounds_px: None,
+                    visibility: openbar_tracking::TrackerVisibilityState::Unknown,
+                    diagnostics: dummy_diagnostics,
+                    state: TrackerObservationState::LowConfidence {
+                        center: PixelPoint::new(10.0, 10.0),
+                        confidence: 0.5,
+                    },
+                },
+                openbar_tracking::TrackerObservation {
+                    timestamp_s: 0.2,
+                    frame_index: Some(2),
+                    target_bounds_px: None,
+                    visibility: openbar_tracking::TrackerVisibilityState::Unknown,
+                    diagnostics: dummy_diagnostics,
+                    state: TrackerObservationState::Lost {
+                        reason: TrackerLossReason::PoorMatch,
+                    },
+                },
+                openbar_tracking::TrackerObservation {
+                    timestamp_s: 0.3,
+                    frame_index: Some(3),
+                    target_bounds_px: None,
+                    visibility: openbar_tracking::TrackerVisibilityState::Unknown,
+                    diagnostics: dummy_diagnostics,
+                    state: TrackerObservationState::Lost {
+                        reason: TrackerLossReason::InsufficientContrast,
+                    },
+                },
+                openbar_tracking::TrackerObservation {
+                    timestamp_s: 0.4,
+                    frame_index: Some(4),
+                    target_bounds_px: None,
+                    visibility: openbar_tracking::TrackerVisibilityState::Unknown,
+                    diagnostics: dummy_diagnostics,
+                    state: TrackerObservationState::Lost {
+                        reason: TrackerLossReason::TargetOutsideFrame,
+                    },
+                },
+                openbar_tracking::TrackerObservation {
+                    timestamp_s: 0.5,
+                    frame_index: Some(5),
+                    target_bounds_px: None,
+                    visibility: openbar_tracking::TrackerVisibilityState::Unknown,
+                    diagnostics: dummy_diagnostics,
+                    state: TrackerObservationState::Lost {
+                        reason: TrackerLossReason::NoCandidate,
+                    },
+                },
+            ],
+        };
+
+        let loss_counts = loss_reason_counts(&run);
+        assert_eq!(loss_counts.get("poor_match"), Some(&1));
+        assert_eq!(loss_counts.get("insufficient_contrast"), Some(&1));
+        assert_eq!(loss_counts.get("target_outside_frame"), Some(&1));
+        assert_eq!(loss_counts.get("no_candidate"), Some(&1));
+
+        assert_eq!(low_confidence_count(&run), 1);
+
+        let mean_conf = mean_confidence(&run).unwrap();
+        assert!((mean_conf - 0.7).abs() < 1e-6);
+
+        run.observations.clear();
+        assert!(mean_confidence(&run).is_none());
+    }
 }
