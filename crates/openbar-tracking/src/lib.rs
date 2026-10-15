@@ -495,3 +495,85 @@ pub(crate) fn distance(left: PixelPoint, right: PixelPoint) -> f64 {
     let dy = left.y_px() - right.y_px();
     dx.hypot(dy)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_new_valid_frame() {
+        assert_eq!(
+            GrayFrame::try_new(2, 3, vec![1, 2, 3, 4, 5, 6]),
+            Ok(GrayFrame {
+                width_px: 2,
+                height_px: 3,
+                pixels: vec![1, 2, 3, 4, 5, 6],
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_dimensions() {
+        assert_eq!(
+            GrayFrame::try_new(0, 10, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 0,
+                height_px: 10
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(10, 0, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 10,
+                height_px: 0
+            })
+        );
+        let too_large = i32::MAX as u32 + 1;
+        assert_eq!(
+            GrayFrame::try_new(too_large, 10, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: too_large,
+                height_px: 10
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(10, too_large, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 10,
+                height_px: too_large
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_accepts_max_dimension_before_buffer_check() {
+        // The largest accepted dimension passes the dimension check and fails on
+        // buffer length. FrameBufferSizeOverflow is unreachable on 64-bit targets
+        // because i32::MAX * i32::MAX fits in usize, so it is not tested here.
+        assert_eq!(
+            GrayFrame::try_new(i32::MAX as u32, 1, vec![]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: i32::MAX as usize,
+                actual: 0
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_buffer_length() {
+        assert_eq!(
+            GrayFrame::try_new(2, 2, vec![1, 2, 3]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: 4,
+                actual: 3
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(2, 2, vec![1, 2, 3, 4, 5]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: 4,
+                actual: 5
+            })
+        );
+    }
+}
