@@ -959,16 +959,13 @@ mod tests {
     }
 
     #[test]
-    fn training_rejects_invalid_inputs() {
-        let (width, height) = (8, 8);
-        let fft = Fft2d::try_new(width, height).expect("valid fft");
-
+    fn training_rejects_mismatched_buffer_lengths() {
+        let fft = Fft2d::try_new(8, 8).expect("valid fft");
         let valid_spatial: Vec<Complex> = (0..64).map(|i| Complex::new(i as f64, 0.0)).collect();
         let valid_fft = fft.forward(&valid_spatial).expect("forward");
         let valid_mask = vec![1.0; 64];
         let valid_cfg = FilterTrainingParams::default();
 
-        // Buffer length mismatches
         assert_eq!(
             train_filter(&fft, &valid_fft[..63], &valid_fft, &valid_mask, &valid_cfg),
             Err(NumericError::BufferLengthMismatch {
@@ -990,6 +987,15 @@ mod tests {
                 actual: 63
             })
         );
+    }
+
+    #[test]
+    fn training_rejects_non_finite_and_non_hermitian_spectra() {
+        let fft = Fft2d::try_new(8, 8).expect("valid fft");
+        let valid_spatial: Vec<Complex> = (0..64).map(|i| Complex::new(i as f64, 0.0)).collect();
+        let valid_fft = fft.forward(&valid_spatial).expect("forward");
+        let valid_mask = vec![1.0; 64];
+        let valid_cfg = FilterTrainingParams::default();
 
         // Nonfinite spectra
         let mut nan_features = valid_fft.clone();
@@ -1019,6 +1025,15 @@ mod tests {
             ),
             Err(NumericError::NonRealSpectrum { index: 2 })
         );
+    }
+
+    #[test]
+    fn training_rejects_invalid_and_empty_masks() {
+        let fft = Fft2d::try_new(8, 8).expect("valid fft");
+        let valid_spatial: Vec<Complex> = (0..64).map(|i| Complex::new(i as f64, 0.0)).collect();
+        let valid_fft = fft.forward(&valid_spatial).expect("forward");
+        let valid_mask = vec![1.0; 64];
+        let valid_cfg = FilterTrainingParams::default();
 
         // Mask invalid: fractional
         let mut frac_mask = valid_mask.clone();
@@ -1050,6 +1065,13 @@ mod tests {
             train_filter(&fft, &valid_fft, &valid_fft, &all_zero_mask, &valid_cfg),
             Err(NumericError::EmptySupport)
         );
+    }
+
+    #[test]
+    fn training_rejects_unsupported_filter_size_and_overflow() {
+        let fft = Fft2d::try_new(8, 8).expect("valid fft");
+        let valid_mask = vec![1.0; 64];
+        let valid_cfg = FilterTrainingParams::default();
 
         // Unsupported FFT size (> 512)
         let huge_fft = Fft2d::try_new(1024, 1024).expect("fft 1024");
