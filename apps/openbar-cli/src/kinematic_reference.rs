@@ -439,29 +439,33 @@ fn validate_study(study: &StudySpec) -> AnyResult<()> {
     }
     require_non_blank("study_id", &study.study_id)?;
     require_non_blank("purpose", &study.purpose)?;
-    require_non_blank("reference.system", &study.reference.system)?;
-    require_non_blank("reference.protocol", &study.reference.protocol)?;
-    require_non_blank(
-        "reference.synchronization",
-        &study.reference.synchronization,
-    )?;
+    validate_reference_provenance(&study.reference)?;
+    validate_construct_contract(&study.construct)?;
+    validate_study_cases(&study.cases)?;
+    validate_target_revisions(&study.target_revisions)?;
+    Ok(())
+}
+
+fn validate_reference_provenance(reference: &ReferenceProvenance) -> AnyResult<()> {
+    require_non_blank("reference.system", &reference.system)?;
+    require_non_blank("reference.protocol", &reference.protocol)?;
+    require_non_blank("reference.synchronization", &reference.synchronization)?;
     require_non_blank(
         "reference.coordinate_alignment",
-        &study.reference.coordinate_alignment,
+        &reference.coordinate_alignment,
     )?;
-    require_non_blank(
-        "reference.rights_or_access",
-        &study.reference.rights_or_access,
-    )?;
+    require_non_blank("reference.rights_or_access", &reference.rights_or_access)?;
+    Ok(())
+}
 
-    if study.construct.coordinate_convention != MetricCoordinateConvention::ReferenceCentreXRightYUp
-    {
+fn validate_construct_contract(construct: &ConstructContract) -> AnyResult<()> {
+    if construct.coordinate_convention != MetricCoordinateConvention::ReferenceCentreXRightYUp {
         return Err(data_error(
             "study coordinate convention must be reference_centre_x_right_y_up",
         ));
     }
-    if study.construct.calibration_method != CalibrationMethod::PlateDiameter
-        || study.construct.calibration_method_version != PLATE_DIAMETER_CALIBRATION_METHOD_VERSION
+    if construct.calibration_method != CalibrationMethod::PlateDiameter
+        || construct.calibration_method_version != PLATE_DIAMETER_CALIBRATION_METHOD_VERSION
     {
         return Err(data_error(format!(
             "study calibration must be plate_diameter@{}",
@@ -470,117 +474,128 @@ fn validate_study(study: &StudySpec) -> AnyResult<()> {
     }
     require_exact(
         "construct.interval_semantics",
-        &study.construct.interval_semantics,
+        &construct.interval_semantics,
         "closed_exact_sample_boundaries",
     )?;
     require_exact(
         "construct.mean_velocity_definition",
-        &study.construct.mean_velocity_definition,
+        &construct.mean_velocity_definition,
         "axis_displacement_over_interval_duration",
     )?;
     require_exact(
         "construct.peak_velocity_definition",
-        &study.construct.peak_velocity_definition,
+        &construct.peak_velocity_definition,
         "maximum_signed_axis_velocity",
     )?;
     require_exact(
         "construct.timestamp_alignment",
-        &study.construct.timestamp_alignment,
+        &construct.timestamp_alignment,
         "exact_sample_timestamp",
     )?;
     require_exact(
         "construct.kinematics.implementation",
-        &study.construct.kinematics.implementation,
+        &construct.kinematics.implementation,
         VELOCITY_METHOD_IMPLEMENTATION,
     )?;
     require_exact(
         "construct.kinematics.version",
-        &study.construct.kinematics.version,
+        &construct.kinematics.version,
         VELOCITY_METHOD_VERSION,
     )?;
     KinematicsConfig::try_new(
-        study.construct.kinematics.max_gap_s,
-        study.construct.kinematics.min_confidence,
+        construct.kinematics.max_gap_s,
+        construct.kinematics.min_confidence,
     )?;
+    Ok(())
+}
 
-    if study.cases.is_empty() {
+fn validate_study_cases(cases: &[StudyCase]) -> AnyResult<()> {
+    if cases.is_empty() {
         return Err(data_error("study must contain at least one case"));
     }
 
-    for (index, case) in study.cases.iter().enumerate() {
-        require_non_blank(&format!("cases[{index}].id"), &case.id)?;
-        require_non_blank(&format!("cases[{index}].condition"), &case.condition)?;
-        match case.status {
-            StudyCaseStatus::Unsupported => {
-                let reason = case.unsupported_reason.as_deref().ok_or_else(|| {
-                    data_error(format!(
-                        "cases[{index}] unsupported case requires unsupported_reason"
-                    ))
-                })?;
-                require_non_blank(&format!("cases[{index}].unsupported_reason"), reason)?;
+    for (index, case) in cases.iter().enumerate() {
+        validate_study_case(index, case)?;
+    }
+    Ok(())
+}
+
+fn validate_study_case(index: usize, case: &StudyCase) -> AnyResult<()> {
+    require_non_blank(&format!("cases[{index}].id"), &case.id)?;
+    require_non_blank(&format!("cases[{index}].condition"), &case.condition)?;
+    match case.status {
+        StudyCaseStatus::Unsupported => {
+            let reason = case.unsupported_reason.as_deref().ok_or_else(|| {
+                data_error(format!(
+                    "cases[{index}] unsupported case requires unsupported_reason"
+                ))
+            })?;
+            require_non_blank(&format!("cases[{index}].unsupported_reason"), reason)?;
+        }
+        StudyCaseStatus::Supported => {
+            if case.unsupported_reason.is_some() {
+                return Err(data_error(format!(
+                    "cases[{index}] supported case must not set unsupported_reason"
+                )));
             }
-            StudyCaseStatus::Supported => {
-                if case.unsupported_reason.is_some() {
-                    return Err(data_error(format!(
-                        "cases[{index}] supported case must not set unsupported_reason"
-                    )));
-                }
-                if case
-                    .analysis_path
-                    .as_deref()
-                    .is_none_or(|value| value.trim().is_empty())
-                {
-                    return Err(data_error(format!(
-                        "cases[{index}] supported case requires analysis_path"
-                    )));
-                }
-                let layer = case.velocity_layer.ok_or_else(|| {
-                    data_error(format!(
-                        "cases[{index}] supported case requires velocity_layer"
-                    ))
-                })?;
-                if case.expected_tracker.is_none() {
-                    return Err(data_error(format!(
-                        "cases[{index}] supported case requires expected_tracker"
-                    )));
-                }
-                match (layer, case.expected_filter.as_ref()) {
-                    (VelocityLayer::Calibrated, Some(_)) => {
-                        return Err(data_error(format!(
-                            "cases[{index}] calibrated velocity layer must not set expected_filter"
-                        )))
-                    }
-                    (VelocityLayer::Filtered, None) => {
-                        return Err(data_error(format!(
-                            "cases[{index}] filtered velocity layer requires expected_filter"
-                        )))
-                    }
-                    _ => {}
-                }
-                let interval = case.interval.as_ref().ok_or_else(|| {
-                    data_error(format!("cases[{index}] supported case requires interval"))
-                })?;
-                MetricInterval::try_new(interval.start_s, interval.end_s)?;
-                let uncertainty = case.reference_uncertainty.as_ref().ok_or_else(|| {
-                    data_error(format!(
-                        "cases[{index}] supported case requires reference_uncertainty"
-                    ))
-                })?;
-                validate_uncertainty(index, uncertainty)?;
-                validate_reference_samples(index, interval, &case.reference_samples)?;
+            if case
+                .analysis_path
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(data_error(format!(
+                    "cases[{index}] supported case requires analysis_path"
+                )));
             }
+            let layer = case.velocity_layer.ok_or_else(|| {
+                data_error(format!(
+                    "cases[{index}] supported case requires velocity_layer"
+                ))
+            })?;
+            if case.expected_tracker.is_none() {
+                return Err(data_error(format!(
+                    "cases[{index}] supported case requires expected_tracker"
+                )));
+            }
+            match (layer, case.expected_filter.as_ref()) {
+                (VelocityLayer::Calibrated, Some(_)) => {
+                    return Err(data_error(format!(
+                        "cases[{index}] calibrated velocity layer must not set expected_filter"
+                    )))
+                }
+                (VelocityLayer::Filtered, None) => {
+                    return Err(data_error(format!(
+                        "cases[{index}] filtered velocity layer requires expected_filter"
+                    )))
+                }
+                _ => {}
+            }
+            let interval = case.interval.as_ref().ok_or_else(|| {
+                data_error(format!("cases[{index}] supported case requires interval"))
+            })?;
+            MetricInterval::try_new(interval.start_s, interval.end_s)?;
+            let uncertainty = case.reference_uncertainty.as_ref().ok_or_else(|| {
+                data_error(format!(
+                    "cases[{index}] supported case requires reference_uncertainty"
+                ))
+            })?;
+            validate_uncertainty(index, uncertainty)?;
+            validate_reference_samples(index, interval, &case.reference_samples)?;
         }
     }
+    Ok(())
+}
 
-    validate_revision("rom", study.target_revisions.rom.as_ref(), ROM_TARGET_M)?;
+fn validate_target_revisions(revisions: &GateRevisions) -> AnyResult<()> {
+    validate_revision("rom", revisions.rom.as_ref(), ROM_TARGET_M)?;
     validate_revision(
         "mean_velocity",
-        study.target_revisions.mean_velocity.as_ref(),
+        revisions.mean_velocity.as_ref(),
         MEAN_VELOCITY_TARGET_MPS,
     )?;
     validate_revision(
         "peak_velocity",
-        study.target_revisions.peak_velocity.as_ref(),
+        revisions.peak_velocity.as_ref(),
         PEAK_VELOCITY_TARGET_MPS,
     )?;
     Ok(())
@@ -1543,5 +1558,100 @@ mod tests {
         assert!((openbar_mean.value - 0.95).abs() < 1.0e-12);
         assert!((reference_peak.value - 1.2).abs() < 1.0e-12);
         assert!((openbar_peak.value - 1.1).abs() < 1.0e-12);
+    }
+
+    fn valid_study_spec() -> StudySpec {
+        StudySpec {
+            schema_version: STUDY_SCHEMA_VERSION,
+            study_id: "test-study".to_string(),
+            evidence_class: EvidenceClass::IndependentPhysicalReference,
+            purpose: "Validation unit tests".to_string(),
+            reference: ReferenceProvenance {
+                source_type: ReferenceSourceType::ControlledGeometricRig,
+                system: "System A".to_string(),
+                protocol: "Protocol A".to_string(),
+                synchronization: "Sync A".to_string(),
+                coordinate_alignment: "Align A".to_string(),
+                rights_or_access: "Rights A".to_string(),
+                notes: None,
+            },
+            construct: ConstructContract {
+                coordinate_convention: MetricCoordinateConvention::ReferenceCentreXRightYUp,
+                axis: StudyAxis::VerticalY,
+                interval_semantics: "closed_exact_sample_boundaries".to_string(),
+                mean_velocity_definition: "axis_displacement_over_interval_duration".to_string(),
+                peak_velocity_definition: "maximum_signed_axis_velocity".to_string(),
+                timestamp_alignment: "exact_sample_timestamp".to_string(),
+                calibration_method: CalibrationMethod::PlateDiameter,
+                calibration_method_version: PLATE_DIAMETER_CALIBRATION_METHOD_VERSION,
+                kinematics: ExpectedKinematics {
+                    implementation: VELOCITY_METHOD_IMPLEMENTATION.to_string(),
+                    version: VELOCITY_METHOD_VERSION.to_string(),
+                    max_gap_s: 0.2,
+                    min_confidence: 0.5,
+                },
+            },
+            target_revisions: GateRevisions::default(),
+            cases: vec![StudyCase {
+                id: "case-01".to_string(),
+                condition: "Normal condition".to_string(),
+                status: StudyCaseStatus::Supported,
+                unsupported_reason: None,
+                analysis_path: Some("analysis.json".to_string()),
+                velocity_layer: Some(VelocityLayer::Calibrated),
+                expected_tracker: Some(ImplementationProvenance {
+                    implementation: "tracker-a".to_string(),
+                    version: "1.0.0".to_string(),
+                    parameters: Default::default(),
+                }),
+                expected_filter: None,
+                interval: Some(StudyInterval {
+                    start_s: 0.0,
+                    end_s: 0.2,
+                }),
+                reference_uncertainty: Some(ReferenceUncertainty {
+                    position_m: 0.001,
+                    velocity_mps: 0.005,
+                    method: "Rig error".to_string(),
+                }),
+                reference_samples: vec![sample(0.0, 0.0), sample(0.2, 0.1)],
+            }],
+        }
+    }
+
+    #[test]
+    fn validate_study_accepts_valid_spec() {
+        let study = valid_study_spec();
+        assert!(validate_study(&study).is_ok());
+    }
+
+    #[test]
+    fn validate_study_rejects_unsupported_schema_version() {
+        let mut study = valid_study_spec();
+        study.schema_version = 999;
+        let err = validate_study(&study).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("unsupported study schema_version 999"));
+    }
+
+    #[test]
+    fn validate_study_rejects_blank_reference_fields() {
+        let mut study = valid_study_spec();
+        study.reference.system = "   ".to_string();
+        let err = validate_study(&study).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("reference.system must not be blank"));
+    }
+
+    #[test]
+    fn validate_study_rejects_invalid_supported_case() {
+        let mut study = valid_study_spec();
+        study.cases[0].analysis_path = None;
+        let err = validate_study(&study).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("cases[0] supported case requires analysis_path"));
     }
 }
