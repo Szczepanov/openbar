@@ -9,7 +9,9 @@ This is a template and a rule set, not a schema or an actual completed freeze. T
 asserted. The [Prompt 1 preparation protocol](../plans/HOUGH_TOP_K_PREPARATION.md) supplements
 this private format with candidate-stage metrics, independent annotation/repeatability and
 readiness gates. A freeze must be complete **before the first scored run**. Current stage is
-**READY-BUT-NOT-SCORED** tooling/protocol; formal inputs and executor remain unavailable.
+**READY-BUT-NOT-SCORED** tooling/protocol. Recordings and annotation artifacts exist in the primary
+checkout; formal input eligibility/independence remain unverified, and the freeze/executor gates
+remain incomplete. Audit existing inputs before requesting more footage.
 
 ## Why it exists
 

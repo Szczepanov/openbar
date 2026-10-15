@@ -15,7 +15,33 @@ The retained evidence audit is `docs/analysis/HOUGH_TOP_K_EVIDENCE_AUDIT.md` in 
 commit `4b7dd0621473b8d995e8b03065caaeaa3f87a067`; its audited base was
 `c64011636e9312e01f810b243b84fedc99cc4a3d`. The preparation started from that unchanged
 main base. The audit is a historical insufficient-evidence finding, not a new accuracy result.
-Its missing authorization is now supplied; its missing independent references remain missing.
+Its missing authorization is now supplied. Its file-availability observation was limited to
+the isolated worktree; the primary checkout has recordings and annotation artifacts, as below.
+
+### Primary-checkout inventory correction (2026-10-15)
+
+A metadata-only check of the primary checkout found 54 entries in
+`validation/private/manifest.json`: six exploration, six reserved-57 and 42 frozen-evaluation
+candidates. The separate VBT manifest adds eight exploration clips, for 14 exploration entries
+across the two manifests. These are manifest counts, not verified unique/independent recordings
+or scored cases. The manifest SHA-256 values at inspection were respectively
+`b3fb03cd8600497e5da59bbb579c375c3c8774130d98bc893fc19390ca59f0ef` and
+`1ff1e62554f31e760104415877474423be7bfafd3a9fe51c43097b8ca277a315`.
+
+Of the 42 frozen candidates, 13 have `purpose: validation` and remain excluded by the existing
+guard, despite their split tag. The other 29 (17 ood, 12 boundary) are only potentially eligible:
+rights, source/session independence, #79 exclusions, prior exposure and label provenance still
+need checking. No roles were changed. Private frozen-evaluation annotation, label and seed
+directories exist; their contents were not inspected. No completed freeze directory was found.
+
+The private `AGENT_PREVIEW_DISCLOSURES.md` records prior owner-authorized scene-classification
+previews, and `REPORT_LIMITATIONS.md` records shared-session, assumed-diameter and unverified
+metadata limits. These disclosures must enter any eventual freeze; a split tag alone does not
+establish unseen evidence. This check read manifests, directory inventories and those disclosure
+notes only: no footage, target coordinates, candidate outputs or evaluation-label contents.
+
+Audit existing recordings and label provenance before requesting more footage. Collect additional
+inputs only to fill demonstrated eligibility, independence, annotation or challenge-coverage gaps.
 
 The [retained eight-clip evaluation](../analysis/VBT_SUGGESTION_EVALUATION_RESULTS.md) used
 proposal-exposed edits from one session. Its 2.02 px mean centre discrepancy and radius edits
@@ -31,8 +57,9 @@ No historical SAM, tracker, confidence, accepted suggestion or adjustment become
 
 Preserve [split roles](../validation/PLATE_SELECTION_SPLIT.md), #57/#79 freezes and ADR-0008.
 Synthetic correctness is separate from real evidence. Authorized exploration remains exposed;
-never relabel it unseen. New frozen evaluation requires new source/session-separated recordings,
-rights, immutable hashes and novelty checks including derived crops. No reserved-57 or
+never relabel it unseen. Frozen evaluation requires source/session-separated recordings with
+verified provenance, rights, immutable hashes and novelty checks including derived crops; existing
+eligible recordings may satisfy this without new capture. No reserved-57 or
 validation-purpose clip may be opened, decoded, annotated or scored by this work. No Prompt 2,
 reranker, detector, model/training/acquisition, dependency, production integration/default change,
 canonical output or M0/M1 promotion is authorized.
@@ -266,7 +293,8 @@ membership decisions and all errors privately with the freeze hash. Hash code/co
 before and after. No tuning after scoring; revisions burn unseen status under the existing rules.
 
 - [ ] Owner decision and unchanged main baseline bound; no later-prompt authorization inferred.
-- [ ] New independent sources, rights, novelty, roles, source/frame hashes and session grouping supplied.
+- [ ] Existing source inventory audited; eligible independent sources, rights, novelty, roles,
+      source/frame hashes and session grouping verified, with additional capture only for gaps.
 - [ ] Frame rule/PTS schedule and usable timing context fixed without candidate or onset leakage.
 - [ ] Two independent blind passes per case plus blind reconciliation retained and hashed.
 - [ ] Independent centre AND outer-radius/rim repeatability pilot complete; Tc/Tr numeric,
@@ -281,12 +309,14 @@ before and after. No tuning after scoring; revisions burn unseen status under th
 - [ ] Independent code/research-method review completed and findings addressed; targeted
       verification evidence retained. Tool/protocol verification is separate from data readiness.
 
-Missing inputs at preparation: new source/session-separated authorized media and rights/manifest;
-exact acquisition frame/PTS rule; two independent blind identity/policy/geometry/onset labels and
-adjudication; independent centre/radius repeatability and numeric justified matching tolerances;
+Remaining readiness gaps: verify existing media/rights/manifests and source/session eligibility;
+fix the exact acquisition frame/PTS rule; verify or complete two independent blind
+identity/policy/geometry/onset label passes and adjudication; establish independent centre/radius
+repeatability and numeric justified matching tolerances;
 sample precision/coverage and actual collection/run budget; complete hashed private freeze;
-and a reviewed fail-closed frozen-data executor. Their absence prevents a formal scored run.
-This preparation does not manufacture any of them, derive them from historical edits, or create
+and a reviewed fail-closed frozen-data executor. Unverified prerequisites prevent a formal scored
+run; they do not establish that the recordings or labels are absent from the primary checkout.
+This preparation does not manufacture evidence, derive it from historical edits, or create
 an empty record that appears complete. Stop at **READY-BUT-NOT-SCORED** and report these gaps.
 
 ## Preparation verification (2026-10-15)

@@ -35,7 +35,7 @@ environment. Actual collection size, executor limits and scoring budget must be 
 the private freeze before any real-data run; this decision supplies no numeric scoring budget.
 
 Allowed roles are synthetic correctness, authorized exploration (never unseen evidence), and
-new source/session-separated `split-frozen-eval` only after blind labels, repeatability and a
+eligible source/session-separated `split-frozen-eval` only after blind labels, repeatability and a
 complete freeze permit access. Forbidden are `split-reserved-57`, validation-purpose clips,
 formal #79 inputs and promotion of proposal-exposed exploration into unseen evidence. Stop on
 role/hash mismatch, candidate exposure before independent labels, incomplete freeze or
@@ -44,7 +44,9 @@ repeatability, any parameter change, or attempted expansion beyond Prompt 1.
 The [Prompt 1 preparation protocol](HOUGH_TOP_K_PREPARATION.md) defines the annotation record,
 matching prerequisites, metrics, budget, precision analysis and readiness gates. The stage is
 **READY-BUT-NOT-SCORED** tooling/protocol preparation; a complete data freeze and formal
-scoring remain blocked by missing inputs. Prompt 2, learned rerankers, detectors, model
+scoring remain blocked by incomplete readiness verification and freeze/executor gates. The primary
+checkout has recordings and annotation artifacts; the protocol's metadata inventory correction
+requires auditing those before requesting additional capture. Prompt 2, learned rerankers, detectors, model
 acquisition/training, production integration/default changes and M0/M1 architecture changes
 remain unauthorized. This is no selection-accuracy or promotion decision.
 
@@ -255,7 +257,8 @@ Reopen the relevant scope/contract decision instead of silently widening this pl
 
 This document supplies the #95/#113 audit, future UX/failure spec, development test roles,
 independent-truth protocol, scoring/uncertainty definitions and bounded **Prompt 1 PROCEED**.
-Challenge collection, a complete frozen run record, measured quality/latency and wider prototype
-authorization remain pending; no accuracy or M1 claim follows
-from a docs PR. No proprietary implementation/assets/models are used; owner-observed product
+Verification of existing input eligibility, independence and challenge coverage remains pending;
+additional collection is needed only for demonstrated gaps. A complete frozen run record,
+measured quality/latency and wider prototype authorization also remain pending; no accuracy or
+M1 claim follows from a docs PR. No proprietary implementation/assets/models are used; owner-observed product
 behavior informs requirements only.
