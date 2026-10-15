@@ -406,6 +406,69 @@ class PackageBuildTests(unittest.TestCase):
                              json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]["media"]["sha256"])
 
 
+class SelectExpressionTests(unittest.TestCase):
+    @staticmethod
+    def depth(expression: str) -> int:
+        deepest = level = 0
+        for character in expression:
+            level += character == "("
+            level -= character == ")"
+            deepest = max(deepest, level)
+        return deepest
+
+    def test_single_index_is_one_term(self):
+        self.assertEqual(label_package.select_expression([5]), "eq(n\\,5)")
+
+    def test_terms_keep_their_order_and_pair_up(self):
+        self.assertEqual(label_package.select_expression([0, 3, 5, 6]),
+                         "((eq(n\\,0)+eq(n\\,3))+(eq(n\\,5)+eq(n\\,6)))")
+        self.assertEqual(label_package.select_expression([1, 2, 3]), "((eq(n\\,1)+eq(n\\,2))+eq(n\\,3))")
+
+    def test_every_index_appears_exactly_once_and_parentheses_balance(self):
+        for count in (1, 2, 3, 7, 100, 111, label_package.MAX_FRAMES):
+            with self.subTest(count=count):
+                indices = [i * 15 for i in range(count)]
+                expression = label_package.select_expression(indices)
+                self.assertEqual(re.findall(r"eq\(n\\,(\d+)\)", expression), [str(i) for i in indices])
+                self.assertEqual(expression.count("("), expression.count(")"))
+
+    def test_nesting_stays_logarithmic_so_ffmpeg_can_parse_it(self):
+        for count in (2, 16, 111, label_package.MAX_FRAMES):
+            with self.subTest(count=count):
+                expression = label_package.select_expression(list(range(count)))
+                # one level per pairing round (ceil(log2 count)) plus the eq( call itself
+                self.assertLessEqual(self.depth(expression), (count - 1).bit_length() + 1)
+
+    def test_empty_selection_is_rejected(self):
+        with self.assertRaises(label_package.PackageError):
+            label_package.select_expression([])
+
+
+@unittest.skipUnless(
+    shutil.which("ffmpeg") and shutil.which("ffprobe") or os.environ.get("OPENBAR_REQUIRE_FFMPEG") == "1",
+    "SKIPPED: ffmpeg/ffprobe not on PATH",
+)
+class SelectExpressionFfmpegTests(unittest.TestCase):
+    def accepts(self, expression: str) -> None:
+        media = ROOT / "validation" / "fixtures" / "public" / "synthetic-clean-side-12.mp4"
+        label_package.run(["ffmpeg", "-nostdin", "-hide_banner", "-v", "error", "-i", str(media),
+                           "-vf", f"select='{expression}'", "-f", "null", "-"])
+
+    def test_ffmpeg_accepts_the_largest_allowed_selection(self):
+        for count in (50, 111, 500, label_package.MAX_FRAMES):
+            with self.subTest(count=count):
+                self.accepts(label_package.select_expression([i * 15 for i in range(count)]))
+
+    def test_selected_frames_are_the_requested_ones(self):
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["fixtures"][0]
+            media = ROOT / "validation" / "fixtures" / "public" / "synthetic-clean-side-12.mp4"
+            probed = label_package.probe(media)
+            indices = [0, 3, 6, 11]
+            names = label_package.extract(media, indices, [probed["pts"][i] for i in indices], Path(temp), fixture)
+            self.assertEqual([p.name for p in names], [f"frame_{i:06d}.png" for i in indices])
+
+
 class SingleFrameSelectionTests(unittest.TestCase):
     COMMON = ["--manifest", str(MANIFEST_PATH), "--fixture", FIXTURE_ID]
 
