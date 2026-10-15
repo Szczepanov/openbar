@@ -958,17 +958,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn training_rejects_invalid_inputs() {
-        let (width, height) = (8, 8);
-        let fft = Fft2d::try_new(width, height).expect("valid fft");
-
+    fn setup_valid_training_inputs() -> (Fft2d, Vec<Complex>, Vec<f64>, FilterTrainingParams) {
+        let fft = Fft2d::try_new(8, 8).expect("valid fft");
         let valid_spatial: Vec<Complex> = (0..64).map(|i| Complex::new(i as f64, 0.0)).collect();
         let valid_fft = fft.forward(&valid_spatial).expect("forward");
         let valid_mask = vec![1.0; 64];
         let valid_cfg = FilterTrainingParams::default();
+        (fft, valid_fft, valid_mask, valid_cfg)
+    }
 
-        // Buffer length mismatches
+    #[test]
+    fn training_rejects_buffer_length_mismatches() {
+        let (fft, valid_fft, valid_mask, valid_cfg) = setup_valid_training_inputs();
+
         assert_eq!(
             train_filter(&fft, &valid_fft[..63], &valid_fft, &valid_mask, &valid_cfg),
             Err(NumericError::BufferLengthMismatch {
@@ -990,8 +992,12 @@ mod tests {
                 actual: 63
             })
         );
+    }
 
-        // Nonfinite spectra
+    #[test]
+    fn training_rejects_non_finite_inputs() {
+        let (fft, valid_fft, valid_mask, valid_cfg) = setup_valid_training_inputs();
+
         let mut nan_features = valid_fft.clone();
         nan_features[7] = Complex::new(f64::NAN, 0.0);
         assert_eq!(
@@ -1005,8 +1011,12 @@ mod tests {
             train_filter(&fft, &valid_fft, &inf_label, &valid_mask, &valid_cfg),
             Err(NumericError::NonFiniteInput { index: 11 })
         );
+    }
 
-        // Non-Hermitian spectra
+    #[test]
+    fn training_rejects_non_hermitian_inputs() {
+        let (fft, valid_fft, valid_mask, valid_cfg) = setup_valid_training_inputs();
+
         let mut non_herm_features = valid_fft.clone();
         non_herm_features[2] = Complex::new(non_herm_features[2].re, non_herm_features[2].im + 1.0);
         assert_eq!(
@@ -1019,6 +1029,11 @@ mod tests {
             ),
             Err(NumericError::NonRealSpectrum { index: 2 })
         );
+    }
+
+    #[test]
+    fn training_rejects_invalid_masks() {
+        let (fft, valid_fft, valid_mask, valid_cfg) = setup_valid_training_inputs();
 
         // Mask invalid: fractional
         let mut frac_mask = valid_mask.clone();
@@ -1037,7 +1052,7 @@ mod tests {
         );
 
         // Mask invalid: NaN / Inf
-        let mut nan_mask = valid_mask.clone();
+        let mut nan_mask = valid_mask;
         nan_mask[3] = f64::NAN;
         assert_eq!(
             train_filter(&fft, &valid_fft, &valid_fft, &nan_mask, &valid_cfg),
@@ -1050,8 +1065,11 @@ mod tests {
             train_filter(&fft, &valid_fft, &valid_fft, &all_zero_mask, &valid_cfg),
             Err(NumericError::EmptySupport)
         );
+    }
 
-        // Unsupported FFT size (> 512)
+    #[test]
+    fn training_rejects_unsupported_fft_size() {
+        let valid_cfg = FilterTrainingParams::default();
         let huge_fft = Fft2d::try_new(1024, 1024).expect("fft 1024");
         let dummy = vec![Complex::ZERO; 1024 * 1024];
         let dummy_mask = vec![1.0; 1024 * 1024];
@@ -1062,8 +1080,12 @@ mod tests {
                 height: 1024
             })
         );
+    }
 
-        // Overflowing intermediate: huge features whose norm_sqr overflows
+    #[test]
+    fn training_rejects_overflowing_intermediates() {
+        let (fft, _valid_fft, valid_mask, valid_cfg) = setup_valid_training_inputs();
+
         let mut huge_features = vec![Complex::ZERO; 64];
         huge_features[0] = Complex::new(1e200, 0.0);
         let mut huge_label = vec![Complex::ZERO; 64];
