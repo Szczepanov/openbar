@@ -10,6 +10,8 @@ override flag. The decode path reuses research/bar-path-measurement/experiment.p
   grant-go-ahead   owner only: record the go-ahead for exactly this plan hash
   fit-colour       write the colour model of one development clip's seed frame (for the control arm)
   run              produce a tracker-prediction-v1 stream per arm for one development clip
+  run --wiring-check   plumbing test only: accepts a SYNTHETIC fixture, needs no go-ahead, marks every
+                   output `smoke_test`, and refuses any non-synthetic clip. It is not the experiment.
 """
 from __future__ import annotations
 
@@ -64,6 +66,13 @@ def require_allowed_fixture(manifest: dict[str, Any], fixture_id: str) -> dict[s
     return item
 
 
+def require_synthetic(manifest: dict[str, Any], fixture_id: str) -> dict[str, Any]:
+    item = io.fixture(manifest, fixture_id)
+    if item.get("source", {}).get("kind") != "synthetic":
+        raise Refused(f"--wiring-check accepts only synthetic fixtures, not {fixture_id}")
+    return item
+
+
 def decoded_inputs(args: argparse.Namespace, item: dict[str, Any]):
     import track as decoder
     import label_package
@@ -110,9 +119,15 @@ def cmd_fit_colour(args: argparse.Namespace) -> None:
 
 
 def cmd_run(args: argparse.Namespace) -> None:
-    registration = require_go_ahead(args.registration)
     manifest = io.load(args.manifest)
-    item = require_allowed_fixture(manifest, args.fixture)
+    if args.wiring_check:
+        item = require_synthetic(manifest, args.fixture)
+        plan_sha256 = io.digest(PLAN)
+    else:
+        if args.registration is None:
+            raise Refused("--registration is required")
+        plan_sha256 = require_go_ahead(args.registration)["plan_sha256"]
+        item = require_allowed_fixture(manifest, args.fixture)
     io.private_output(item, args.output_dir)
     seed_doc = io.seed(args.seed, item)
     coarse = io.prediction(args.coarse, item)
@@ -127,7 +142,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     if set(coarse_by_time) - set(rounded):
         raise ValueError("coarse timestamps must exactly match decoded timestamps at six decimals")
     result = clip_core.process_clip(frames, rounded, coarse_by_time, seed_doc["seed"], control_colour=control)
-    provenance = {"plan_sha256": registration["plan_sha256"], **experiment.repository_state(),
+    provenance = {"plan_sha256": plan_sha256, "smoke_test": args.wiring_check, **experiment.repository_state(),
                   "manifest_sha256": io.digest(args.manifest), "seed_sha256": io.digest(args.seed),
                   "coarse_prediction_sha256": io.digest(args.coarse),
                   "source_sha256": {p.name: io.digest(p) for p in sorted(HERE.glob("*.py"))},
@@ -137,7 +152,7 @@ def cmd_run(args: argparse.Namespace) -> None:
               "source_video_sha256": item["media"]["sha256"]}
     for arm, samples in result["arms"].items():
         io.samples(samples, width, height)
-        document = {**common, "implementation": {"name": f"research-colour-hub-{ARM_NAMES[arm]}", "version": "1",
+        document = {**common, "implementation": {"name": f"research-colour-hub-{ARM_NAMES[arm]}" + ("-smoke" if args.wiring_check else ""), "version": "1",
                                                  "config": provenance}, "samples": samples}
         io.contract(document, "tracker-prediction-v1")
         io.write(args.output_dir / f"{ARM_NAMES[arm]}.prediction-v1.json", document)
@@ -153,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, handler in (("check", cmd_check), ("grant-go-ahead", cmd_grant),
                           ("fit-colour", cmd_fit_colour), ("run", cmd_run)):
         p = sub.add_parser(name)
-        p.add_argument("--registration", type=Path, required=True)
+        p.add_argument("--registration", type=Path, required=name != "run")
         p.set_defaults(handler=handler)
         if name == "grant-go-ahead":
             p.add_argument("--note", required=True)
@@ -168,6 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--coarse", type=Path, required=True, help="SAM 2.1 small-circle tracker-prediction-v1")
             p.add_argument("--output-dir", type=Path, required=True)
             p.add_argument("--control-colour", type=Path)
+            p.add_argument("--wiring-check", action="store_true",
+                           help="plumbing test on a synthetic fixture only; not the experiment")
     return parser
 
 

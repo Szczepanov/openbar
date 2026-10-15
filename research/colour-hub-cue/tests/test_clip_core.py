@@ -173,5 +173,38 @@ class RegistrationGuardTests(unittest.TestCase):
                 run_experiment.build_parser().parse_args([sub, "--allow-held-out"])
 
 
+class WiringCheckTests(unittest.TestCase):
+    """The plumbing-test mode is synthetic-only and can never touch a private or real clip."""
+
+    def record(self, kind):
+        return {"id": "some-clip", "purpose": "development", "source": {"kind": kind},
+                "conditions": {"challenge_tags": []}}
+
+    def test_only_synthetic_fixtures_are_accepted(self):
+        with mock.patch.object(run_experiment.io, "fixture", side_effect=lambda m, f, **k: m):
+            self.assertEqual(run_experiment.require_synthetic(self.record("synthetic"), "some-clip")["source"]["kind"],
+                             "synthetic")
+            for kind in ("self_recorded", "public_dataset", "third_party", "unknown"):
+                with self.assertRaises(run_experiment.Refused):
+                    run_experiment.require_synthetic(self.record(kind), "some-clip")
+
+    def run_main(self, out, *extra, kind="self_recorded"):
+        with mock.patch.object(run_experiment.io, "load", return_value=self.record(kind)),                 mock.patch.object(run_experiment.io, "fixture", side_effect=lambda m, f, **k: m):
+            return run_experiment.main(["run", "--manifest", "m.json", "--fixture", "some-clip", "--seed", "s.json",
+                                        "--coarse", "c.json", "--output-dir", str(out), *extra])
+
+    def test_wiring_check_on_a_real_clip_is_refused_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
+            out = Path(tmp) / "out"
+            self.assertEqual(self.run_main(out, "--wiring-check"), 1)
+            self.assertFalse(out.exists())
+
+    def test_a_normal_run_still_requires_a_registration_record(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
+            out = Path(tmp) / "out"
+            self.assertEqual(self.run_main(out), 1)
+            self.assertFalse(out.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
