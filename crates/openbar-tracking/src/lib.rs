@@ -502,12 +502,14 @@ mod tests {
 
     #[test]
     fn try_new_valid_frame() {
-        let frame = GrayFrame::try_new(2, 3, vec![1, 2, 3, 4, 5, 6]);
-        assert!(frame.is_ok());
-        let frame = frame.unwrap();
-        assert_eq!(frame.width_px, 2);
-        assert_eq!(frame.height_px, 3);
-        assert_eq!(frame.pixels, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            GrayFrame::try_new(2, 3, vec![1, 2, 3, 4, 5, 6]),
+            Ok(GrayFrame {
+                width_px: 2,
+                height_px: 3,
+                pixels: vec![1, 2, 3, 4, 5, 6],
+            })
+        );
     }
 
     #[test]
@@ -539,6 +541,20 @@ mod tests {
             Err(TrackerError::InvalidFrameDimensions {
                 width_px: 10,
                 height_px: too_large
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_accepts_max_dimension_before_buffer_check() {
+        // The largest accepted dimension passes the dimension check and fails on
+        // buffer length. FrameBufferSizeOverflow is unreachable on 64-bit targets
+        // because i32::MAX * i32::MAX fits in usize, so it is not tested here.
+        assert_eq!(
+            GrayFrame::try_new(i32::MAX as u32, 1, vec![]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: i32::MAX as usize,
+                actual: 0
             })
         );
     }
