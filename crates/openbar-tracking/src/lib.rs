@@ -495,3 +495,69 @@ pub(crate) fn distance(left: PixelPoint, right: PixelPoint) -> f64 {
     let dy = left.y_px() - right.y_px();
     dx.hypot(dy)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_new_valid_frame() {
+        let frame = GrayFrame::try_new(2, 3, vec![1, 2, 3, 4, 5, 6]);
+        assert!(frame.is_ok());
+        let frame = frame.unwrap();
+        assert_eq!(frame.width_px, 2);
+        assert_eq!(frame.height_px, 3);
+        assert_eq!(frame.pixels, vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn try_new_invalid_dimensions() {
+        assert_eq!(
+            GrayFrame::try_new(0, 10, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 0,
+                height_px: 10
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(10, 0, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 10,
+                height_px: 0
+            })
+        );
+        let too_large = i32::MAX as u32 + 1;
+        assert_eq!(
+            GrayFrame::try_new(too_large, 10, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: too_large,
+                height_px: 10
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(10, too_large, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 10,
+                height_px: too_large
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_buffer_length() {
+        assert_eq!(
+            GrayFrame::try_new(2, 2, vec![1, 2, 3]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: 4,
+                actual: 3
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(2, 2, vec![1, 2, 3, 4, 5]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: 4,
+                actual: 5
+            })
+        );
+    }
+}
