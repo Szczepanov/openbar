@@ -1,4 +1,7 @@
-//! `tracker-run`: decode a manifest fixture and run both M0 baseline trackers on it (#40).
+//! `tracker-run`: decode a manifest fixture and run the selected trackers on it (#40).
+//!
+//! By default both M0 baseline trackers run; `--trackers` selects any of `template`, `contrast` and
+//! the experimental grayscale `csrt-gray` tracker (#57).
 //!
 //! Output is one tracker-prediction-v1 document per tracker, ready for the benchmark harness.
 //! Decoder provenance travels inside `implementation.config.frame_source`.
@@ -6,8 +9,8 @@
 use crate::media::{DecodedClip, FrameSourceOptions, ProbedVideo, StreamProvenance, TimeRange};
 use openbar_core::manual_seed::{ManualTargetSeedDocument, SeedValidationContext};
 use openbar_tracking::{
-    LocalContrastConfig, LocalContrastTracker, ManualSeedTracker, TemplateMatchConfig,
-    TemplateMatchTracker, TrackerObservationState, TrackerRun,
+    CsrtGrayConfig, CsrtGrayTracker, LocalContrastConfig, LocalContrastTracker, ManualSeedTracker,
+    TemplateMatchConfig, TemplateMatchTracker, TrackerObservationState, TrackerRun,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::btree_map::Entry;
@@ -29,7 +32,10 @@ const SEED_TIMESTAMP_TOLERANCE_S: f64 = 0.0005;
 
 const USAGE: &str = "Usage: openbar-cli tracker-run --manifest <path> --fixture <id> --seed <path> --output-dir <dir>\n\
      \x20      [--media <path>] [--start-s <s> --end-s <s>] [--max-frame-memory-mib <MiB>] [--search-radius-px <px>]\n\
-     Decodes the fixture through ffmpeg/ffprobe (must be on PATH) and runs both baseline trackers.\n\
+     \x20      [--trackers <list>]\n\
+     Decodes the fixture through ffmpeg/ffprobe (must be on PATH) and runs the selected trackers.\n\
+     --trackers is a comma-separated list of template, contrast and csrt-gray (default: template,contrast).\n\
+     --search-radius-px applies to template and contrast only.\n\
      Writes <dir>/<fixture>.<tracker>.prediction-v1.json per tracker; the summary goes to stderr.\n\
      Media defaults to the manifest's repository_path, resolved from the current directory.";
 
@@ -43,6 +49,35 @@ struct Args {
     selection: Option<TimeRange>,
     max_frame_bytes: u64,
     search_radius_px: Option<u32>,
+    trackers: Vec<TrackerKind>,
+}
+
+/// Trackers `tracker-run` can execute, in the fixed order they run and are reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TrackerKind {
+    Template,
+    Contrast,
+    CsrtGray,
+}
+
+impl TrackerKind {
+    /// What `tracker-run` has always run: the two M0 baselines.
+    const DEFAULT_SET: [TrackerKind; 2] = [TrackerKind::Template, TrackerKind::Contrast];
+
+    fn from_flag(name: &str) -> Option<Self> {
+        match name {
+            "template" => Some(Self::Template),
+            "contrast" => Some(Self::Contrast),
+            "csrt-gray" => Some(Self::CsrtGray),
+            _ => None,
+        }
+    }
+
+    /// `--search-radius-px` configures the template and contrast trackers; csrt-gray derives its
+    /// support from the seed radius.
+    fn uses_search_radius(self) -> bool {
+        !matches!(self, Self::CsrtGray)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,7 +199,7 @@ fn run_trackers(
     decode_wall: Duration,
 ) -> AnyResult<()> {
     let mut failures = Vec::new();
-    for tracker in build_trackers(args.search_radius_px)? {
+    for tracker in build_trackers(&args.trackers, args.search_radius_px)? {
         let identity = tracker.identity();
         let track_started = Instant::now();
         match tracker.track(&clip.frame_samples(), seed.seed()) {
@@ -239,6 +274,12 @@ fn parse_args(args: Vec<String>) -> AnyResult<Option<Args>> {
         .remove("--search-radius-px")
         .map(|value| parse_number::<u32>(&value, "--search-radius-px"))
         .transpose()?;
+    let trackers = parse_trackers(values.remove("--trackers"))?;
+    if search_radius_px.is_some() && !trackers.iter().any(|kind| kind.uses_search_radius()) {
+        return Err(data_error(
+            "--search-radius-px applies to the template and contrast trackers only",
+        ));
+    }
 
     Ok(Some(Args {
         manifest,
@@ -249,12 +290,37 @@ fn parse_args(args: Vec<String>) -> AnyResult<Option<Args>> {
         selection,
         max_frame_bytes: max_frame_memory_mib.saturating_mul(1024 * 1024),
         search_radius_px,
+        trackers,
     }))
+}
+
+/// Parses `--trackers`: a comma-separated list of known names, no empty entries or duplicates.
+/// The result is in canonical run order regardless of the order given.
+fn parse_trackers(value: Option<String>) -> AnyResult<Vec<TrackerKind>> {
+    let Some(value) = value else {
+        return Ok(TrackerKind::DEFAULT_SET.to_vec());
+    };
+    let mut kinds = Vec::new();
+    for name in value.split(',') {
+        let kind = TrackerKind::from_flag(name).ok_or_else(|| {
+            data_error(format!(
+                "--trackers entry '{name}' is not one of template, contrast, csrt-gray"
+            ))
+        })?;
+        if kinds.contains(&kind) {
+            return Err(data_error(format!(
+                "--trackers lists '{name}' more than once"
+            )));
+        }
+        kinds.push(kind);
+    }
+    kinds.sort();
+    Ok(kinds)
 }
 
 /// Returns `None` for a help request; every flag takes exactly one value and may appear once.
 fn collect_flag_values(args: &[String]) -> AnyResult<Option<BTreeMap<&'static str, String>>> {
-    const FLAGS: [&str; 9] = [
+    const FLAGS: [&str; 10] = [
         "--manifest",
         "--fixture",
         "--seed",
@@ -264,6 +330,7 @@ fn collect_flag_values(args: &[String]) -> AnyResult<Option<BTreeMap<&'static st
         "--end-s",
         "--max-frame-memory-mib",
         "--search-radius-px",
+        "--trackers",
     ];
     let mut values = BTreeMap::new();
     let mut index = 0usize;
@@ -432,20 +499,45 @@ fn validate_seed(
     Ok(())
 }
 
-fn build_trackers(search_radius_px: Option<u32>) -> AnyResult<Vec<Box<dyn ManualSeedTracker>>> {
+fn build_trackers(
+    kinds: &[TrackerKind],
+    search_radius_px: Option<u32>,
+) -> AnyResult<Vec<Box<dyn ManualSeedTracker>>> {
     let template_defaults = TemplateMatchConfig::default();
     let contrast_defaults = LocalContrastConfig::default();
-    let template = TemplateMatchTracker::try_new(TemplateMatchConfig {
-        search_radius_px: search_radius_px.unwrap_or(template_defaults.search_radius_px),
-        seed_timestamp_tolerance_s: SEED_TIMESTAMP_TOLERANCE_S,
-        ..template_defaults
-    })?;
-    let contrast = LocalContrastTracker::try_new(LocalContrastConfig {
-        search_radius_px: search_radius_px.unwrap_or(contrast_defaults.search_radius_px),
-        seed_timestamp_tolerance_s: SEED_TIMESTAMP_TOLERANCE_S,
-        ..contrast_defaults
-    })?;
-    Ok(vec![Box::new(template), Box::new(contrast)])
+    let csrt_defaults = CsrtGrayConfig::default();
+    let mut trackers: Vec<Box<dyn ManualSeedTracker>> = Vec::new();
+    for kind in kinds {
+        match kind {
+            TrackerKind::Template => {
+                trackers.push(Box::new(TemplateMatchTracker::try_new(
+                    TemplateMatchConfig {
+                        search_radius_px: search_radius_px
+                            .unwrap_or(template_defaults.search_radius_px),
+                        seed_timestamp_tolerance_s: SEED_TIMESTAMP_TOLERANCE_S,
+                        ..template_defaults
+                    },
+                )?));
+            }
+            TrackerKind::Contrast => {
+                trackers.push(Box::new(LocalContrastTracker::try_new(
+                    LocalContrastConfig {
+                        search_radius_px: search_radius_px
+                            .unwrap_or(contrast_defaults.search_radius_px),
+                        seed_timestamp_tolerance_s: SEED_TIMESTAMP_TOLERANCE_S,
+                        ..contrast_defaults
+                    },
+                )?));
+            }
+            TrackerKind::CsrtGray => {
+                trackers.push(Box::new(CsrtGrayTracker::try_new(CsrtGrayConfig {
+                    seed_timestamp_tolerance_s: SEED_TIMESTAMP_TOLERANCE_S,
+                    ..csrt_defaults
+                })?));
+            }
+        }
+    }
+    Ok(trackers)
 }
 
 fn write_prediction(
@@ -651,6 +743,91 @@ mod tests {
         assert_eq!(parsed.selection, None);
         assert_eq!(parsed.max_frame_bytes, 2048 * 1024 * 1024);
         assert_eq!(parsed.search_radius_px, None);
+    }
+
+    #[test]
+    fn defaults_to_the_two_baseline_trackers() {
+        let parsed = parse(&[]).expect("parses").expect("not help");
+        assert_eq!(
+            parsed.trackers,
+            vec![TrackerKind::Template, TrackerKind::Contrast]
+        );
+    }
+
+    #[test]
+    fn parses_a_tracker_selection_in_canonical_order() {
+        for (value, expected) in [
+            ("csrt-gray", vec![TrackerKind::CsrtGray]),
+            (
+                "csrt-gray,template",
+                vec![TrackerKind::Template, TrackerKind::CsrtGray],
+            ),
+            (
+                "contrast,csrt-gray,template",
+                vec![
+                    TrackerKind::Template,
+                    TrackerKind::Contrast,
+                    TrackerKind::CsrtGray,
+                ],
+            ),
+        ] {
+            let parsed = parse(&["--trackers", value])
+                .expect("selection parses")
+                .expect("not help");
+            assert_eq!(parsed.trackers, expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_tracker_selections() {
+        for value in [
+            "",
+            ",",
+            "template,",
+            "template,template",
+            "template,bogus",
+            "CSRT-GRAY",
+        ] {
+            assert!(
+                parse(&["--trackers", value]).is_err(),
+                "accepted --trackers '{value}'"
+            );
+        }
+        assert!(parse(&["--trackers", "template", "--trackers", "contrast"]).is_err());
+    }
+
+    #[test]
+    fn search_radius_is_rejected_when_no_selected_tracker_uses_it() {
+        let message = error_text(parse(&[
+            "--trackers",
+            "csrt-gray",
+            "--search-radius-px",
+            "30",
+        ]));
+        assert!(message.contains("--search-radius-px"), "{message}");
+        assert!(parse(&[
+            "--trackers",
+            "template,csrt-gray",
+            "--search-radius-px",
+            "30"
+        ])
+        .is_ok());
+    }
+
+    #[test]
+    fn built_trackers_have_the_expected_identities() {
+        let ids = |kinds: &[TrackerKind]| -> Vec<String> {
+            build_trackers(kinds, None)
+                .expect("trackers build")
+                .iter()
+                .map(|tracker| tracker.identity().id)
+                .collect()
+        };
+        assert_eq!(
+            ids(&[TrackerKind::Template, TrackerKind::Contrast]),
+            ["template-sad-v1", "local-contrast-centroid-v1"]
+        );
+        assert_eq!(ids(&[TrackerKind::CsrtGray]), ["csrt-gray-v1"]);
     }
 
     #[test]
@@ -875,6 +1052,7 @@ mod tests {
             selection: None,
             max_frame_bytes: DEFAULT_MAX_FRAME_MEMORY_MIB * 1024 * 1024,
             search_radius_px: None,
+            trackers: TrackerKind::DEFAULT_SET.to_vec(),
         }
     }
 
@@ -915,6 +1093,77 @@ mod tests {
                 12
             );
         }
+        let _ = fs::remove_dir_all(&output_dir);
+    }
+
+    #[test]
+    fn end_to_end_run_of_csrt_gray_writes_only_that_prediction() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let scratch =
+            env::temp_dir().join(format!("openbar-tracker-run-csrt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        fs::create_dir_all(&scratch).expect("scratch directory");
+        // csrt-gray needs its fixed support window (side = next power of two of 4r + 1) to lie
+        // inside the frame, so the public seed (r = 24, 128 px window, near the bottom edge) is
+        // too large for the 240 px tall clip. A smaller seed radius gives a 64 px window.
+        let mut seed: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(repo_path(
+                "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+            ))
+            .expect("public seed readable"),
+        )
+        .expect("public seed is JSON");
+        seed["seed"]["target"]["radius_px"] = serde_json::json!(12.0);
+        let seed_path = scratch.join("seed.json");
+        fs::write(&seed_path, seed.to_string()).expect("seed written");
+
+        let output_dir = scratch.join("out");
+        let mut args = synthetic_args(
+            repo_path("validation/fixtures/public/manifest.json"),
+            output_dir.clone(),
+        );
+        args.seed = seed_path;
+        args.trackers = vec![TrackerKind::CsrtGray];
+        run(&args).expect("synthetic fixture runs with csrt-gray");
+
+        let path = output_dir.join("synthetic-clean-side-12.csrt-gray-v1.prediction-v1.json");
+        let document: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("prediction written"))
+                .expect("prediction is JSON");
+        assert_eq!(document["source_video_sha256"], SYNTHETIC_SHA256);
+        assert_eq!(document["implementation"]["name"], "csrt-gray-v1");
+        assert_eq!(document["samples"].as_array().map(Vec::len), Some(12));
+        assert_eq!(document["samples"][0]["state"], "tracked");
+        let written = fs::read_dir(&output_dir).expect("output dir").count();
+        assert_eq!(written, 1, "only the selected tracker writes a prediction");
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn csrt_gray_refuses_a_seed_whose_window_does_not_fit_and_writes_nothing() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let output_dir = env::temp_dir().join(format!(
+            "openbar-tracker-run-csrt-big-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&output_dir);
+        let mut args = synthetic_args(
+            repo_path("validation/fixtures/public/manifest.json"),
+            output_dir.clone(),
+        );
+        args.trackers = vec![TrackerKind::CsrtGray];
+        let message = error_text(run(&args));
+        assert!(message.contains("csrt-gray-v1"), "{message}");
+        assert!(
+            !output_dir
+                .join("synthetic-clean-side-12.csrt-gray-v1.prediction-v1.json")
+                .exists(),
+            "a refused run must not write a prediction"
+        );
         let _ = fs::remove_dir_all(&output_dir);
     }
 

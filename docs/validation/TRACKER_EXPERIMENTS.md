@@ -112,7 +112,7 @@ contracts without pretending synthetic pixels are real-video evidence.
 ## Real decoded video: `tracker-run`
 
 Issue #40 adds the ADR-0006 frame source and a `tracker-run` subcommand that feeds real
-decoded frames to both baselines:
+decoded frames to both baselines by default (and optionally to `csrt-gray`, see `--trackers`):
 
 ```bash
 cargo run --locked -p openbar-cli -- tracker-run \
@@ -129,9 +129,20 @@ cargo run --locked -p openbar-cli -- tracker-run \
   memory.
 - **Seed check.** The seed must lie within 0.0005 s of a selected decoded frame. Otherwise the
   run stops before tracking and reports the gap to the nearest frame.
-- **Configuration.** Both trackers use their default configuration, with two changes. Seed
+- **Trackers.** `--trackers` is a comma-separated list of `template`, `contrast` and the
+  experimental grayscale `csrt-gray` (`csrt-gray-v1`). The default is `template,contrast`, so
+  existing runs and the smoke command are unchanged. Names must be known and unique; trackers run
+  and are reported in the fixed order template, contrast, csrt-gray.
+- **Configuration.** Every tracker uses its default configuration, with one change: the seed
   timestamp tolerance is set to 0.0005 s, the annotation decoder-match tolerance.
-  `--search-radius-px` overrides the search radius for both trackers when given.
+  `--search-radius-px` overrides the search radius of `template` and `contrast` when given; it is
+  rejected when only `csrt-gray` is selected, because that tracker derives its support from the
+  seed radius.
+- **`csrt-gray` limits.** It tracks at native resolution with a fixed support window whose side is
+  the next power of two of `4 * radius + 1`, at most 512 px. A seed radius above 127.75 px is
+  refused with a typed error, and so is a seed whose window does not fit inside the frame. A refused
+  tracker writes no prediction and the command exits non-zero. This is not a selection of
+  `csrt-gray` as the production tracker; that decision stays with #57.
 - **Output.** One tracker-prediction-v1 document is written per tracker, named
   `<fixture>.<tracker>.prediction-v1.json`. `implementation.config` records the tracker
   config, the seed and the full frame-source provenance. The benchmark harness consumes these
