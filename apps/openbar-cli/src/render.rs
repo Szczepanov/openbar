@@ -32,7 +32,8 @@ struct Args {
 }
 
 pub fn run_cli() -> CliResult<()> {
-    let Some(args) = parse_args(env::args().skip(2).collect())? else {
+    let raw_args: Vec<String> = env::args().skip(2).collect();
+    let Some(args) = parse_args(&raw_args)? else {
         println!("{USAGE}");
         return Ok(());
     };
@@ -86,7 +87,7 @@ fn run(args: &Args) -> CliResult<()> {
     Ok(())
 }
 
-fn parse_args(args: Vec<String>) -> CliResult<Option<Args>> {
+fn parse_args(args: &[String]) -> CliResult<Option<Args>> {
     if args
         .iter()
         .any(|value| matches!(value.as_str(), "--help" | "-h"))
@@ -452,15 +453,19 @@ mod tests {
     #[test]
     fn render_requires_svg_output_and_video_for_frame_timestamp() {
         let missing =
-            parse_args(strings(&["--analysis", "a.json"])).expect_err("missing output must fail");
+            parse_args(&strings(&["--analysis", "a.json"])).expect_err("missing output must fail");
         assert!(missing.to_string().contains("--output"));
 
-        let bad_extension =
-            parse_args(strings(&["--analysis", "a.json", "--output", "report.txt"]))
-                .expect_err("non-SVG output must fail");
+        let bad_extension = parse_args(&strings(&[
+            "--analysis",
+            "a.json",
+            "--output",
+            "report.txt",
+        ]))
+        .expect_err("non-SVG output must fail");
         assert!(bad_extension.to_string().contains(".svg"));
 
-        let missing_video = parse_args(strings(&[
+        let missing_video = parse_args(&strings(&[
             "--analysis",
             "a.json",
             "--output",
@@ -504,13 +509,13 @@ mod tests {
 
         // Warm up
         for _ in 0..1_000 {
-            let _ = parse_args(sample_args.clone());
+            let _ = parse_args(&sample_args);
         }
 
         let start = std::time::Instant::now();
         let iterations = 200_000;
         for _ in 0..iterations {
-            let _ = parse_args(sample_args.clone());
+            let _ = parse_args(&sample_args);
         }
         let elapsed = start.elapsed();
         println!(
