@@ -231,3 +231,105 @@ impl ManualSeedTracker for TemplateMatchTracker {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_new_accepts_valid_config() {
+        let default_config = TemplateMatchConfig::default();
+        let tracker = TemplateMatchTracker::try_new(default_config);
+        assert!(tracker.is_ok());
+
+        let custom_config = TemplateMatchConfig {
+            search_radius_px: 20,
+            low_confidence_normalized_mean_absolute_difference: 0.15,
+            max_normalized_mean_absolute_difference: 0.25,
+            seed_timestamp_tolerance_s: 1e-3,
+        };
+        let custom_tracker = TemplateMatchTracker::try_new(custom_config);
+        assert!(custom_tracker.is_ok());
+
+        assert_eq!(
+            TemplateMatchTracker::default(),
+            TemplateMatchTracker::try_new(default_config).unwrap()
+        );
+    }
+
+    #[test]
+    fn try_new_validates_search_radius() {
+        for search_radius in [0, i32::MAX as u32 + 1] {
+            let config = TemplateMatchConfig {
+                search_radius_px: search_radius,
+                ..TemplateMatchConfig::default()
+            };
+            assert_eq!(
+                TemplateMatchTracker::try_new(config),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "search_radius_px",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn try_new_validates_low_confidence_threshold() {
+        for bad_val in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            let config = TemplateMatchConfig {
+                low_confidence_normalized_mean_absolute_difference: bad_val,
+                ..TemplateMatchConfig::default()
+            };
+            assert_eq!(
+                TemplateMatchTracker::try_new(config),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "low_confidence_normalized_mean_absolute_difference",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn try_new_validates_max_threshold() {
+        for bad_val in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            let config = TemplateMatchConfig {
+                max_normalized_mean_absolute_difference: bad_val,
+                ..TemplateMatchConfig::default()
+            };
+            assert_eq!(
+                TemplateMatchTracker::try_new(config),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "max_normalized_mean_absolute_difference",
+                })
+            );
+        }
+
+        let config = TemplateMatchConfig {
+            low_confidence_normalized_mean_absolute_difference: 0.3,
+            max_normalized_mean_absolute_difference: 0.2,
+            ..TemplateMatchConfig::default()
+        };
+        assert_eq!(
+            TemplateMatchTracker::try_new(config),
+            Err(TrackerError::InvalidConfiguration {
+                field: "max_normalized_mean_absolute_difference",
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_validates_seed_timestamp_tolerance() {
+        for bad_val in [f64::NAN, f64::INFINITY, -0.001] {
+            let config = TemplateMatchConfig {
+                seed_timestamp_tolerance_s: bad_val,
+                ..TemplateMatchConfig::default()
+            };
+            assert_eq!(
+                TemplateMatchTracker::try_new(config),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "seed_timestamp_tolerance_s",
+                })
+            );
+        }
+    }
+}
