@@ -11,6 +11,7 @@ use openbar_core::kinematics::{
 };
 use openbar_core::trajectory::MetricPositionSample;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -295,15 +296,15 @@ struct CaseOpenBarProvenance {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CaseResult {
-    id: String,
-    condition: String,
+struct CaseResult<'a> {
+    id: &'a str,
+    condition: &'a str,
     outcome: CaseOutcome,
     reference_sample_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reference_uncertainty: Option<ReferenceUncertainty>,
+    reference_uncertainty: Option<&'a ReferenceUncertainty>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    failure_reason: Option<String>,
+    failure_reason: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     metrics: Option<CaseMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -343,15 +344,15 @@ struct GateResults {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ReferenceStudyResult {
+struct ReferenceStudyResult<'a> {
     schema_version: u32,
-    study_id: String,
+    study_id: &'a str,
     evidence_class: EvidenceClass,
-    purpose: String,
-    reference: ReferenceProvenance,
-    construct: ConstructContract,
+    purpose: &'a str,
+    reference: &'a ReferenceProvenance,
+    construct: &'a ConstructContract,
     summary: StudySummary,
-    cases: Vec<CaseResult>,
+    cases: Vec<CaseResult<'a>>,
     gates: GateResults,
     limitations: Vec<&'static str>,
 }
@@ -686,18 +687,18 @@ fn require_exact(path: &str, actual: &str, expected: &str) -> AnyResult<()> {
     Ok(())
 }
 
-fn evaluate_study(study: &StudySpec, study_path: &Path) -> ReferenceStudyResult {
+fn evaluate_study<'a>(study: &'a StudySpec, study_path: &Path) -> ReferenceStudyResult<'a> {
     let mut cases = Vec::with_capacity(study.cases.len());
 
     for case in &study.cases {
         if case.status == StudyCaseStatus::Unsupported {
             cases.push(CaseResult {
-                id: case.id.clone(),
-                condition: case.condition.clone(),
+                id: &case.id,
+                condition: &case.condition,
                 outcome: CaseOutcome::Unsupported,
                 reference_sample_count: case.reference_samples.len(),
-                reference_uncertainty: case.reference_uncertainty.clone(),
-                failure_reason: case.unsupported_reason.clone(),
+                reference_uncertainty: case.reference_uncertainty.as_ref(),
+                failure_reason: case.unsupported_reason.as_deref().map(Cow::Borrowed),
                 metrics: None,
                 openbar_provenance: None,
             });
@@ -706,22 +707,22 @@ fn evaluate_study(study: &StudySpec, study_path: &Path) -> ReferenceStudyResult 
 
         match evaluate_supported_case(study, case, study_path) {
             Ok((metrics, provenance)) => cases.push(CaseResult {
-                id: case.id.clone(),
-                condition: case.condition.clone(),
+                id: &case.id,
+                condition: &case.condition,
                 outcome: CaseOutcome::Evaluated,
                 reference_sample_count: case.reference_samples.len(),
-                reference_uncertainty: case.reference_uncertainty.clone(),
+                reference_uncertainty: case.reference_uncertainty.as_ref(),
                 failure_reason: None,
                 metrics: Some(metrics),
                 openbar_provenance: Some(provenance),
             }),
             Err(reason) => cases.push(CaseResult {
-                id: case.id.clone(),
-                condition: case.condition.clone(),
+                id: &case.id,
+                condition: &case.condition,
                 outcome: CaseOutcome::Failed,
                 reference_sample_count: case.reference_samples.len(),
-                reference_uncertainty: case.reference_uncertainty.clone(),
-                failure_reason: Some(reason),
+                reference_uncertainty: case.reference_uncertainty.as_ref(),
+                failure_reason: Some(Cow::Owned(reason)),
                 metrics: None,
                 openbar_provenance: None,
             }),
@@ -790,11 +791,11 @@ fn evaluate_study(study: &StudySpec, study_path: &Path) -> ReferenceStudyResult 
 
     ReferenceStudyResult {
         schema_version: RESULT_SCHEMA_VERSION,
-        study_id: study.study_id.clone(),
+        study_id: &study.study_id,
         evidence_class: study.evidence_class,
-        purpose: study.purpose.clone(),
-        reference: study.reference.clone(),
-        construct: study.construct.clone(),
+        purpose: &study.purpose,
+        reference: &study.reference,
+        construct: &study.construct,
         summary: StudySummary {
             total_cases: cases.len(),
             evaluated_cases,
@@ -1402,5 +1403,80 @@ mod tests {
         assert!((openbar_mean.value - 0.95).abs() < 1.0e-12);
         assert!((reference_peak.value - 1.2).abs() < 1.0e-12);
         assert!((openbar_peak.value - 1.1).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn bench_evaluate_study_performance() {
+        let cases = (0..1_000)
+            .map(|i| StudyCase {
+                id: format!("case_{i}"),
+                condition: format!("condition_{i}"),
+                status: StudyCaseStatus::Unsupported,
+                unsupported_reason: Some("unsupported for bench".to_string()),
+                analysis_path: None,
+                velocity_layer: None,
+                expected_tracker: None,
+                expected_filter: None,
+                interval: None,
+                reference_uncertainty: Some(ReferenceUncertainty {
+                    position_m: 0.001,
+                    velocity_mps: 0.005,
+                    method: "spec".to_string(),
+                }),
+                reference_samples: vec![],
+            })
+            .collect();
+
+        let study = StudySpec {
+            schema_version: 1,
+            study_id: "bench_study".to_string(),
+            evidence_class: EvidenceClass::IndependentPhysicalReference,
+            purpose: "benchmark".to_string(),
+            reference: ReferenceProvenance {
+                source_type: ReferenceSourceType::Encoder,
+                system: "sys".to_string(),
+                protocol: "proto".to_string(),
+                synchronization: "sync".to_string(),
+                coordinate_alignment: "align".to_string(),
+                rights_or_access: "access".to_string(),
+                notes: None,
+            },
+            construct: ConstructContract {
+                coordinate_convention: MetricCoordinateConvention::ReferenceCentreXRightYUp,
+                axis: StudyAxis::VerticalY,
+                interval_semantics: "closed_exact_sample_boundaries".to_string(),
+                mean_velocity_definition: "axis_displacement_over_interval_duration".to_string(),
+                peak_velocity_definition: "maximum_signed_axis_velocity".to_string(),
+                timestamp_alignment: "exact_sample_timestamp".to_string(),
+                calibration_method: CalibrationMethod::PlateDiameter,
+                calibration_method_version: 1,
+                kinematics: ExpectedKinematics {
+                    implementation: "backward_difference_v1".to_string(),
+                    version: "1.0.0".to_string(),
+                    max_gap_s: 0.1,
+                    min_confidence: 0.5,
+                },
+            },
+            target_revisions: GateRevisions::default(),
+            cases,
+        };
+
+        // Warm up
+        for _ in 0..10 {
+            let _ = evaluate_study(&study, Path::new("."));
+        }
+
+        let iterations = 100;
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            let _ = evaluate_study(&study, Path::new("."));
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "BENCHMARK evaluate_study: {:?} total for {} iterations ({:?} / iter)",
+            elapsed,
+            iterations,
+            elapsed / iterations
+        );
     }
 }
