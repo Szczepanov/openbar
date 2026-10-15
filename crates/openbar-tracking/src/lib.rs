@@ -495,3 +495,116 @@ pub(crate) fn distance(left: PixelPoint, right: PixelPoint) -> f64 {
     let dy = left.y_px() - right.y_px();
     dx.hypot(dy)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_tracker_identity() -> TrackerIdentity {
+        TrackerIdentity {
+            id: "test-tracker".to_string(),
+            implementation: "test".to_string(),
+            version: "1.0.0".to_string(),
+            config: BTreeMap::new(),
+            confidence_semantics: "unit-test".to_string(),
+        }
+    }
+
+    fn dummy_diagnostics() -> TrackerDiagnostics {
+        TrackerDiagnostics {
+            quality_score: Some(1.0),
+            displacement_px: Some(0.0),
+            reacquired_after_loss: false,
+        }
+    }
+
+    #[test]
+    fn benchmark_predictions_maps_tracked_low_confidence_and_lost_states() {
+        let center_1 = PixelPoint::new(10.0, 20.0);
+        let center_2 = PixelPoint::new(15.0, 25.0);
+
+        let run = TrackerRun {
+            tracker: dummy_tracker_identity(),
+            seed_timestamp_s: 0.0,
+            observations: vec![
+                TrackerObservation {
+                    timestamp_s: 0.0,
+                    frame_index: Some(0),
+                    state: TrackerObservationState::Tracked {
+                        center: center_1,
+                        confidence: 0.95,
+                    },
+                    visibility: TrackerVisibilityState::Unknown,
+                    target_bounds_px: None,
+                    diagnostics: dummy_diagnostics(),
+                },
+                TrackerObservation {
+                    timestamp_s: 0.1,
+                    frame_index: Some(1),
+                    state: TrackerObservationState::LowConfidence {
+                        center: center_2,
+                        confidence: 0.3,
+                    },
+                    visibility: TrackerVisibilityState::Unknown,
+                    target_bounds_px: None,
+                    diagnostics: dummy_diagnostics(),
+                },
+                TrackerObservation {
+                    timestamp_s: 0.2,
+                    frame_index: Some(2),
+                    state: TrackerObservationState::Lost {
+                        reason: TrackerLossReason::PoorMatch,
+                    },
+                    visibility: TrackerVisibilityState::Unknown,
+                    target_bounds_px: None,
+                    diagnostics: dummy_diagnostics(),
+                },
+            ],
+        };
+
+        let predictions = run.benchmark_predictions();
+
+        assert_eq!(predictions.len(), 3);
+
+        assert_eq!(
+            predictions[0],
+            TrackerPrediction {
+                timestamp_s: 0.0,
+                state: TrackerPredictionState::Tracked {
+                    center: center_1,
+                    confidence: 0.95,
+                },
+            }
+        );
+
+        assert_eq!(
+            predictions[1],
+            TrackerPrediction {
+                timestamp_s: 0.1,
+                state: TrackerPredictionState::Tracked {
+                    center: center_2,
+                    confidence: 0.3,
+                },
+            }
+        );
+
+        assert_eq!(
+            predictions[2],
+            TrackerPrediction {
+                timestamp_s: 0.2,
+                state: TrackerPredictionState::Lost,
+            }
+        );
+    }
+
+    #[test]
+    fn benchmark_predictions_returns_empty_vec_for_empty_run() {
+        let run = TrackerRun {
+            tracker: dummy_tracker_identity(),
+            seed_timestamp_s: 0.0,
+            observations: vec![],
+        };
+
+        assert!(run.benchmark_predictions().is_empty());
+    }
+}
