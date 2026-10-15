@@ -789,17 +789,18 @@ fn solve_linear_system(
             rhs.swap(pivot, best_row);
         }
 
-        let pivot_value = matrix[pivot][pivot];
-        for value in matrix[pivot].iter_mut().skip(pivot) {
+        let (above, rest) = matrix.split_at_mut(pivot);
+        let (pivot_row, below) = rest.split_first_mut().unwrap();
+
+        let pivot_value = pivot_row[pivot];
+        for value in pivot_row.iter_mut().skip(pivot) {
             *value /= pivot_value;
         }
         rhs[pivot] /= pivot_value;
 
-        let pivot_row = matrix[pivot].clone();
-        for (row, values) in matrix.iter_mut().enumerate() {
-            if row == pivot {
-                continue;
-            }
+        let pivot_rhs = rhs[pivot];
+
+        for (row, values) in above.iter_mut().enumerate() {
             let factor = values[pivot];
             if factor == 0.0 {
                 continue;
@@ -807,7 +808,19 @@ fn solve_linear_system(
             for (column, value) in values.iter_mut().enumerate().skip(pivot) {
                 *value -= factor * pivot_row[column];
             }
-            rhs[row] -= factor * rhs[pivot];
+            rhs[row] -= factor * pivot_rhs;
+        }
+
+        for (row_offset, values) in below.iter_mut().enumerate() {
+            let row = pivot + 1 + row_offset;
+            let factor = values[pivot];
+            if factor == 0.0 {
+                continue;
+            }
+            for (column, value) in values.iter_mut().enumerate().skip(pivot) {
+                *value -= factor * pivot_row[column];
+            }
+            rhs[row] -= factor * pivot_rhs;
         }
     }
     Ok(rhs)
@@ -1462,5 +1475,43 @@ mod tests {
             ),
             Err(FilterError::InvalidConfidenceWindow { .. })
         ));
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_savitzky_golay_performance() {
+        let count = 50_000;
+        let samples = (0..count)
+            .map(|i| {
+                let t = i as f64 / 120.0;
+                let x = 0.2 + 0.3 * t - 0.4 * t.powi(2) + 0.2 * t.powi(3);
+                sample(t, x, -0.1 + 0.8 * t)
+            })
+            .collect::<Vec<_>>();
+
+        let config = FilterConfig::SavitzkyGolay {
+            window: 11,
+            window_s: None,
+            polynomial_order: 5,
+            max_gap_s: 0.1,
+        };
+
+        // Warmup
+        for _ in 0..5 {
+            let _ = apply_filter(&samples, config).unwrap();
+        }
+
+        let start = std::time::Instant::now();
+        let iterations = 50;
+        for _ in 0..iterations {
+            let _ = apply_filter(&samples, config).unwrap();
+        }
+        let elapsed = start.elapsed();
+        println!(
+            "bench_savitzky_golay_performance: {:?} total for {} iterations ({:?} per iter)",
+            elapsed,
+            iterations,
+            elapsed / iterations
+        );
     }
 }
