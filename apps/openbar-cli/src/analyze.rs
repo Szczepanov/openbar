@@ -1650,7 +1650,6 @@ fn is_valid_fixture_id(value: &str) -> bool {
 mod tests {
     use super::*;
     use openbar_core::filtering::FilterConfig;
-    use std::process::Command;
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -2669,12 +2668,8 @@ mod tests {
     }
 
     fn ffmpeg_available() -> bool {
-        let available = ["ffmpeg", "ffprobe"].iter().all(|tool| {
-            Command::new(tool)
-                .arg("-version")
-                .output()
-                .is_ok_and(|output| output.status.success())
-        });
+        let available = crate::media::ffmpeg::tool_version(crate::media::ffmpeg::FFMPEG).is_ok()
+            && crate::media::ffmpeg::tool_version(crate::media::ffmpeg::FFPROBE).is_ok();
         if !available {
             assert!(
                 std::env::var_os("OPENBAR_REQUIRE_FFMPEG").is_none(),

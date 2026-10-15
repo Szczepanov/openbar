@@ -5,7 +5,7 @@
 //! stay here; `openbar-tracking` only ever sees `FrameSample` values.
 
 mod error;
-mod ffmpeg;
+pub(crate) mod ffmpeg;
 mod probe;
 mod raw;
 
@@ -272,12 +272,8 @@ mod tests {
     /// FFmpeg is an external prerequisite. CI sets `OPENBAR_REQUIRE_FFMPEG=1`, so a missing
     /// install fails there instead of silently skipping.
     fn ffmpeg_available() -> bool {
-        let available = ["ffmpeg", "ffprobe"].iter().all(|tool| {
-            Command::new(tool)
-                .arg("-version")
-                .output()
-                .is_ok_and(|output| output.status.success())
-        });
+        let available = ffmpeg::tool_version(ffmpeg::FFMPEG).is_ok()
+            && ffmpeg::tool_version(ffmpeg::FFPROBE).is_ok();
         if !available {
             assert!(
                 std::env::var_os("OPENBAR_REQUIRE_FFMPEG").is_none(),

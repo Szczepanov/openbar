@@ -20,7 +20,8 @@ fn scratch(name: &str) -> PathBuf {
 fn ffmpeg_available() -> bool {
     let available = ["ffmpeg", "ffprobe"].iter().all(|tool| {
         Command::new(tool)
-            .arg("-version")
+            .args(["-hide_banner", "-version"])
+            .stdin(std::process::Stdio::null())
             .output()
             .is_ok_and(|output| output.status.success())
     });

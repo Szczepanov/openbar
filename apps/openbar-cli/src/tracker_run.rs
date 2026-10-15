@@ -1024,12 +1024,8 @@ mod tests {
     }
 
     fn ffmpeg_available() -> bool {
-        let available = ["ffmpeg", "ffprobe"].iter().all(|tool| {
-            std::process::Command::new(tool)
-                .arg("-version")
-                .output()
-                .is_ok_and(|output| output.status.success())
-        });
+        let available = crate::media::ffmpeg::tool_version(crate::media::ffmpeg::FFMPEG).is_ok()
+            && crate::media::ffmpeg::tool_version(crate::media::ffmpeg::FFPROBE).is_ok();
         if !available {
             assert!(
                 env::var_os("OPENBAR_REQUIRE_FFMPEG").is_none(),
