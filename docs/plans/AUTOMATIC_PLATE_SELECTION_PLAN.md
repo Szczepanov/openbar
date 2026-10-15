@@ -6,20 +6,58 @@ coordination: [#110](https://github.com/Szczepanov/openbar/issues/110).
 
 ## Status and scope decision
 
-**DEFER prototype implementation under current scope.** This document proposes a bounded
-development evaluation; it records neither owner approval nor measured selection accuracy.
-Issue #178 authorizes this preparation, not an automatic detector, production selection or M1
-entry. Review/merge of these documents does not authorize the prototype.
+**PROCEED — Prompt 1 only**, owner decision supplied in chat on 2026-10-15. This supersedes
+the earlier DEFER only for the preparation below, not the future product specification.
+The owner wrote:
 
-Before implementation, the owner must record a separate PROCEED decision citing this plan's
+> I authorize the bounded research work necessary to execute the Hough top-K target-recall experiment described in the existing automatic plate-selection research plan.
+>
+> This authorization applies ONLY to:
+>
+> 1. independent annotation/protocol preparation,
+> 2. an observation-only Hough candidate instrumentation/harness,
+> 3. experiment preregistration/freeze records,
+> 4. verification of the resulting research tooling.
+
+This committed plan is the durable record of that supplied decision; no #178 issue comment
+or URL is asserted. The source attachment was `Wklejony tekst.txt` in this task, SHA-256
+`0638e7eb7fe9a370e001c4f197f10486a1fabf3569b2a54ae16b6363792e216c`. The owner's
+exact decision heading was `OWNER DECISION: PROCEED — Prompt 1 only`.
+
+Research question: when the intended camera-facing outermost plate/end of the lifted barbell
+is independently identifiable, where does it appear in the current Hough pipeline? The allowed
+entry point is `research/vbt-workflow/hough_observe.py`, observing existing `suggest_plate`
+without changing its code, defaults or `PlateParams`. Its CLI permits synthetic `--self-check`
+only; the Python `observe_plate` API is for a future frozen executor. This preparation has
+**zero real-media scoring runs**, no frame-path/decode CLI, one unchanged candidate, no models,
+no added dependencies and no parameter search. Synthetic checks use the existing research
+environment. Actual collection size, executor limits and scoring budget must be completed in
+the private freeze before any real-data run; this decision supplies no numeric scoring budget.
+
+Allowed roles are synthetic correctness, authorized exploration (never unseen evidence), and
+new source/session-separated `split-frozen-eval` only after blind labels, repeatability and a
+complete freeze permit access. Forbidden are `split-reserved-57`, validation-purpose clips,
+formal #79 inputs and promotion of proposal-exposed exploration into unseen evidence. Stop on
+role/hash mismatch, candidate exposure before independent labels, incomplete freeze or
+repeatability, any parameter change, or attempted expansion beyond Prompt 1.
+
+The [Prompt 1 preparation protocol](HOUGH_TOP_K_PREPARATION.md) defines the annotation record,
+matching prerequisites, metrics, budget, precision analysis and readiness gates. The stage is
+**READY-BUT-NOT-SCORED** tooling/protocol preparation; a complete data freeze and formal
+scoring remain blocked by missing inputs. Prompt 2, learned rerankers, detectors, model
+acquisition/training, production integration/default changes and M0/M1 architecture changes
+remain unauthorized. This is no selection-accuracy or promotion decision.
+
+For work beyond bounded Prompt 1, the owner must record a separate decision citing this plan's
 revision, the allowed research entry point, input split, candidate configurations, resource
 budget and stop criteria. A DEFER/STOP decision leaves #95/#113 unchanged. Even a research
 PROCEED does not supersede [ADR-0008](../adr/0008-m0-go-no-go-and-m1-entry.md).
 Production adoption needs the #80 M1 decision and relevant selection, recording-envelope,
 physical-reference and #179 phone-runtime evidence. #79's methods/settings remain frozen.
 
-This preparation changes no code, dependency, schema, version, golden file, fixture or accepted
-ADR. The UI behavior below is a future product specification, not an instruction to build UI.
+Prompt 1 permits the separate observation harness and its tests, but changes no production code,
+dependency, canonical schema/version, golden file, fixture or accepted ADR. The UI behavior
+below is a future product specification, not an instruction to build UI.
 
 ## Existing implementation and evidence audit
 
@@ -191,8 +229,8 @@ or end-to-end results-within-seconds claims. Preserve faster-than-video-duration
 
 ## Execution, retained evidence and review gates
 
-1. **Now:** review this audit, proposed interaction/failure specification and protocol; record
-   DEFER unless a separate owner decision authorizes the bounded prototype.
+1. **Now:** execute only the bounded Prompt 1 preparation authorized above; use its readiness
+   gates. The wider prototype and all later prompts remain deferred.
 2. **After PROCEED:** retain input rights/roles and independent labels; freeze the candidate,
    bounds and descriptive/no-promotion status before scoring. Refuse incomplete freeze records.
 3. **Implement only the approved research harness:** reuse proposer/provenance checks; do not
@@ -216,8 +254,8 @@ Reopen the relevant scope/contract decision instead of silently widening this pl
 ## Completion boundary for this preparation
 
 This document supplies the #95/#113 audit, future UX/failure spec, development test roles,
-independent-truth protocol, scoring/uncertainty definitions and current **DEFER** disposition.
-Design acceptance requires owner review. Challenge collection, a frozen run record, measured
-quality/latency and prototype authorization remain pending; no accuracy or M1 claim follows
+independent-truth protocol, scoring/uncertainty definitions and bounded **Prompt 1 PROCEED**.
+Challenge collection, a complete frozen run record, measured quality/latency and wider prototype
+authorization remain pending; no accuracy or M1 claim follows
 from a docs PR. No proprietary implementation/assets/models are used; owner-observed product
 behavior informs requirements only.

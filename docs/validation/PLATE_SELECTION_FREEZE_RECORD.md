@@ -4,9 +4,12 @@ Parent plan: [AUTOMATIC_PLATE_SELECTION_PLAN.md](../plans/AUTOMATIC_PLATE_SELECT
 section "Freeze and scoring protocol". Roles: [PLATE_SELECTION_SPLIT.md](PLATE_SELECTION_SPLIT.md).
 Date: 2026-10-14. Work type: **evidence preparation**.
 
-This is a template and a rule set. It is not a schema, adds no code, and authorizes nothing: the
-plan stays **DEFER** until the owner records a PROCEED on #178. A freeze record is written only
-after PROCEED, and **before the first scored run**.
+This is a template and a rule set, not a schema or an actual completed freeze. The owner supplied
+**PROCEED — Prompt 1 only** in chat, durably recorded in the parent plan; no issue comment is
+asserted. The [Prompt 1 preparation protocol](../plans/HOUGH_TOP_K_PREPARATION.md) supplements
+this private format with candidate-stage metrics, independent annotation/repeatability and
+readiness gates. A freeze must be complete **before the first scored run**. Current stage is
+**READY-BUT-NOT-SCORED** tooling/protocol; formal inputs and executor remain unavailable.
 
 ## Why it exists
 
@@ -54,6 +57,7 @@ Placeholders are written `<like this>`. Copy the block, fill every one, then has
     "plan_commit": "<git hash of the plan at freeze>",
     "split_doc_commit": "<git hash of PLATE_SELECTION_SPLIT.md at freeze>",
     "owner_decision_url": "<link to the PROCEED comment on #178>",
+    "owner_decision_record": "<for Prompt 1: committed parent-plan path, commit, SHA-256, heading and supplied authorization attachment SHA-256; set owner_decision_url to null when no comment exists>",
     "allowed_entry_point": "<path of the approved research harness>"
   },
 
@@ -161,9 +165,10 @@ report cites it.
 
 An agent confirms each item, and the owner is told if any fails:
 
-- [ ] Owner PROCEED on #178 exists and its URL is in `authority`.
+- [ ] Owner PROCEED is bound in `authority`: for Prompt 1 use the committed parent-plan decision
+      and its hash/commit plus source attachment hash; URL is null if no issue comment exists.
 - [ ] Every `<...>` placeholder is replaced and every hash matches the file on disk.
-- [ ] Every `split-frozen-eval` clip has two label passes (or a recorded reason) and, where the
+- [ ] Every Prompt 1 `split-frozen-eval` clip has two independent blind label passes and, where the
       passes disagree, an adjudication or `unresolved: true`.
 - [ ] No clip is `split-reserved-57`, and no `split-exploration` clip is listed as frozen evaluation.
 - [ ] All frozen-evaluation clips come from at least the session count the owner confirmed. If
@@ -172,10 +177,14 @@ An agent confirms each item, and the owner is told if any fails:
 - [ ] Search horizon, timestamp schedule, tie and refusal rules are written, and none were derived
       from onset labels or from any frozen-evaluation result.
 - [ ] `decision_limits` is `descriptive`, or its limits and rationale predate any scoring.
+- [ ] The Prompt 1 supplement is complete: independent centre/radius repeatability, frozen
+      matching rule/Tc/Tr, precision rationale, stage metrics/denominators/failure and margin
+      definitions, and the executor's fail-closed verification. See the linked protocol checklist.
 
 ## Not decided here
 
 The numeric values (horizon, timeouts, repeat counts, sample-size minimum) and any audit sampling
 rate are the owner's, set at freeze time. This template deliberately proposes none. The record
 format is a research artifact; it changes no canonical schema, version, golden file or fixture.
-A validator for it ships with the approved harness, after PROCEED.
+The observation harness alone is not a freeze validator or scorer. A reviewed frozen-data
+executor with complete-record/hash/role refusal is still required before real-data execution.

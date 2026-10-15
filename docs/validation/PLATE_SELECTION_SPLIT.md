@@ -3,8 +3,9 @@
 Parent plan: [AUTOMATIC_PLATE_SELECTION_PLAN.md](../plans/AUTOMATIC_PLATE_SELECTION_PLAN.md) (#178).
 Date: 2026-10-14. Work type: **evidence preparation**. This document assigns roles to existing
 private clips and lists the collection and labelling the plan requires. It authorizes no
-detector, prototype, threshold or consumer behaviour; the plan's **DEFER** disposition stands
-until the owner records a separate PROCEED decision.
+detector, threshold or consumer behaviour. The owner has now supplied **PROCEED — Prompt 1
+only**, durably recorded in the parent plan. The [Prompt 1 protocol](../plans/HOUGH_TOP_K_PREPARATION.md)
+supplements this collection checklist; no formal media is scored by that preparation.
 
 ## Goal
 
@@ -73,9 +74,10 @@ lifter and one barn. They support debugging and baseline behaviour on easy foota
 
 ## Collection target for `split-frozen-eval`
 
-The plan's required challenge matrix is the target. The minimum below is a proposal for the
-owner to confirm, not a plan requirement: the plan says only to report insufficient evidence
-when independent sessions are unavailable.
+The plan's required challenge matrix is the target. The numbers below are historical collection
+suggestions, not a statistical minimum or an approved Prompt 1 sample size. Use the Prompt 1
+precision analysis before collection; report insufficient evidence when independent sessions
+are unavailable.
 
 - At least **3 recording sessions**, each on a different day, and at least 2 different
   places or lighting setups.
@@ -99,7 +101,8 @@ Do not duplicate any video already hashed in the manifests (the novelty exclusio
 
 ## Checklist for the owner
 
-Do these in order. Steps 1–3 can start today; steps 5 onward need the owner's PROCEED.
+The earlier checklist follows. For Prompt 1, the linked protocol supersedes the interim label
+fields, repeatability and freeze sequencing below. PROCEED is recorded; data readiness is not.
 
 1. **Confirm the roles.** Read the tables above. If you disagree with any assignment, say so
    before step 2; the tags are applied by the manifest edit in this change.
@@ -145,18 +148,17 @@ Do these in order. Steps 1–3 can start today; steps 5 onward need the owner's 
    where `expected_policy` is `select`, `refuse_ambiguous`, `refuse_no_target`,
    `refuse_unsupported` or `refuse_no_pre_movement`. Refusal clips have no seed file.
 
-   The plan asks for two annotators who do not see candidate overlays or scores. A second
-   person is best; if you must be both, do the second pass (`b`) at least a day later without
-   opening the first. Keep both labels and note disagreements; do not overwrite one with
-   the other.
-7. **Record the owner decision on #178.** State DEFER or PROCEED. PROCEED must cite the plan
-   revision, the allowed research entry point, the input split in this document, the
-   candidate configurations, the resource budget and the stop criteria.
-8. **Hand over to agents.** Only after step 7, ask for the freeze record
+   Formal Prompt 1 cases require two independent annotators who do not see candidates, scores,
+   earlier results or each other's labels. A delayed second pass by the same person estimates
+   intra-annotator repeatability only; it does not replace the independent passes. Keep both
+   labels and blind adjudication, including unresolved cases; do not overwrite originals.
+7. **Bind the recorded owner decision.** Cite the committed parent plan's Prompt 1 decision;
+   do not invent a #178 comment. Wider work requires its own owner decision.
+8. **Complete the readiness gates.** Retain the freeze record
    ([template](PLATE_SELECTION_FREEZE_RECORD.md); hashed manifest,
    labels, candidate code and configuration, frame-search horizon, refusal rules, repeat
-   count) to be created before the first scored run. Agents then build the research harness
-   against `split-exploration`, and score `split-frozen-eval` once.
+   count) before the first scored run. The current preparation builds and checks only the
+   observation harness on synthetic inputs. It does not score `split-frozen-eval`.
 
 If steps 3–6 are not completed, the correct report is "insufficient independent evidence",
 not a result on the exploration clips.

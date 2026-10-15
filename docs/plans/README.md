@@ -17,7 +17,10 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
 
 - [Automatic plate selection (#178)](AUTOMATIC_PLATE_SELECTION_PLAN.md): #95/#113 reuse audit,
   proposed import/correction behavior and development evaluation protocol. Prototype implementation
-  is deferred pending a separate owner scope decision; this plan does not authorize M1 entry.
+  remains deferred beyond the owner's **PROCEED — Prompt 1 only** preparation decision.
+  [Hough top-K preparation](HOUGH_TOP_K_PREPARATION.md) records the observation harness,
+  independent annotation and preregistration protocol: **READY-BUT-NOT-SCORED**, with data
+  readiness still blocked. Neither plan authorizes M1 entry or Prompt 2.
 
 ## Recommended plan structure
 
