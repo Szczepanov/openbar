@@ -499,6 +499,7 @@ fn data_error(message: impl Into<String>) -> Box<dyn Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn run_experiment_produces_valid_artifact_and_scenarios() {
@@ -507,29 +508,30 @@ mod tests {
         assert_eq!(artifact.experiment_version, "m0-first-trackers-v1");
         assert!(!artifact.results.is_empty());
 
-        // Check scenarios evaluated
-        let scenario_names: Vec<&str> = artifact.results.iter().map(|r| r.scenario).collect();
-        assert!(scenario_names.contains(&"stationary"));
-        assert!(scenario_names.contains(&"slow-translation"));
-        assert!(scenario_names.contains(&"fast-translation"));
-        assert!(scenario_names.contains(&"full-occlusion-reentry"));
-        assert!(scenario_names.contains(&"appearance-low-contrast"));
-        assert!(scenario_names.contains(&"partial-occlusion"));
-        assert!(scenario_names.contains(&"smaller-target"));
-
-        // Both Template and Contrast trackers are evaluated per scenario
-        let template_count = artifact
+        // Every scenario is evaluated by both trackers, exactly once.
+        let actual: BTreeSet<(&str, &str)> = artifact
             .results
             .iter()
-            .filter(|r| r.tracker_id == "template-sad-v1")
-            .count();
-        let contrast_count = artifact
-            .results
-            .iter()
-            .filter(|r| r.tracker_id == "local-contrast-centroid-v1")
-            .count();
-        assert_eq!(template_count, 7);
-        assert_eq!(contrast_count, 7);
+            .map(|r| (r.scenario, r.tracker_id.as_str()))
+            .collect();
+        let expected: BTreeSet<(&str, &str)> = [
+            "stationary",
+            "slow-translation",
+            "fast-translation",
+            "full-occlusion-reentry",
+            "appearance-low-contrast",
+            "partial-occlusion",
+            "smaller-target",
+        ]
+        .into_iter()
+        .flat_map(|scenario| {
+            ["template-sad-v1", "local-contrast-centroid-v1"]
+                .into_iter()
+                .map(move |tracker| (scenario, tracker))
+        })
+        .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(artifact.results.len(), expected.len());
 
         let summary = render_summary(&artifact);
         assert!(summary.contains("OpenBar first tracker comparison"));
@@ -542,8 +544,11 @@ mod tests {
         scenario.timestamps.pop(); // create misalignment
         let err = validate_scenario(&scenario).unwrap_err();
         assert!(err.to_string().contains("misaligned inputs"));
+    }
 
-        let mut empty_scenario = scenario.clone();
+    #[test]
+    fn validate_scenario_rejects_empty_inputs() {
+        let mut empty_scenario = scenarios()[0].clone();
         empty_scenario.timestamps.clear();
         empty_scenario.truth_centers.clear();
         empty_scenario.rendered_centers.clear();
@@ -568,26 +573,34 @@ mod tests {
             .contains("unknown tracker-experiment argument"));
     }
 
-    #[test]
-    fn run_cli_writes_output_file() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("test-tracker-exp-{}", std::process::id()));
-        let output_file = temp_dir.join("subfolder").join("output.json");
-        let _ = fs::remove_dir_all(&temp_dir);
+    struct TempDir(PathBuf);
 
-        let result = run_cli_from_args(["--output", output_file.to_str().unwrap()]);
-        assert!(result.is_ok());
-
-        assert!(output_file.exists());
-        let content = fs::read_to_string(&output_file).unwrap();
-        assert!(content.contains("\"schema_version\": 1"));
-        assert!(content.contains("\"experiment_version\": \"m0-first-trackers-v1\""));
-
-        let _ = fs::remove_dir_all(&temp_dir);
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
-    fn helper_functions_work_as_expected() {
+    fn run_cli_writes_output_file() {
+        let temp_dir = TempDir(
+            std::env::temp_dir().join(format!("openbar-tracker-experiment-{}", std::process::id())),
+        );
+        let _ = fs::remove_dir_all(&temp_dir.0);
+        let output_file = temp_dir.0.join("subfolder").join("output.json");
+
+        run_cli_from_args(["--output", output_file.to_str().unwrap()]).expect("run should succeed");
+
+        let content = fs::read_to_string(&output_file).expect("output file written");
+        assert!(content.ends_with('\n'));
+        let value: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["experiment_version"], "m0-first-trackers-v1");
+        assert_eq!(value["results"].as_array().map(Vec::len), Some(14));
+    }
+
+    #[test]
+    fn loss_counts_low_confidence_and_mean_confidence_from_run() {
         let dummy_diagnostics = openbar_tracking::TrackerDiagnostics {
             quality_score: None,
             displacement_px: None,
