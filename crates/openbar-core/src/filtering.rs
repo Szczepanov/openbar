@@ -795,19 +795,32 @@ fn solve_linear_system(
         }
         rhs[pivot] /= pivot_value;
 
-        let pivot_row = matrix[pivot].clone();
-        for (row, values) in matrix.iter_mut().enumerate() {
-            if row == pivot {
-                continue;
-            }
+        let (top_matrix, bottom_matrix) = matrix.split_at_mut(pivot);
+        let (pivot_row_slice, bottom_matrix) = bottom_matrix.split_at_mut(1);
+        let pivot_row = &pivot_row_slice[0];
+        let pivot_rhs = rhs[pivot];
+
+        let (top_rhs, bottom_rhs) = rhs.split_at_mut(pivot);
+        let bottom_rhs = &mut bottom_rhs[1..];
+
+        for (values, r) in top_matrix.iter_mut().zip(top_rhs.iter_mut()) {
             let factor = values[pivot];
-            if factor == 0.0 {
-                continue;
+            if factor != 0.0 {
+                for (column, value) in values.iter_mut().enumerate().skip(pivot) {
+                    *value -= factor * pivot_row[column];
+                }
+                *r -= factor * pivot_rhs;
             }
-            for (column, value) in values.iter_mut().enumerate().skip(pivot) {
-                *value -= factor * pivot_row[column];
+        }
+
+        for (values, r) in bottom_matrix.iter_mut().zip(bottom_rhs.iter_mut()) {
+            let factor = values[pivot];
+            if factor != 0.0 {
+                for (column, value) in values.iter_mut().enumerate().skip(pivot) {
+                    *value -= factor * pivot_row[column];
+                }
+                *r -= factor * pivot_rhs;
             }
-            rhs[row] -= factor * rhs[pivot];
         }
     }
     Ok(rhs)
