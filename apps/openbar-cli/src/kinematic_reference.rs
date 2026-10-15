@@ -687,47 +687,72 @@ fn require_exact(path: &str, actual: &str, expected: &str) -> AnyResult<()> {
 }
 
 fn evaluate_study(study: &StudySpec, study_path: &Path) -> ReferenceStudyResult {
-    let mut cases = Vec::with_capacity(study.cases.len());
+    let cases = study
+        .cases
+        .iter()
+        .map(|case| evaluate_case(study, case, study_path))
+        .collect::<Vec<_>>();
 
-    for case in &study.cases {
-        if case.status == StudyCaseStatus::Unsupported {
-            cases.push(CaseResult {
-                id: case.id.clone(),
-                condition: case.condition.clone(),
-                outcome: CaseOutcome::Unsupported,
-                reference_sample_count: case.reference_samples.len(),
-                reference_uncertainty: case.reference_uncertainty.clone(),
-                failure_reason: case.unsupported_reason.clone(),
-                metrics: None,
-                openbar_provenance: None,
-            });
-            continue;
-        }
+    let summary = compute_study_summary(&cases);
+    let gates = evaluate_study_gates(
+        &cases,
+        &study.target_revisions,
+        summary.failed_supported_cases,
+    );
 
-        match evaluate_supported_case(study, case, study_path) {
-            Ok((metrics, provenance)) => cases.push(CaseResult {
-                id: case.id.clone(),
-                condition: case.condition.clone(),
-                outcome: CaseOutcome::Evaluated,
-                reference_sample_count: case.reference_samples.len(),
-                reference_uncertainty: case.reference_uncertainty.clone(),
-                failure_reason: None,
-                metrics: Some(metrics),
-                openbar_provenance: Some(provenance),
-            }),
-            Err(reason) => cases.push(CaseResult {
-                id: case.id.clone(),
-                condition: case.condition.clone(),
-                outcome: CaseOutcome::Failed,
-                reference_sample_count: case.reference_samples.len(),
-                reference_uncertainty: case.reference_uncertainty.clone(),
-                failure_reason: Some(reason),
-                metrics: None,
-                openbar_provenance: None,
-            }),
-        }
+    ReferenceStudyResult {
+        schema_version: RESULT_SCHEMA_VERSION,
+        study_id: study.study_id.clone(),
+        evidence_class: study.evidence_class,
+        purpose: study.purpose.clone(),
+        reference: study.reference.clone(),
+        construct: study.construct.clone(),
+        summary,
+        cases,
+        gates,
+        limitations: study_limitations(),
+    }
+}
+
+fn evaluate_case(study: &StudySpec, case: &StudyCase, study_path: &Path) -> CaseResult {
+    if case.status == StudyCaseStatus::Unsupported {
+        return CaseResult {
+            id: case.id.clone(),
+            condition: case.condition.clone(),
+            outcome: CaseOutcome::Unsupported,
+            reference_sample_count: case.reference_samples.len(),
+            reference_uncertainty: case.reference_uncertainty.clone(),
+            failure_reason: case.unsupported_reason.clone(),
+            metrics: None,
+            openbar_provenance: None,
+        };
     }
 
+    match evaluate_supported_case(study, case, study_path) {
+        Ok((metrics, provenance)) => CaseResult {
+            id: case.id.clone(),
+            condition: case.condition.clone(),
+            outcome: CaseOutcome::Evaluated,
+            reference_sample_count: case.reference_samples.len(),
+            reference_uncertainty: case.reference_uncertainty.clone(),
+            failure_reason: None,
+            metrics: Some(metrics),
+            openbar_provenance: Some(provenance),
+        },
+        Err(reason) => CaseResult {
+            id: case.id.clone(),
+            condition: case.condition.clone(),
+            outcome: CaseOutcome::Failed,
+            reference_sample_count: case.reference_samples.len(),
+            reference_uncertainty: case.reference_uncertainty.clone(),
+            failure_reason: Some(reason),
+            metrics: None,
+            openbar_provenance: None,
+        },
+    }
+}
+
+fn compute_study_summary(cases: &[CaseResult]) -> StudySummary {
     let evaluated_cases = cases
         .iter()
         .filter(|case| case.outcome == CaseOutcome::Evaluated)
@@ -746,6 +771,20 @@ fn evaluate_study(study: &StudySpec, study_path: &Path) -> ReferenceStudyResult 
         .map(|case| case.reference_sample_count)
         .sum();
 
+    StudySummary {
+        total_cases: cases.len(),
+        evaluated_cases,
+        failed_supported_cases,
+        unsupported_cases,
+        evaluated_reference_samples,
+    }
+}
+
+fn evaluate_study_gates(
+    cases: &[CaseResult],
+    target_revisions: &GateRevisions,
+    failed_supported_cases: usize,
+) -> GateResults {
     let rom_errors = cases
         .iter()
         .filter_map(|case| case.metrics.as_ref().map(|metrics| metrics.rom_error_m))
@@ -767,51 +806,36 @@ fn evaluate_study(study: &StudySpec, study_path: &Path) -> ReferenceStudyResult 
         })
         .collect::<Vec<_>>();
 
-    let gates = GateResults {
+    GateResults {
         rom_mae_m: evaluate_gate(
             ROM_TARGET_M,
             &rom_errors,
             failed_supported_cases,
-            study.target_revisions.rom.as_ref(),
+            target_revisions.rom.as_ref(),
         ),
         mean_velocity_mae_mps: evaluate_gate(
             MEAN_VELOCITY_TARGET_MPS,
             &mean_errors,
             failed_supported_cases,
-            study.target_revisions.mean_velocity.as_ref(),
+            target_revisions.mean_velocity.as_ref(),
         ),
         peak_velocity_mae_mps: evaluate_gate(
             PEAK_VELOCITY_TARGET_MPS,
             &peak_errors,
             failed_supported_cases,
-            study.target_revisions.peak_velocity.as_ref(),
+            target_revisions.peak_velocity.as_ref(),
         ),
-    };
-
-    ReferenceStudyResult {
-        schema_version: RESULT_SCHEMA_VERSION,
-        study_id: study.study_id.clone(),
-        evidence_class: study.evidence_class,
-        purpose: study.purpose.clone(),
-        reference: study.reference.clone(),
-        construct: study.construct.clone(),
-        summary: StudySummary {
-            total_cases: cases.len(),
-            evaluated_cases,
-            failed_supported_cases,
-            unsupported_cases,
-            evaluated_reference_samples,
-        },
-        cases,
-        gates,
-        limitations: vec![
-            "Gate status is scoped only to the conditions, axis, intervals, reference system, and OpenBar provenance recorded in this study.",
-            "Reference uncertainty is reported, not subtracted from OpenBar error and not converted into an unstated confidence interval.",
-            "Unsupported cases remain explicit and are never included in gate averages; expected-supported failures force gate FAIL.",
-            "PASS does not validate recording conditions or constructs outside the documented study envelope.",
-            "This artifact does not authorize automatic detection or a Flutter/product accuracy claim beyond the study design.",
-        ],
     }
+}
+
+fn study_limitations() -> Vec<&'static str> {
+    vec![
+        "Gate status is scoped only to the conditions, axis, intervals, reference system, and OpenBar provenance recorded in this study.",
+        "Reference uncertainty is reported, not subtracted from OpenBar error and not converted into an unstated confidence interval.",
+        "Unsupported cases remain explicit and are never included in gate averages; expected-supported failures force gate FAIL.",
+        "PASS does not validate recording conditions or constructs outside the documented study envelope.",
+        "This artifact does not authorize automatic detection or a Flutter/product accuracy claim beyond the study design.",
+    ]
 }
 
 fn evaluate_supported_case(
