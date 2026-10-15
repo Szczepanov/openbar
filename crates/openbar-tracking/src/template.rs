@@ -255,8 +255,43 @@ mod tests {
     }
 
     #[test]
+    fn try_new_accepts_range_boundaries() {
+        for search_radius_px in [1, i32::MAX as u32] {
+            let config = TemplateMatchConfig {
+                search_radius_px,
+                ..TemplateMatchConfig::default()
+            };
+            assert_eq!(
+                TemplateMatchTracker::try_new(config),
+                Ok(TemplateMatchTracker { config })
+            );
+        }
+
+        let config = TemplateMatchConfig {
+            low_confidence_normalized_mean_absolute_difference: 0.0,
+            max_normalized_mean_absolute_difference: 1.0,
+            seed_timestamp_tolerance_s: 0.0,
+            ..TemplateMatchConfig::default()
+        };
+        assert_eq!(
+            TemplateMatchTracker::try_new(config),
+            Ok(TemplateMatchTracker { config })
+        );
+
+        let config = TemplateMatchConfig {
+            low_confidence_normalized_mean_absolute_difference: 0.2,
+            max_normalized_mean_absolute_difference: 0.2,
+            ..TemplateMatchConfig::default()
+        };
+        assert_eq!(
+            TemplateMatchTracker::try_new(config),
+            Ok(TemplateMatchTracker { config })
+        );
+    }
+
+    #[test]
     fn try_new_validates_search_radius() {
-        for bad_radius in [0, u32::MAX] {
+        for bad_radius in [0, i32::MAX as u32 + 1, u32::MAX] {
             let config = TemplateMatchConfig {
                 search_radius_px: bad_radius,
                 ..TemplateMatchConfig::default()
@@ -272,7 +307,7 @@ mod tests {
 
     #[test]
     fn try_new_validates_low_confidence_difference() {
-        for bad_val in [f64::NAN, f64::INFINITY, -0.1, 1.05] {
+        for bad_val in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.05] {
             let config = TemplateMatchConfig {
                 low_confidence_normalized_mean_absolute_difference: bad_val,
                 ..TemplateMatchConfig::default()
@@ -288,7 +323,7 @@ mod tests {
 
     #[test]
     fn try_new_validates_max_difference() {
-        for bad_val in [f64::NAN, f64::INFINITY, -0.1, 1.05] {
+        for bad_val in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1, 1.05] {
             let config = TemplateMatchConfig {
                 max_normalized_mean_absolute_difference: bad_val,
                 ..TemplateMatchConfig::default()
@@ -316,7 +351,7 @@ mod tests {
 
     #[test]
     fn try_new_validates_seed_timestamp_tolerance() {
-        for bad_tol in [f64::NAN, f64::INFINITY, -1e-6] {
+        for bad_tol in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1e-6] {
             let config = TemplateMatchConfig {
                 seed_timestamp_tolerance_s: bad_tol,
                 ..TemplateMatchConfig::default()
