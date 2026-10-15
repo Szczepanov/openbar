@@ -429,72 +429,65 @@ fn compute_butterworth_decision(
     (decision, rationale)
 }
 
-fn run_butterworth_experiment() -> AnyResult<ButterworthExperimentArtifact> {
-    let scenarios = scenarios();
-    let development_scenarios = scenarios
-        .iter()
-        .filter(|scenario| scenario.split == "development")
-        .collect::<Vec<_>>();
-    let validation_scenarios = scenarios
-        .iter()
-        .filter(|scenario| scenario.split == "held_out_validation")
-        .collect::<Vec<_>>();
+fn evaluate_butterworth_candidate(
+    config: &ButterworthExperimentalConfig,
+    development_scenarios: &[&Scenario],
+) -> AnyResult<ButterworthCandidateSummary> {
+    let mut scenario_results = Vec::new();
+    let mut unsupported_scenarios = Vec::new();
+    let mut applicable_count = 0;
+    let mut unsupported_count = 0;
 
-    let grid = butterworth_grid();
-    let mut candidate_summaries = Vec::new();
-
-    for config in &grid {
-        let mut scenario_results = Vec::new();
-        let mut unsupported_scenarios = Vec::new();
-        let mut applicable_count = 0;
-        let mut unsupported_count = 0;
-
-        for scenario in &development_scenarios {
-            match evaluate_butterworth_scenario(scenario, config)? {
-                ButterworthScenarioOutcome::Supported(res) => {
-                    applicable_count += 1;
-                    scenario_results.push(*res);
-                }
-                ButterworthScenarioOutcome::Unsupported { rejection_reason } => {
-                    unsupported_count += 1;
-                    unsupported_scenarios.push(UnsupportedScenarioRecord {
-                        scenario: scenario.name,
-                        split: scenario.split,
-                        condition: scenario.condition,
-                        noise_seed: scenario.noise_seed,
-                        rejection_reason,
-                    });
-                }
+    for scenario in development_scenarios {
+        match evaluate_butterworth_scenario(scenario, config)? {
+            ButterworthScenarioOutcome::Supported(res) => {
+                applicable_count += 1;
+                scenario_results.push(*res);
+            }
+            ButterworthScenarioOutcome::Unsupported { rejection_reason } => {
+                unsupported_count += 1;
+                unsupported_scenarios.push(UnsupportedScenarioRecord {
+                    scenario: scenario.name,
+                    split: scenario.split,
+                    condition: scenario.condition,
+                    noise_seed: scenario.noise_seed,
+                    rejection_reason,
+                });
             }
         }
-
-        let mean_position_rmse_m = mean_metric(&scenario_results, |m| m.position_rmse_m)
-            .ok_or_else(|| data_error("development position RMSE unexpectedly unavailable"))?;
-        let mean_velocity_rmse_mps = mean_metric(&scenario_results, |m| m.velocity_rmse_mps)
-            .ok_or_else(|| data_error("development velocity RMSE unexpectedly unavailable"))?;
-
-        candidate_summaries.push(ButterworthCandidateSummary {
-            filter: config.candidate_provenance(),
-            design_order: config.design_order,
-            effective_order: config.design_order * 2,
-            cutoff_hz: config.cutoff_hz,
-            cutoff_convention: if config.cutoff_correction {
-                "winter_double_pass_corrected"
-            } else {
-                "uncorrected_single_pass"
-            },
-            applicable_scenarios_count: applicable_count,
-            unsupported_scenarios_count: unsupported_count,
-            mean_position_rmse_m,
-            mean_velocity_rmse_mps,
-            scenarios: scenario_results,
-            unsupported_scenarios,
-        });
     }
 
+    let mean_position_rmse_m = mean_metric(&scenario_results, |m| m.position_rmse_m)
+        .ok_or_else(|| data_error("development position RMSE unexpectedly unavailable"))?;
+    let mean_velocity_rmse_mps = mean_metric(&scenario_results, |m| m.velocity_rmse_mps)
+        .ok_or_else(|| data_error("development velocity RMSE unexpectedly unavailable"))?;
+
+    Ok(ButterworthCandidateSummary {
+        filter: config.candidate_provenance(),
+        design_order: config.design_order,
+        effective_order: config.design_order * 2,
+        cutoff_hz: config.cutoff_hz,
+        cutoff_convention: if config.cutoff_correction {
+            "winter_double_pass_corrected"
+        } else {
+            "uncorrected_single_pass"
+        },
+        applicable_scenarios_count: applicable_count,
+        unsupported_scenarios_count: unsupported_count,
+        mean_position_rmse_m,
+        mean_velocity_rmse_mps,
+        scenarios: scenario_results,
+        unsupported_scenarios,
+    })
+}
+
+fn select_butterworth_candidate(candidates: &[ButterworthCandidateSummary]) -> Option<usize> {
+    if candidates.is_empty() {
+        return None;
+    }
     let mut best_index = 0;
-    for (index, candidate) in candidate_summaries.iter().enumerate() {
-        let incumbent = &candidate_summaries[best_index];
+    for (index, candidate) in candidates.iter().enumerate() {
+        let incumbent = &candidates[best_index];
         let velocity_better =
             candidate.mean_velocity_rmse_mps < incumbent.mean_velocity_rmse_mps - 1.0e-12;
         let velocity_tied =
@@ -505,13 +498,16 @@ fn run_butterworth_experiment() -> AnyResult<ButterworthExperimentArtifact> {
             best_index = index;
         }
     }
+    Some(best_index)
+}
 
-    let winning_config = grid[best_index];
-    let selected_provenance = winning_config.candidate_provenance();
-
+fn evaluate_butterworth_validation_cases(
+    config: &ButterworthExperimentalConfig,
+    validation_scenarios: &[&Scenario],
+) -> AnyResult<Vec<ButterworthValidationCase>> {
     let mut held_out_validation = Vec::new();
     for scenario in validation_scenarios {
-        let case = match evaluate_butterworth_scenario(scenario, &winning_config)? {
+        let case = match evaluate_butterworth_scenario(scenario, config)? {
             ButterworthScenarioOutcome::Supported(res) => ButterworthValidationCase {
                 scenario: scenario.name,
                 status: "supported",
@@ -529,6 +525,38 @@ fn run_butterworth_experiment() -> AnyResult<ButterworthExperimentArtifact> {
         };
         held_out_validation.push(case);
     }
+    Ok(held_out_validation)
+}
+
+fn run_butterworth_experiment() -> AnyResult<ButterworthExperimentArtifact> {
+    let scenarios = scenarios();
+    let development_scenarios = scenarios
+        .iter()
+        .filter(|scenario| scenario.split == "development")
+        .collect::<Vec<_>>();
+    let validation_scenarios = scenarios
+        .iter()
+        .filter(|scenario| scenario.split == "held_out_validation")
+        .collect::<Vec<_>>();
+
+    let grid = butterworth_grid();
+    let mut candidate_summaries = Vec::new();
+
+    for config in &grid {
+        candidate_summaries.push(evaluate_butterworth_candidate(
+            config,
+            &development_scenarios,
+        )?);
+    }
+
+    let best_index = select_butterworth_candidate(&candidate_summaries)
+        .ok_or_else(|| data_error("no candidate summaries available"))?;
+
+    let winning_config = grid[best_index];
+    let selected_provenance = winning_config.candidate_provenance();
+
+    let held_out_validation =
+        evaluate_butterworth_validation_cases(&winning_config, &validation_scenarios)?;
 
     let baseline_artifact = run_experiment()?;
     let (decision, decision_rationale) = compute_butterworth_decision(
