@@ -86,6 +86,77 @@ struct PredictionPoint {
     y_px: f64,
 }
 
+impl PredictionSample {
+    fn validate_and_adapt(
+        &self,
+        index: usize,
+        display_width_px: u32,
+        display_height_px: u32,
+    ) -> CliResult<(TrackingState, Option<PixelObservation>)> {
+        match self.state {
+            PredictionState::Tracked => {
+                self.adapt_tracked(index, display_width_px, display_height_px)
+            }
+            PredictionState::Lost => self.adapt_lost(index),
+        }
+    }
+
+    fn adapt_tracked(
+        &self,
+        index: usize,
+        display_width_px: u32,
+        display_height_px: u32,
+    ) -> CliResult<(TrackingState, Option<PixelObservation>)> {
+        let center = self.center_px.ok_or_else(|| {
+            CliError::invalid_input(format!(
+                "external observation {index} is tracked but has no center_px"
+            ))
+        })?;
+        let confidence = self.confidence.ok_or_else(|| {
+            CliError::invalid_input(format!(
+                "external observation {index} is tracked but has no confidence"
+            ))
+        })?;
+        if !center.x_px.is_finite() || !center.y_px.is_finite() {
+            return Err(CliError::invalid_input(format!(
+                "external observation {index} center_px coordinates must be finite"
+            )));
+        }
+        if center.x_px < 0.0
+            || center.x_px >= f64::from(display_width_px)
+            || center.y_px < 0.0
+            || center.y_px >= f64::from(display_height_px)
+        {
+            return Err(CliError::invalid_input(format!(
+                "external observation {index} center_px lies outside the decoded display window"
+            )));
+        }
+        if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+            return Err(CliError::invalid_input(format!(
+                "external observation {index} confidence must be finite and in [0, 1]"
+            )));
+        }
+        Ok((
+            TrackingState::Tracked,
+            Some(PixelObservation {
+                timestamp_s: self.timestamp_s,
+                x_px: center.x_px,
+                y_px: center.y_px,
+                confidence,
+            }),
+        ))
+    }
+
+    fn adapt_lost(&self, index: usize) -> CliResult<(TrackingState, Option<PixelObservation>)> {
+        if self.center_px.is_some() || self.confidence.is_some() {
+            return Err(CliError::invalid_input(format!(
+                "external observation {index} is lost and must not carry center_px or confidence"
+            )));
+        }
+        Ok((TrackingState::Lost, None))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn load_external_observations(
     path: &Path,
@@ -258,56 +329,8 @@ fn validate_and_adapt(
         }
         previous_frame_index = Some(matched_frame.frame_index);
 
-        let (tracking_state, measurement) = match sample.state {
-            PredictionState::Tracked => {
-                let center = sample.center_px.ok_or_else(|| {
-                    CliError::invalid_input(format!(
-                        "external observation {index} is tracked but has no center_px"
-                    ))
-                })?;
-                let confidence = sample.confidence.ok_or_else(|| {
-                    CliError::invalid_input(format!(
-                        "external observation {index} is tracked but has no confidence"
-                    ))
-                })?;
-                if !center.x_px.is_finite() || !center.y_px.is_finite() {
-                    return Err(CliError::invalid_input(format!(
-                        "external observation {index} center_px coordinates must be finite"
-                    )));
-                }
-                if center.x_px < 0.0
-                    || center.x_px >= f64::from(display_width_px)
-                    || center.y_px < 0.0
-                    || center.y_px >= f64::from(display_height_px)
-                {
-                    return Err(CliError::invalid_input(format!(
-                        "external observation {index} center_px lies outside the decoded display window"
-                    )));
-                }
-                if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
-                    return Err(CliError::invalid_input(format!(
-                        "external observation {index} confidence must be finite and in [0, 1]"
-                    )));
-                }
-                (
-                    TrackingState::Tracked,
-                    Some(PixelObservation {
-                        timestamp_s: sample.timestamp_s,
-                        x_px: center.x_px,
-                        y_px: center.y_px,
-                        confidence,
-                    }),
-                )
-            }
-            PredictionState::Lost => {
-                if sample.center_px.is_some() || sample.confidence.is_some() {
-                    return Err(CliError::invalid_input(format!(
-                        "external observation {index} is lost and must not carry center_px or confidence"
-                    )));
-                }
-                (TrackingState::Lost, None)
-            }
-        };
+        let (tracking_state, measurement) =
+            sample.validate_and_adapt(index, display_width_px, display_height_px)?;
 
         raw_observations.push(RawObservation {
             timestamp_s: sample.timestamp_s,
