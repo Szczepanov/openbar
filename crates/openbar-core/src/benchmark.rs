@@ -341,75 +341,30 @@ pub fn evaluate_tracker_case(
 }
 
 pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
-    let comparable_samples = metrics.iter().map(|value| value.comparable_samples).sum();
-    let tracked_samples = metrics.iter().map(|value| value.tracked_samples).sum();
-    let lost_samples = metrics.iter().map(|value| value.lost_samples).sum();
-    let tracker_declared_loss_samples = metrics
-        .iter()
-        .map(|value| value.tracker_declared_loss_samples)
-        .sum();
-    let low_confidence_samples = metrics
-        .iter()
-        .map(|value| value.low_confidence_samples)
-        .sum();
-    let timestamp_unmatched_samples = metrics
-        .iter()
-        .map(|value| value.timestamp_unmatched_samples)
-        .sum();
+    let sum_samples = |f: fn(&TrackerMetrics) -> usize| metrics.iter().map(f).sum();
+    let comparable_samples = sum_samples(|m| m.comparable_samples);
+    let tracked_samples = sum_samples(|m| m.tracked_samples);
+    let lost_samples = sum_samples(|m| m.lost_samples);
+    let tracker_declared_loss_samples = sum_samples(|m| m.tracker_declared_loss_samples);
+    let low_confidence_samples = sum_samples(|m| m.low_confidence_samples);
+    let timestamp_unmatched_samples = sum_samples(|m| m.timestamp_unmatched_samples);
 
-    let plate_center_mae_px = weighted_mean(
-        metrics,
-        |value| value.plate_center_mae_px,
-        |value| value.tracked_samples,
-    );
-    let x_mae_px = weighted_mean(
-        metrics,
-        |value| value.x_mae_px,
-        |value| value.tracked_samples,
-    );
-    let y_mae_px = weighted_mean(
-        metrics,
-        |value| value.y_mae_px,
-        |value| value.tracked_samples,
-    );
-    let x_bias_px = weighted_mean(
-        metrics,
-        |value| value.x_bias_px,
-        |value| value.tracked_samples,
-    );
-    let y_bias_px = weighted_mean(
-        metrics,
-        |value| value.y_bias_px,
-        |value| value.tracked_samples,
-    );
-
-    let x_rmse_squared_mean = weighted_mean(
-        metrics,
-        |value| value.x_rmse_px.map(|metric| metric * metric),
-        |value| value.tracked_samples,
-    );
-    let x_rmse_px = x_rmse_squared_mean.map(f64::sqrt);
-    let y_rmse_squared_mean = weighted_mean(
-        metrics,
-        |value| value.y_rmse_px.map(|metric| metric * metric),
-        |value| value.tracked_samples,
-    );
-    let y_rmse_px = y_rmse_squared_mean.map(f64::sqrt);
-
-    let rmse_squared_mean = weighted_mean(
-        metrics,
-        |value| value.plate_center_rmse_px.map(|metric| metric * metric),
-        |value| value.tracked_samples,
-    );
-    let plate_center_rmse_px = rmse_squared_mean.map(f64::sqrt);
+    let plate_center_mae_px = weighted_tracked_mean(metrics, |m| m.plate_center_mae_px);
+    let plate_center_rmse_px = weighted_tracked_rmse(metrics, |m| m.plate_center_rmse_px);
+    let x_mae_px = weighted_tracked_mean(metrics, |m| m.x_mae_px);
+    let x_rmse_px = weighted_tracked_rmse(metrics, |m| m.x_rmse_px);
+    let y_mae_px = weighted_tracked_mean(metrics, |m| m.y_mae_px);
+    let y_rmse_px = weighted_tracked_rmse(metrics, |m| m.y_rmse_px);
+    let x_bias_px = weighted_tracked_mean(metrics, |m| m.x_bias_px);
+    let y_bias_px = weighted_tracked_mean(metrics, |m| m.y_bias_px);
 
     let max_consecutive_tracking_loss_samples = metrics
         .iter()
-        .filter_map(|value| value.max_consecutive_tracking_loss_samples)
+        .filter_map(|m| m.max_consecutive_tracking_loss_samples)
         .max();
     let max_consecutive_tracking_loss_duration_s = metrics
         .iter()
-        .filter_map(|value| value.max_consecutive_tracking_loss_duration_s)
+        .filter_map(|m| m.max_consecutive_tracking_loss_duration_s)
         .reduce(f64::max);
 
     let tracking_availability =
@@ -437,7 +392,7 @@ pub fn aggregate_metrics(metrics: &[TrackerMetrics]) -> TrackerMetrics {
         plate_center_p95_px: None,
         plate_center_max_px: metrics
             .iter()
-            .filter_map(|value| value.plate_center_max_px)
+            .filter_map(|m| m.plate_center_max_px)
             .reduce(f64::max),
         x_bias_px,
         y_bias_px,
@@ -600,6 +555,20 @@ fn weighted_mean(
     }
 
     (total_weight > 0).then_some(weighted_sum / total_weight as f64)
+}
+
+fn weighted_tracked_mean(
+    metrics: &[TrackerMetrics],
+    value: impl Fn(&TrackerMetrics) -> Option<f64>,
+) -> Option<f64> {
+    weighted_mean(metrics, value, |m| m.tracked_samples)
+}
+
+fn weighted_tracked_rmse(
+    metrics: &[TrackerMetrics],
+    value: impl Fn(&TrackerMetrics) -> Option<f64>,
+) -> Option<f64> {
+    weighted_mean(metrics, |m| value(m).map(|v| v * v), |m| m.tracked_samples).map(f64::sqrt)
 }
 
 fn empty_metrics() -> TrackerMetrics {

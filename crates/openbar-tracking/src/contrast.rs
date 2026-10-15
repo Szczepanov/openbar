@@ -247,3 +247,179 @@ impl ManualSeedTracker for LocalContrastTracker {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_new_valid_config() {
+        let default_config = LocalContrastConfig::default();
+        let tracker =
+            LocalContrastTracker::try_new(default_config).expect("default config is valid");
+        assert_eq!(tracker.config, default_config);
+
+        let custom_config = LocalContrastConfig {
+            search_radius_px: 5,
+            min_seed_contrast: 10.0,
+            min_mass_ratio: 0.2,
+            low_confidence_mass_ratio: 0.5,
+            seed_timestamp_tolerance_s: 0.001,
+        };
+        let custom_tracker =
+            LocalContrastTracker::try_new(custom_config).expect("custom config is valid");
+        assert_eq!(custom_tracker.config, custom_config);
+    }
+
+    #[test]
+    fn try_new_accepts_range_boundaries() {
+        let base = LocalContrastConfig::default();
+
+        for search_radius_px in [1, i32::MAX as u32] {
+            let config = LocalContrastConfig {
+                search_radius_px,
+                ..base
+            };
+            assert_eq!(
+                LocalContrastTracker::try_new(config),
+                Ok(LocalContrastTracker { config })
+            );
+        }
+
+        let config = LocalContrastConfig {
+            min_mass_ratio: 0.0,
+            low_confidence_mass_ratio: 1.0,
+            seed_timestamp_tolerance_s: 0.0,
+            ..base
+        };
+        assert_eq!(
+            LocalContrastTracker::try_new(config),
+            Ok(LocalContrastTracker { config })
+        );
+
+        let config = LocalContrastConfig {
+            min_mass_ratio: 0.5,
+            low_confidence_mass_ratio: 0.5,
+            ..base
+        };
+        assert_eq!(
+            LocalContrastTracker::try_new(config),
+            Ok(LocalContrastTracker { config })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_search_radius() {
+        let base = LocalContrastConfig::default();
+
+        assert_eq!(
+            LocalContrastTracker::try_new(LocalContrastConfig {
+                search_radius_px: 0,
+                ..base
+            }),
+            Err(TrackerError::InvalidConfiguration {
+                field: "search_radius_px"
+            })
+        );
+
+        assert_eq!(
+            LocalContrastTracker::try_new(LocalContrastConfig {
+                search_radius_px: u32::MAX,
+                ..base
+            }),
+            Err(TrackerError::InvalidConfiguration {
+                field: "search_radius_px"
+            })
+        );
+
+        assert_eq!(
+            LocalContrastTracker::try_new(LocalContrastConfig {
+                search_radius_px: i32::MAX as u32 + 1,
+                ..base
+            }),
+            Err(TrackerError::InvalidConfiguration {
+                field: "search_radius_px"
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_min_seed_contrast() {
+        let base = LocalContrastConfig::default();
+
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                LocalContrastTracker::try_new(LocalContrastConfig {
+                    min_seed_contrast: invalid,
+                    ..base
+                }),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "min_seed_contrast"
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn try_new_invalid_min_mass_ratio() {
+        let base = LocalContrastConfig::default();
+
+        for invalid in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                LocalContrastTracker::try_new(LocalContrastConfig {
+                    min_mass_ratio: invalid,
+                    ..base
+                }),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "min_mass_ratio"
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn try_new_invalid_low_confidence_mass_ratio() {
+        let base = LocalContrastConfig::default();
+
+        for invalid in [-0.1, 1.1, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                LocalContrastTracker::try_new(LocalContrastConfig {
+                    low_confidence_mass_ratio: invalid,
+                    ..base
+                }),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "low_confidence_mass_ratio"
+                })
+            );
+        }
+
+        // low_confidence_mass_ratio < min_mass_ratio
+        assert_eq!(
+            LocalContrastTracker::try_new(LocalContrastConfig {
+                min_mass_ratio: 0.5,
+                low_confidence_mass_ratio: 0.4,
+                ..base
+            }),
+            Err(TrackerError::InvalidConfiguration {
+                field: "low_confidence_mass_ratio"
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_seed_timestamp_tolerance_s() {
+        let base = LocalContrastConfig::default();
+
+        for invalid in [-1e-6, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                LocalContrastTracker::try_new(LocalContrastConfig {
+                    seed_timestamp_tolerance_s: invalid,
+                    ..base
+                }),
+                Err(TrackerError::InvalidConfiguration {
+                    field: "seed_timestamp_tolerance_s"
+                })
+            );
+        }
+    }
+}

@@ -495,3 +495,185 @@ pub(crate) fn distance(left: PixelPoint, right: PixelPoint) -> f64 {
     let dy = left.y_px() - right.y_px();
     dx.hypot(dy)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_new_valid_frame() {
+        assert_eq!(
+            GrayFrame::try_new(2, 3, vec![1, 2, 3, 4, 5, 6]),
+            Ok(GrayFrame {
+                width_px: 2,
+                height_px: 3,
+                pixels: vec![1, 2, 3, 4, 5, 6],
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_dimensions() {
+        assert_eq!(
+            GrayFrame::try_new(0, 10, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 0,
+                height_px: 10
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(10, 0, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 10,
+                height_px: 0
+            })
+        );
+        let too_large = i32::MAX as u32 + 1;
+        assert_eq!(
+            GrayFrame::try_new(too_large, 10, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: too_large,
+                height_px: 10
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(10, too_large, vec![]),
+            Err(TrackerError::InvalidFrameDimensions {
+                width_px: 10,
+                height_px: too_large
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_accepts_max_dimension_before_buffer_check() {
+        // The largest accepted dimension passes the dimension check and fails on
+        // buffer length. FrameBufferSizeOverflow is unreachable on 64-bit targets
+        // because i32::MAX * i32::MAX fits in usize, so it is not tested here.
+        assert_eq!(
+            GrayFrame::try_new(i32::MAX as u32, 1, vec![]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: i32::MAX as usize,
+                actual: 0
+            })
+        );
+    }
+
+    #[test]
+    fn try_new_invalid_buffer_length() {
+        assert_eq!(
+            GrayFrame::try_new(2, 2, vec![1, 2, 3]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: 4,
+                actual: 3
+            })
+        );
+        assert_eq!(
+            GrayFrame::try_new(2, 2, vec![1, 2, 3, 4, 5]),
+            Err(TrackerError::InvalidFrameBufferLength {
+                expected: 4,
+                actual: 5
+            })
+        );
+    }
+
+    fn dummy_identity() -> TrackerIdentity {
+        TrackerIdentity {
+            id: "test-tracker".to_string(),
+            implementation: "test".to_string(),
+            version: "1.0".to_string(),
+            config: BTreeMap::new(),
+            confidence_semantics: "normalized".to_string(),
+        }
+    }
+
+    fn dummy_diagnostics() -> TrackerDiagnostics {
+        TrackerDiagnostics {
+            quality_score: Some(0.9),
+            displacement_px: Some(1.2),
+            reacquired_after_loss: false,
+        }
+    }
+
+    #[test]
+    fn tracker_run_benchmark_predictions_maps_states_and_timestamps() {
+        let center1 = PixelPoint::new(10.0, 20.0);
+        let center2 = PixelPoint::new(15.0, 25.0);
+
+        let run = TrackerRun {
+            tracker: dummy_identity(),
+            seed_timestamp_s: 0.0,
+            observations: vec![
+                TrackerObservation {
+                    timestamp_s: 0.0,
+                    frame_index: Some(0),
+                    state: TrackerObservationState::Tracked {
+                        center: center1,
+                        confidence: 0.95,
+                    },
+                    visibility: TrackerVisibilityState::Unknown,
+                    target_bounds_px: None,
+                    diagnostics: dummy_diagnostics(),
+                },
+                TrackerObservation {
+                    timestamp_s: 0.1,
+                    frame_index: Some(1),
+                    state: TrackerObservationState::LowConfidence {
+                        center: center2,
+                        confidence: 0.30,
+                    },
+                    visibility: TrackerVisibilityState::Unknown,
+                    target_bounds_px: None,
+                    diagnostics: dummy_diagnostics(),
+                },
+                TrackerObservation {
+                    timestamp_s: 0.2,
+                    frame_index: Some(2),
+                    state: TrackerObservationState::Lost {
+                        reason: TrackerLossReason::PoorMatch,
+                    },
+                    visibility: TrackerVisibilityState::Unknown,
+                    target_bounds_px: None,
+                    diagnostics: dummy_diagnostics(),
+                },
+            ],
+        };
+
+        let predictions = run.benchmark_predictions();
+
+        assert_eq!(predictions.len(), 3);
+
+        assert_eq!(predictions[0].timestamp_s, 0.0);
+        assert_eq!(
+            predictions[0].state,
+            TrackerPredictionState::Tracked {
+                center: center1,
+                confidence: 0.95,
+            }
+        );
+
+        assert_eq!(predictions[1].timestamp_s, 0.1);
+        assert_eq!(
+            predictions[1].state,
+            TrackerPredictionState::Tracked {
+                center: center2,
+                confidence: 0.30,
+            }
+        );
+
+        assert_eq!(predictions[2].timestamp_s, 0.2);
+        assert_eq!(predictions[2].state, TrackerPredictionState::Lost);
+    }
+
+    #[test]
+    fn tracker_run_benchmark_predictions_handles_empty_observations() {
+        let run = TrackerRun {
+            tracker: dummy_identity(),
+            seed_timestamp_s: 0.0,
+            observations: Vec::new(),
+        };
+
+        let predictions = run.benchmark_predictions();
+        assert!(predictions.is_empty());
+    }
+}
