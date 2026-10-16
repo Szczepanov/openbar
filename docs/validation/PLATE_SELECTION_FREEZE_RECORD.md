@@ -238,4 +238,58 @@ finite JSON; that clip's single run is then used. Cold is the first call on the 
 the run process; warm is the median of `latency.repeats` further calls. The per-clip limit is
 checked after each clip, not enforced by preemption. Timings make the output non-reproducible by
 design. Label files are hashed but never read, and expected policy is not passed to the
-candidate. Scoring against labels is a separate, not yet built step.
+candidate.
+
+## Scorer
+
+`research/vbt-workflow/plate_selection_score.py` scores one run once, after it has finished:
+
+```bash
+python research/vbt-workflow/plate_selection_score.py --record <record.json> --record-sha256 <sha256> --run-dir validation/private/frozen-eval/runs/<freeze-id>
+```
+
+It re-checks the record's structure and every label, `labels.csv` and adjudication hash. It
+refuses observations or a run marker made for another record, observations that differ from
+`clips.jsonl` (or lack it) or do not cover exactly the record's clips, a run whose requested time
+differs from the record's `decision_frame_pts_s`, a pass with no row for the decoded frame,
+passes labelling different frames, a labelled frame time differing from the decoded one by more
+than 0.0005 s, duplicate label rows or adjudication entries, a non-finite or negative onset,
+`known_gaps` that is not a list of strings, and an existing `score.json` (it never overwrites
+one). Labels are read only here.
+
+- **Reference**, for the decision frame. With a decoded frame the label row is the one with that
+  frame index, so single-row `--at-s` packages and requested times between frames both work.
+  After an executor error the row nearest the requested time is used only within 0.02 s,
+  otherwise the reference is unresolved; that bound covers single-frame packages at 25 fps and
+  above, so below 25 fps a decode error may move a `select` case to indeterminate. Either way the clip keeps its policy group unless the
+  labels themselves cannot resolve it, and stays in every denominator:
+  - a clip the record marks `adjudication.unresolved: true` is unresolved, whatever the file holds;
+  - both passes need geometry there, and their radii must agree within Tr in every case, because
+    radius is not adjudicated and a concentric inner rim must never be averaged in;
+  - an adjudication entry for that clip and frame then decides the centre (`unresolved` leaves the
+    reference unresolved), with the passes' mean radius; an adjudication of another frame of the
+    clip does not apply;
+  - otherwise the centres must agree within Tc and the reference is the passes' mean.
+    Disagreeing passes are never averaged.
+
+  An unresolved reference, or no onset for passes `a`/`b` in `labels.csv`, makes a `select` case
+  indeterminate. The `labels.csv` policies are reported beside the record's frozen policy.
+- **Match:** `hypot(dx, dy) <= Tc` and `|dr| <= Tr` on the emitted geometry at its returned
+  precision. Tc and Tr are read from the record's `scoring.geometry_reference` text (`Tc=<n> px`,
+  `Tr=<n> px`, exactly once), never from the command line. Identity is geometric only: without a
+  scene or rim inventory, nearby or concentric distractors are not resolved, and the wrong-target
+  class is `unknown`.
+- **Groups and outcomes:** the plan's table, per clip and mutually exclusive, in this order: an
+  executor error; a timeout (over the per-clip limit, whatever was emitted); for R (`refuse_*`)
+  and U (`refuse_unsupported`), unsafe acceptance or correct refusal; for I, emitted or refused
+  without correctness; for S (`select`), missed/refused, then wrong-target, then timing failure
+  (decision time not before the earliest a/b onset, in seconds from stream start), else
+  accepted-correct. Emissions hidden by a timeout are counted per group, so an unsafe one in R/U
+  stays visible.
+- **Reported:** counts and 95% Wilson intervals (empty denominators not estimable) pooled, by
+  session and by challenge; raw, post-first-60, post-fit and top-1/3/5/10/20 membership over all
+  S with the K=20 funnel; pre-refinement top-1 correctness; geometry errors for accepted-correct
+  and wrong-target emissions; support margins by group; latency summaries.
+
+The output is descriptive and states its own limitations; it gives no pass, promotion or
+threshold verdict.
