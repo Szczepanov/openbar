@@ -75,9 +75,10 @@ Placeholders are written `<like this>`. Copy the block, fill every one, then has
         "session_id": "<id>",
         "role": "<split-exploration | split-frozen-eval>",
         "media_sha256": "<sha256>",
-        "purpose": "<development | boundary | ood>",
+        "purpose": "<the manifest purpose: development | boundary | ood | validation (shared pool, see PLATE_SELECTION_SPLIT.md)>",
         "challenge": "<row from the collection table>",
-        "expected_policy": "<select | refuse_ambiguous | refuse_no_target | refuse_unsupported | refuse_no_pre_movement>",
+        "expected_policy": "<select | refuse_ambiguous | refuse_no_target | refuse_unsupported | refuse_no_pre_movement | indeterminate>",
+        "decision_frame_pts_s": "<seconds from stream start, (pts - start_pts) * time_base, of the one decision frame; fixed without labels or candidate output>",
         "label_files": [
           { "annotator": "a", "path": "<path>", "sha256": "<sha256>" },
           { "annotator": "b", "path": "<path>", "sha256": "<sha256>" }
@@ -188,5 +189,53 @@ An agent confirms each item, and the owner is told if any fails:
 The numeric values (horizon, timeouts, repeat counts, sample-size minimum) and any audit sampling
 rate are the owner's, set at freeze time. This template deliberately proposes none. The record
 format is a research artifact; it changes no canonical schema, version, golden file or fixture.
-The observation harness alone is not a freeze validator or scorer. A reviewed frozen-data
-executor with complete-record/hash/role refusal is still required before real-data execution.
+The observation harness alone is not a freeze validator or scorer.
+
+## Executor
+
+`research/vbt-workflow/plate_selection_eval.py` is the frozen-data executor for the baseline:
+
+```bash
+python research/vbt-workflow/plate_selection_eval.py validate --record <record.json> --record-sha256 <sha256> --allow-held-out
+python research/vbt-workflow/plate_selection_eval.py run --record <record.json> --record-sha256 <sha256> --allow-held-out --output-dir validation/private/frozen-eval/runs/<freeze-id>
+```
+
+Before decoding anything or creating a directory it refuses:
+
+- a record whose SHA-256 differs from `--record-sha256`, malformed JSON, `NaN` or `Infinity`;
+- a missing field, an unfilled placeholder (`<` followed by a letter), a `DRAFT` status, or an
+  empty `statement`, `created_by`, `environment` value or owner decision (URL or record);
+- commits that are not full 40-hex ids of commits in the repository; any of `vbt_suggest.py`,
+  `hough_observe.py`, the executor, `label_package.py` or `manifest_roles.py` differing from
+  `candidates[0].code_commit`, or `held_out_guard.py` from `guard_commit`;
+- a candidate other than the unchanged `plate-hough-edge-v1` in `vbt_suggest.py`, or changed
+  `PlateParams` / `parameters_sha256`;
+- a manifest, media, label, `labels.csv` or adjudication hash mismatch, or a hash that is not
+  64-hex; label files other than exactly passes `a` and `b`;
+- a `split-reserved-57` clip (always), a clip whose only role is not `split-frozen-eval`, a clip
+  without a derivable session, a `session_id` or `purpose` differing from the manifest,
+  `inputs.sessions` not matching the clips, or a frozen session that crosses roles in the main
+  manifest or `validation/private/vbt/manifest.json`;
+- a held-out clip without `--allow-held-out`;
+- a horizon other than 0.0 s (only the single fixed-time frame is implemented), a mode other than
+  `descriptive`, a non-finite or negative `decision_frame_pts_s`;
+- a run directory that exists or is not directly under `validation/private/frozen-eval/runs/`, a
+  checkout other than the one holding `validation/private/`, and any earlier run that repeats
+  this one: the same `freeze_id` or record hash, or the same candidate parameters on any of the
+  same media unless `supersedes` names that earlier freeze. A directory under `runs/` without a
+  readable `started.json` object counts as an earlier run.
+
+`run` writes `started.json` (record, candidate and media identity, plus the Python, OpenCV and
+FFmpeg versions actually used) into a staging directory and renames it into place, then writes one
+line per clip to `clips.jsonl` as it goes, and `observations.json` at the end. Per clip it
+re-checks the media hash, decodes the frame nearest `decision_frame_pts_s` (seconds from stream
+start, as in `label_package --at-s`; ties take the earlier frame) through the `label_package`
+probe/decode path, executes the unchanged `suggest_plate`, and records the raw result, stage
+observations and timings. These per-clip checks run after the run has started, so a time outside
+the decoded range (never clamped), a probe that disagrees with the manifest's video metadata or a
+changed media hash is recorded as that clip's error, as is a result that cannot be written as
+finite JSON; that clip's single run is then used. Cold is the first call on the frame in
+the run process; warm is the median of `latency.repeats` further calls. The per-clip limit is
+checked after each clip, not enforced by preemption. Timings make the output non-reproducible by
+design. Label files are hashed but never read, and expected policy is not passed to the
+candidate. Scoring against labels is a separate, not yet built step.
