@@ -41,6 +41,16 @@ formal #79 inputs and promotion of proposal-exposed exploration into unseen evid
 role/hash mismatch, candidate exposure before independent labels, incomplete freeze or
 repeatability, any parameter change, or attempted expansion beyond Prompt 1.
 
+**Shared-pool amendment (owner decision on #178, 2026-10-16).** The "validation-purpose clips"
+prohibition above, and the #57 exclusion in "Development input roles", still bind
+`split-reserved-57` clips absolutely. They no longer bar a `split-frozen-eval` clip merely because
+its manifest `purpose` is `validation`. Such a clip may serve both this study and #57 only if:
+(1) neither study tunes any code, threshold or parameter on it; (2) each frozen candidate is scored
+once per study; (3) a candidate revised after unblinding in either study makes the pool
+development-only for both; and (4) `held_out_guard.py` is bypassed with `--allow-held-out` only
+inside a frozen run whose record lists the clip. See
+[PLATE_SELECTION_SPLIT.md](../validation/PLATE_SELECTION_SPLIT.md#shared-pool-with-57).
+
 The [Prompt 1 preparation protocol](HOUGH_TOP_K_PREPARATION.md) defines the annotation record,
 matching prerequisites, metrics, budget, precision analysis and readiness gates. The stage is
 **READY-BUT-NOT-SCORED** tooling/protocol preparation; a complete data freeze and formal

@@ -65,6 +65,7 @@ lifter and one barn. They support debugging and baseline behaviour on easy foota
 - No candidate code, threshold or parameter is tuned on `split-frozen-eval` clips. A candidate
   revised after unblinding makes that split development-only and needs a new frozen split.
 - `split-reserved-57` clips are not opened, decoded, annotated or scored by this work.
+  The shared-pool exception below never applies to them.
 - Labels come before any candidate output is seen. Model agreement, tracker consensus and
   a human accepting a proposal are not truth.
 - The initial baseline is **descriptive**: counts, denominators and Wilson intervals, with no
@@ -162,6 +163,23 @@ fields, repeatability and freeze sequencing below. PROCEED is recorded; data rea
 
 If steps 3–6 are not completed, the correct report is "insufficient independent evidence",
 not a result on the exploration clips.
+
+## Shared pool with #57
+
+Some `split-frozen-eval` clips carry manifest `purpose: validation` (for example the 2026-10-15
+snatch and back squat clips and five 2023 side-view clips). `held_out_guard.py` treats
+`purpose: validation` as held-out, so research entry points refuse them without `--allow-held-out`.
+They are not `split-reserved-57` and are not among the six reserved clips above. The owner
+decision on #178 (2026-10-16) lets them serve this study and #57 under these conditions:
+
+1. Neither study tunes any code, threshold or parameter on them.
+2. Each frozen candidate is scored once per study.
+3. A candidate revised after unblinding in either study makes the pool development-only for both.
+4. `--allow-held-out` is used only inside a frozen run, and only for clips listed in that run's
+   freeze record.
+
+Until a freeze record exists, a harness must not open, decode or score these clips. This applies
+the plan's shared-pool amendment; it changes no code, schema, version, golden file or fixture.
 
 ## Not changed by this document
 
