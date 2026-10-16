@@ -19,8 +19,11 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   proposed import/correction behavior and development evaluation protocol. Prototype implementation
   remains deferred beyond the owner's **PROCEED — Prompt 1 only** preparation decision.
   [Hough top-K preparation](HOUGH_TOP_K_PREPARATION.md) records the observation harness,
-  independent annotation and preregistration protocol: **READY-BUT-NOT-SCORED**, with data
-  readiness still blocked. Neither plan authorizes M1 entry or Prompt 2.
+  independent annotation and preregistration protocol. The baseline was run and scored once on
+  2026-10-16 ([report](../validation/PLATE_SELECTION_BASELINE_REPORT.md): 0/10, stage attribution
+  insufficient evidence). [Next evidence round](PLATE_SELECTION_NEXT_ROUND_PLAN.md): pilot
+  tolerances, scene inventory, refusal cases and new sessions. None of these plans authorizes M1
+  entry or Prompt 2.
 
 ## Recommended plan structure
 
