@@ -24,6 +24,11 @@ or URL is asserted. The source attachment was `Wklejony tekst.txt` in this task,
 `0638e7eb7fe9a370e001c4f197f10486a1fabf3569b2a54ae16b6363792e216c`. The owner's
 exact decision heading was `OWNER DECISION: PROCEED — Prompt 1 only`.
 
+**Update 2026-10-16.** A later owner decision on #178
+([comment](https://github.com/Szczepanov/openbar/issues/178#issuecomment-6211851867)) authorized
+one bounded, descriptive scored run of the unchanged baseline. It ran once; results, hashes and
+deviations are in [PLATE_SELECTION_BASELINE_REPORT.md](../validation/PLATE_SELECTION_BASELINE_REPORT.md).
+
 Research question: when the intended camera-facing outermost plate/end of the lifted barbell
 is independently identifiable, where does it appear in the current Hough pipeline? The allowed
 entry point is `research/vbt-workflow/hough_observe.py`, observing existing `suggest_plate`
