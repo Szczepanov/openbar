@@ -101,8 +101,9 @@ plate", score threshold 0.30, mask threshold 0.50, the same NMS and rim fit as `
 - **Geometry and cost.** Median radius error 1.6% (p90 6.7%), centre error 2.7% of the radius. Median 0.72 s per
   frame for both prompts together; for the first part of the run the GPU was shared with another session's SAM 2
   tracking job, so this is an upper estimate.
-- **Licence.** Meta's SAM License, not Apache-2.0: fine for this research, but anything shipped with it needs the
-  separate licence review that #233 requires.
+- **Licence.** Meta's SAM License, not Apache-2.0. Reviewed in
+  [SAM3_LICENCE_REVIEW.md](../legal/SAM3_LICENCE_REVIEW.md): fine for research and the owner's personal pipeline;
+  weights are never committed or bundled, and distributing them needs a new review.
 
 Run record (private): `run.json` SHA-256 `2f3ca5ee806f51423ff614ba268b5c5d4d324116f8ef069f47230aaf0925cc20`,
 `score.json` SHA-256 `61f419e7b0e8ad90289d09fa1ebb79f1297113ebe32e3746de158dac2024edf9`.
@@ -146,7 +147,8 @@ Run record (private): `run.json` SHA-256 `2f3ca5ee806f51423ff614ba268b5c5d4d3241
 ## Next steps
 
 1. **SAM 3** is done (above). It is the best zero-shot proposer here; a SAM 3-based candidate, or SAM 3 as the
-   label source for Phase B, is the natural next freeze candidate, subject to its licence review.
+   label source for Phase B, is the natural next freeze candidate. The owner chose it as the lead candidate on
+   2026-10-17 after the [licence review](../legal/SAM3_LICENCE_REVIEW.md).
 2. **Detect once, then track** (Phase A.2): take the plausible top-1 on a decision frame and propagate it with SAM 2
    video tracking. Done: [Phase A.2 results](PLATE_DETECTION_PHASE_A2_RESULTS.md). Tracking holds the plate on every
    labelled frame when the frame-0 seed is right (276/276), but a wrong seed is wrong on every frame, so overall

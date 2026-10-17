@@ -26,7 +26,8 @@ licence of anything OpenBar uses:
    binaries with an app needs its own LGPL/GPL review.
 3. **Models and datasets:** research checkpoints are downloaded, not committed. Non-commercial
    (for example CC-BY-NC) or copyleft (for example AGPL-3.0) models must not be merged into
-   OpenBar or shipped with it.
+   OpenBar or shipped with it. Custom model licences get a written review before use beyond
+   research, for example [SAM3_LICENCE_REVIEW.md](SAM3_LICENCE_REVIEW.md).
 4. **Media:** the fixture manifest records rights for each video. Only fixtures whose
    redistribution is documented are committed.
 
