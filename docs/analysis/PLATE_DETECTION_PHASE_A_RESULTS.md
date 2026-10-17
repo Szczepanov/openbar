@@ -99,8 +99,8 @@ plate", score threshold 0.30, mask threshold 0.50, the same NMS and rim fit as `
   decision frame another candidate outranks the target on some frames (top-1 is right on 299 of the 375 frames
   where the target is a candidate).
 - **Geometry and cost.** Median radius error 1.6% (p90 6.7%), centre error 2.7% of the radius. Median 0.72 s per
-  frame for both prompts together; the GPU was shared with another session's job during the run, so this is an
-  upper estimate.
+  frame for both prompts together; for the first part of the run the GPU was shared with another session's SAM 2
+  tracking job, so this is an upper estimate.
 - **Licence.** Meta's SAM License, not Apache-2.0: fine for this research, but anything shipped with it needs the
   separate licence review that #233 requires.
 
