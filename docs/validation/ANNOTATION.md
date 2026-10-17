@@ -196,6 +196,32 @@ is being evaluated. The output folder holds the frames, a `metadata.json` sideca
   the seed frame: the first frame in time order with a centre and a radius. Trackers run forward from
   the seed. Create it separately with `annotations.py seed`; for VBT place it before the first rep.
 
+### Optional scene inventory
+
+The same page can record a scene inventory: every *other* circular object on a frame (not the labelled
+plate), classed with the wrong-target taxonomy of
+[HOUGH_TOP_K_PREPARATION.md](../plans/HOUGH_TOP_K_PREPARATION.md): `another_plate_target_bar`,
+`concentric_rim`, `other_loaded_bar`, `stored_plate`, `rack_equipment`, `background_object`, `other`
+(with a description in notes). Press `I` to switch clicks to inventory objects, pick a class, click each
+object's centre and optionally Shift+click its rim for a radius; `Backspace` removes the last one. An
+`other` object takes the description typed before its click. In inventory mode the plate-label keys,
+arrow nudges and Shift+wheel are off, so the plate label cannot change by accident.
+"Inventory complete" marks a frame as checked, also when it has no other objects, so "none" is
+distinguishable from "not checked". Nothing is prefilled from a detector.
+
+"Download inventory CSV" writes `<fixture>.<annotator>.inventory.csv` with columns
+`timestamp_s,frame_index,inventory_state,object_index,object_class,x_px,y_px,radius_px,notes`: one empty
+row for a frame that is `not_done` or `done` without objects, otherwise one row per object. It is a
+separate file from the label CSV and never enters an annotation document or the canonical `Analysis`.
+Keep it beside the label CSV and check it against its package:
+
+```bash
+python3 validation/tools/scene_inventory.py validate --package <package-dir> --csv <inventory.csv>
+```
+
+The command fails on an unknown class, a centre outside the image, a missing or reordered frame, or
+objects on an unchecked frame, and prints a summary with the file's SHA-256 for a freeze record to cite.
+
 Every extracted frame's PTS is checked against the probe, and the media is checked against the
 manifest SHA-256, so labels cannot be stamped onto the wrong frame or a different file. Packages
 are written to `validation/private/annotations/work/<fixture-id>.<annotator-id>/` for private

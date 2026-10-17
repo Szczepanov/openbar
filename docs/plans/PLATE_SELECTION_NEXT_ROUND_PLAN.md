@@ -78,6 +78,9 @@ split could estimate refusal behaviour but not selection accuracy.
    plan's taxonomy (another plate on the target bar, concentric rim, another loaded bar, stored
    plate, rack or equipment, background object, other). Store it beside the label CSV with its own
    hash. Research tooling only; no schema change.
+   Tooling delivered (#234): the label page's inventory mode and `validation/tools/scene_inventory.py
+   validate` ([ANNOTATION.md](../validation/ANNOTATION.md#optional-scene-inventory)). The labels are
+   still the owner's.
 4. **Refusal policy (owner).** Confirm `expected_policy` for each refusal candidate from its first
    frame, without candidate output.
 5. **New recordings (owner).** At least 2 new sessions of side-view snatch, clean and back squat,
