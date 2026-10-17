@@ -64,15 +64,21 @@ class Sam3RuleTests(unittest.TestCase):
         clear = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(500, 0, 100, 0.87)])
         self.assertEqual((clear["refused"], clear["margin"]), (False, 0.08))
 
-    def test_margin_boundary_is_not_refused(self) -> None:
-        at = selection.margin_refusal([Candidate(0, 0, 100, 1.0), Candidate(500, 0, 100, 0.95)])
-        self.assertEqual((at["refused"], at["margin"]), (False, 0.05))  # not below MARGIN_SCORE
-        below = selection.margin_refusal([Candidate(0, 0, 100, 1.0), Candidate(500, 0, 100, 0.951)])
-        self.assertTrue(below["refused"])
+    def test_margin_boundary_is_not_refused_whatever_the_float_error(self) -> None:
+        for best, second in [(1.0, 0.95), (0.15, 0.10), (0.92, 0.87), (0.06, 0.01), (0.09, 0.04)]:
+            with self.subTest(best=best):
+                at = selection.margin_refusal([Candidate(0, 0, 100, best), Candidate(500, 0, 100, second)])
+                self.assertEqual((at["refused"], at["margin"]), (False, 0.05))
+        below = selection.margin_refusal([Candidate(0, 0, 100, 1.0), Candidate(500, 0, 100, 0.95001)])
+        self.assertEqual((below["refused"], below["margin"]), (True, 0.04999))
 
-    def test_same_spot_runner_up_is_not_a_rival(self) -> None:
+    def test_concentric_runner_up_is_not_a_rival(self) -> None:
         inner_rim = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(5, 0, 90, 0.94)])
         self.assertEqual((inner_rim["refused"], inner_rim["margin"]), (False, None))
+        hub = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(20, 10, 60, 0.94)])
+        self.assertEqual((hub["refused"], hub["margin"]), (False, None))
+        off_centre = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(26, 0, 60, 0.94)])
+        self.assertTrue(off_centre["refused"])
         third = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(5, 0, 90, 0.94),
                                           Candidate(500, 0, 100, 0.93)])
         self.assertEqual((third["refused"], third["margin"]), (True, 0.02))
@@ -91,6 +97,13 @@ class Sam3RuleTests(unittest.TestCase):
         self.assertEqual((seed["refusal"]["rule"], seed["refusal"]["refused"], seed["refusal"]["margin"]),
                          (selection.MARGIN_RULE, False, 0.2))
         self.assertEqual(seed["close_score_refusal"]["rule"], selection.REFUSAL_RULE)
+
+    def test_sam3_seed_skips_box_only_candidates(self) -> None:
+        rows = [{**row(500.0, 900.0, 200.0, 0.99), "fit": "box"}, {**row(600.0, 1200.0, 180.0, 0.90), "fit": "mask_ransac"}]
+        seed = track.choose_seed_sam3(rows, 1080, 1920)
+        self.assertEqual((seed["selected_index"], seed["plausible_indices"]), (1, [1]))
+        only_box = track.choose_seed_sam3(rows[:1], 1080, 1920)
+        self.assertEqual((only_box["selected_index"], only_box["refusal"]["reason"]), (None, "no_candidate"))
 
     def test_sam3_seed_with_nothing_selectable(self) -> None:
         seed = track.choose_seed_sam3([row(-5.0, 900.0, 200.0, 0.9)], 1080, 1920)
@@ -167,6 +180,15 @@ class ScoreTrackTests(unittest.TestCase):
         result = score_phase_a.score_clip(records, self.POINTS)
         self.assertTrue(result["clip_frame0"]["plausible_top1"])
         self.assertEqual(result["frame0_refusal"], refusal)
+        close = {"rule": selection.REFUSAL_RULE, "refused": True, "reason": "close_scores", "ratio": 0.95}
+        records[0]["seed"]["close_score_refusal"] = close
+        compared = score_phase_a.score_clip(records, self.POINTS)
+        self.assertEqual(score_phase_a.aggregate({"c": compared})["refusal"]["rule"], selection.MARGIN_RULE)
+        self.assertEqual(score_phase_a.aggregate({"c": compared})["refusal"]["margin_score"], selection.MARGIN_SCORE)
+        self.assertEqual(score_phase_a.aggregate({"c": compared})["refusal"]["close_score_comparison"]["refused_clips"], ["c"])
+        mixed = {"a": compared, "b": score_phase_a.score_clip(self.track_records([row(300.0, 600.0, 100.0, 0.5)]), self.POINTS)}
+        with self.assertRaises(SystemExit):
+            score_phase_a.aggregate(mixed)
         nothing = [record(0, 0.0, [], seed={"candidates": seed_rows[:1], "selected_index": None, "refusal": refusal})]
         self.assertFalse(score_phase_a.score_clip(nothing, self.POINTS[:1])["clip_frame0"]["plausible_top1"])
 

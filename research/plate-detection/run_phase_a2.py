@@ -44,9 +44,13 @@ HARNESS_ID = "plate-detection-phase-a2-v1"
 SEEDS = {
     "gdino_sam2": {"method": track.METHOD, "choose": track.choose_seed, "seed_rule": "plausible_top1",
                    "refusal": {"rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO}},
-    "sam3": {"method": track.SAM3_METHOD, "choose": track.choose_seed_sam3, "seed_rule": track.SAM3_SEED_RULE,
+    "sam3": {"method": track.SAM3_METHOD, "choose": track.choose_seed_sam3,
+             "seed_rule": {"rule": track.SAM3_SEED_RULE, "in_frame_rule": selection.IN_FRAME_RULE,
+                           "size_window_fraction": [selection.MIN_RADIUS_FRACTION, selection.MAX_RADIUS_FRACTION],
+                           "requires_mask": True},
              "refusal": {"rule": selection.MARGIN_RULE, "margin_score": selection.MARGIN_SCORE,
-                         "in_frame_rule": selection.IN_FRAME_RULE,
+                         "concentric_centre_fraction": selection.SAME_SPOT_CENTRE_FRACTION,
+                         "score_decimals": selection.SCORE_DECIMALS,
                          "also_recorded": {"rule": selection.REFUSAL_RULE,
                                            "score_ratio": selection.REFUSAL_SCORE_RATIO}}},
 }
@@ -66,7 +70,8 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
     variant = SEEDS[seed]
     method = {"seed_detector": {"method": seed, **detector.config()},
               "seed_frame": "first_decoded_frame", "seed_rule": variant["seed_rule"], "refusal": variant["refusal"],
-              "tracker": tracker.config(), "track_stride": stride, "circle_fit": "geometry.circle_from_mask"}
+              "tracker": tracker.config(), "track_stride": stride,
+              "circle_fit": "geometry.circle_from_mask (seed rows may fall back to geometry.circle_from_box)"}
     seed_repos = ({detectors.SAM3_CHECKPOINT} if seed == "sam3"
                   else {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT})
     repos = sorted(seed_repos | {track.SAM2_VIDEO_CHECKPOINT})

@@ -22,7 +22,7 @@ import selection
 
 METHOD = "track_sam2"
 SAM3_METHOD = "track_sam2_sam3seed"
-SAM3_SEED_RULE = "sam3-seed-v1"
+SAM3_SEED_RULE = "sam3-seed-v2"
 SAM2_VIDEO_CHECKPOINT = "facebook/sam2.1-hiera-base-plus"
 OBJECT_ID = 1
 
@@ -40,12 +40,14 @@ def choose_seed(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -
 
 
 def choose_seed_sam3(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -> dict[str, Any]:
-    """``sam3-seed-v1``: like ``choose_seed``, but candidates must also be centred in the frame
-    (``in-frame-v1``) and the refusal is ``sam3-margin-v1``. ``close-score-v1`` is recorded beside it
-    for comparison only. No labels."""
+    """``sam3-seed-v2``: like ``choose_seed``, but candidates must also be centred in the frame
+    (``in-frame-v1``) and have a mask the tracker can start from (not a box-only fit), and the
+    refusal is ``sam3-margin-v2``. ``close-score-v1`` is recorded beside it for comparison only.
+    No labels."""
     candidates = [selection.Candidate.from_dict(row) for row in rows]
-    kept = selection.in_frame(selection.plausible(candidates, width_px, height_px), width_px, height_px)
-    plausible_indices = [i for i, c in enumerate(candidates) if c in kept]
+    window = selection.in_frame(selection.plausible(candidates, width_px, height_px), width_px, height_px)
+    plausible_indices = [i for i, c in enumerate(candidates) if c in window and rows[i].get("fit") != "box"]
+    kept = [candidates[i] for i in plausible_indices]
     top = selection.select_top1(kept)
     selected = None if top is None else next(i for i in plausible_indices if candidates[i] == top)
     return {"rule": SAM3_SEED_RULE, "selected_index": selected, "plausible_indices": plausible_indices,

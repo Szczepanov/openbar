@@ -78,6 +78,8 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
         "sampled_frames": len(records), "labelled_frames": len(pairs),
         "lost_frames": sum(not r["candidates"] for r in records),
         "frame0_refusal": frame0_refusal(records[0]) if records else None,
+        **({"frame0_close_score_refusal": records[0]["seed"]["close_score_refusal"]}
+           if records and "close_score_refusal" in records[0].get("seed", {}) else {}),
         "latency_s": [r["latency_s"] for r in records],
         "candidates_per_frame": [len(r["candidates"]) for r in records],
     }
@@ -181,7 +183,7 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "lost_frames": sum(c["lost_frames"] for c in per_clip.values()),
         "sampled_frames": sum(c["sampled_frames"] for c in per_clip.values()),
         "refusal": {
-            "rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            **refusal_rule(per_clip),
             "refused_clips": sorted(k for k, c in per_clip.items() if c["scored"] and c["frame0_refusal"]["refused"]),
             "frame0_accepted": sum(not c["frame0_refusal"]["refused"] for c in with0),
             "frame0_accepted_correct": sum(c["clip_frame0"][RULE_PLAUSIBLE_TOP1] for c in with0
@@ -198,6 +200,27 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "latency_s_p90": _quantile(latency, 0.9),
         "candidates_per_frame_median": statistics.median(counts) if counts else None,
     }
+
+
+REFUSAL_CONSTANTS = {selection.REFUSAL_RULE: {"score_ratio": selection.REFUSAL_SCORE_RATIO},
+                     selection.MARGIN_RULE: {"margin_score": selection.MARGIN_SCORE}}
+
+
+def refusal_rule(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The one refusal rule behind these clips' frame-0 decisions, with its constant, plus how the
+    ``close-score-v1`` comparison the run recorded beside it would have refused."""
+    scored = {k: c for k, c in per_clip.items() if c["scored"]}
+    rules = {c["frame0_refusal"]["rule"] for c in scored.values()} or {selection.REFUSAL_RULE}
+    if len(rules) != 1:
+        raise SystemExit(f"one method mixes refusal rules: {sorted(rules)}")
+    rule = rules.pop()
+    result = {"rule": rule, **REFUSAL_CONSTANTS[rule]}
+    compared = {k: c for k, c in scored.items() if "frame0_close_score_refusal" in c}
+    if compared:
+        result["close_score_comparison"] = {
+            "rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            "refused_clips": sorted(k for k, c in compared.items() if c["frame0_close_score_refusal"]["refused"])}
+    return result
 
 
 def load_records(path: Path) -> list[dict[str, Any]]:
