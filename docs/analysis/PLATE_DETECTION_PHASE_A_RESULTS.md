@@ -72,7 +72,8 @@ deliberately loose and is not the frozen evaluation's Tc/Tr tolerance.
 | gdino_sam2 | 24/25 | 15/25 | **23/25** | 19/25 | 13/25 | 19/25 | **18/20** | **354/388** | **320/388** | 0.026 (0.182) | **0.014** (0.056) | 0.555 s (0.642 s) |
 
 Geometry columns are over frames where the labelled plate is among the candidates (best-matching candidate),
-relative to the true radius. Frame columns count the 388 labelled frames.
+relative to the true radius. Frame columns pool the 388 labelled frames, so clips weigh unequally:
+`self-other-side-0215-27` alone contributes 72 frames and each `vbt-*` clip one. Clip columns count each clip once.
 
 By clip group (`gdino_sam2`, plausible top-1): exploration 12/12, scored-development-only 11/13. Hough: 10/12 and
 5/13. Hough's misses concentrate on the 2026-10-15 snatch session, where the plate is never its top-1. At frame 0
@@ -143,7 +144,10 @@ A rerun into an existing run directory must have identical provenance (methods, 
 
 Run record (private): `run.json` SHA-256 `574f6b402e14f43e94e479fd08ae87ec277863c9ba984294ba0c56d828b6369c`
 (code commit e0b2df4 plus the uncommitted harness; per-file source hashes inside). Detection sources at run time
-match this PR's `clips.py`, `detectors.py` and `geometry.py`. After the run, `selection.py` and `score_phase_a.py`
+match this PR's `clips.py` and `geometry.py`. `detectors.py` later gained an index-based cross-prompt NMS that also
+drops non-finite or zero-area boxes, and passes `dtype=` instead of the deprecated `torch_dtype=` for SAM 3.
+Rerunning `vbt-017cea944dfbb194` with the new code gave candidates identical to run-1 on all 28 frames for both
+GroundingDINO methods (latency aside). After the run, `selection.py` and `score_phase_a.py`
 gained the size-window, largest and frame-0 rules, `truth.py` the adjudicated-removal rule (no current adjudicated
 row is non-labelled), and `run_phase_a.py` the rerun guard; none of these touch candidate generation. Scores:
 `score.json` SHA-256 `62c36ff01a46521d5715bbe8b42385e1786c72ee868304d2191c5f1a6b8b72a2`. Checkpoints:

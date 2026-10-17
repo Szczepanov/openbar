@@ -25,7 +25,10 @@ COLOURS = {"hough": (0, 165, 255), "gdino_box": (255, 0, 0), "gdino_sam2": (255,
 def draw(clip_id: str, fixture: dict, repo_root: Path, run_dir: Path) -> Path:
     import cv2
     clips.development_role(fixture)
-    first = truth.load_truth(clip_id, repo_root / "validation" / "private")[0]
+    points = truth.load_truth(clip_id, repo_root / "validation" / "private")
+    if not points:
+        raise SystemExit(f"{clip_id} has no labels; nothing to overlay")
+    first = points[0]
     methods = [m for m in COLOURS if (run_dir / "candidates" / m / f"{clip_id}.jsonl").is_file()]
     records = {}
     for m in methods:

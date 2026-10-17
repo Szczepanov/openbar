@@ -9,6 +9,7 @@ go into the run provenance.
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -48,13 +49,21 @@ def box_iou(a: list[float], b: list[float]) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def dedupe(boxes: list[list[float]], scores: list[float], labels: list[str]) -> list[tuple[list[float], float, str]]:
-    """Greedy NMS across prompts: the two prompts often find the same plate."""
-    order = sorted(range(len(boxes)), key=lambda i: (-scores[i], boxes[i]))
-    kept: list[tuple[list[float], float, str]] = []
+def valid_box(box: list[float]) -> bool:
+    """Finite with positive width and height. Boxes may extend past the frame: the detector
+    predicts the full extent of a plate cut by the frame edge, which circle_from_box relies on."""
+    return len(box) == 4 and all(math.isfinite(v) for v in box) and box[2] > box[0] and box[3] > box[1]
+
+
+def dedupe(boxes: list[list[float]], scores: list[float]) -> list[int]:
+    """Indices kept by greedy NMS across prompts (the two prompts often find the same plate);
+    invalid boxes are dropped first."""
+    order = sorted((i for i in range(len(boxes)) if valid_box(boxes[i]) and math.isfinite(scores[i])),
+                   key=lambda i: (-scores[i], boxes[i]))
+    kept: list[int] = []
     for i in order:
-        if all(box_iou(boxes[i], k[0]) < DUPLICATE_IOU for k in kept):
-            kept.append((boxes[i], scores[i], labels[i]))
+        if all(box_iou(boxes[i], boxes[k]) < DUPLICATE_IOU for k in kept):
+            kept.append(i)
     return kept[:MAX_CANDIDATES]
 
 
@@ -117,7 +126,8 @@ class GroundingDinoProposer(_Torch):
             outputs, inputs.input_ids, threshold=GDINO_BOX_THRESHOLD, text_threshold=GDINO_TEXT_THRESHOLD,
             target_sizes=[pil.size[::-1]])[0]
         labels = [str(label) for label in result.get("text_labels", result.get("labels", []))]
-        return dedupe(result["boxes"].tolist(), result["scores"].tolist(), labels)
+        boxes, scores = result["boxes"].tolist(), result["scores"].tolist()
+        return [(boxes[i], scores[i], labels[i]) for i in dedupe(boxes, scores)]
 
     def _masks(self, pil: Any, boxes: list[list[float]]) -> list[np.ndarray]:
         inputs = self.sam_processor(images=pil, input_boxes=[boxes], return_tensors="pt").to(self.device)
@@ -151,7 +161,7 @@ class Sam3Proposer(_Torch):
         from transformers import Sam3Model, Sam3Processor
         self.processor = Sam3Processor.from_pretrained(SAM3_CHECKPOINT)
         dtype = self.torch.bfloat16 if self.device == "cuda" else self.torch.float32
-        self.model = Sam3Model.from_pretrained(SAM3_CHECKPOINT, torch_dtype=dtype).to(self.device).eval()
+        self.model = Sam3Model.from_pretrained(SAM3_CHECKPOINT, dtype=dtype).to(self.device).eval()
         self.dtype = dtype
 
     def config(self) -> dict[str, Any]:
@@ -178,10 +188,9 @@ class Sam3Proposer(_Torch):
                 labels.append(prompt)
                 masks.append(mask.cpu().numpy().astype(bool))
         rows = []
-        index_of = {id(b): i for i, b in enumerate(boxes)}
-        for box, score, label in dedupe(boxes, scores, labels):
-            circle = geometry.circle_from_mask(masks[index_of[id(box)]]) or geometry.circle_from_box(*box)
-            rows.append(_row(circle, score, prompt=label, box_xyxy=[round(v, 2) for v in box]))
+        for i in dedupe(boxes, scores):
+            circle = geometry.circle_from_mask(masks[i]) or geometry.circle_from_box(*boxes[i])
+            rows.append(_row(circle, scores[i], prompt=labels[i], box_xyxy=[round(v, 2) for v in boxes[i]]))
         return rows
 
 
