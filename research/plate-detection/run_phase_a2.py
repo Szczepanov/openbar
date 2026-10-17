@@ -7,6 +7,9 @@ decision frame: GroundingDINO + SAM 2.1 propose candidates there, the plausible 
 plus each labelled frame (labels add frames so they can be scored; they never steer the tracker).
 Writes per-frame JSONL in the Phase A format under ``candidates/track_sam2/``; frame 0 also
 carries the seed candidates, the selected index and the ``close-score-v1`` refusal outcome.
+
+``--seed sam3`` swaps the seed for SAM 3 (``track.choose_seed_sam3``: size window, ``in-frame-v1``,
+``sam3-margin-v1`` refusal) and writes under ``candidates/track_sam2_sam3seed/``; tracking is unchanged.
 Frames are deleted after each clip.
 
     python research/plate-detection/run_phase_a2.py --repo-root <main checkout> \
@@ -37,9 +40,19 @@ import track  # noqa: E402
 import truth  # noqa: E402
 
 HARNESS_ID = "plate-detection-phase-a2-v1"
+# Seed variants: output method, seed rule and the refusal it records.
+SEEDS = {
+    "gdino_sam2": {"method": track.METHOD, "choose": track.choose_seed, "seed_rule": "plausible_top1",
+                   "refusal": {"rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO}},
+    "sam3": {"method": track.SAM3_METHOD, "choose": track.choose_seed_sam3, "seed_rule": track.SAM3_SEED_RULE,
+             "refusal": {"rule": selection.MARGIN_RULE, "margin_score": selection.MARGIN_SCORE,
+                         "in_frame_rule": selection.IN_FRAME_RULE,
+                         "also_recorded": {"rule": selection.REFUSAL_RULE,
+                                           "score_ratio": selection.REFUSAL_SCORE_RATIO}}},
+}
 
 
-def provenance(detector: Any, tracker: Any, stride: int, repo_root: Path) -> dict[str, Any]:
+def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: Path) -> dict[str, Any]:
     import detectors
     packages = {}
     for name in ("torch", "transformers", "numpy", "cv2", "PIL", "huggingface_hub"):
@@ -50,20 +63,23 @@ def provenance(detector: Any, tracker: Any, stride: int, repo_root: Path) -> dic
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True,
                            text=True).stdout.strip()
-    method = {"seed_detector": {"method": "gdino_sam2", **detector.config()},
-              "seed_frame": "first_decoded_frame", "seed_rule": "plausible_top1",
-              "refusal": {"rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO},
+    variant = SEEDS[seed]
+    method = {"seed_detector": {"method": seed, **detector.config()},
+              "seed_frame": "first_decoded_frame", "seed_rule": variant["seed_rule"], "refusal": variant["refusal"],
               "tracker": tracker.config(), "track_stride": stride, "circle_fit": "geometry.circle_from_mask"}
-    repos = sorted({detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT, track.SAM2_VIDEO_CHECKPOINT})
+    seed_repos = ({detectors.SAM3_CHECKPOINT} if seed == "sam3"
+                  else {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT})
+    repos = sorted(seed_repos | {track.SAM2_VIDEO_CHECKPOINT})
     return {"harness": HARNESS_ID, "origin": "machine", "code_commit": commit, "dirty": bool(dirty),
             "source_sha256": {p.name: run_phase_a.sha256_file(p) for p in sorted(HERE.glob("*.py"))},
-            "python": platform.python_version(), "packages": packages, "methods": {track.METHOD: method},
-            "checkpoints": {track.METHOD: [run_phase_a.checkpoint_files(repo) for repo in repos]},
+            "python": platform.python_version(), "packages": packages, "methods": {variant["method"]: method},
+            "checkpoints": {variant["method"]: [run_phase_a.checkpoint_files(repo) for repo in repos]},
             "repo_root": repo_root.name}
 
 
 def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any, tracker: Any,
-             stride: int, output_dir: Path) -> dict[str, Any]:
+             stride: int, output_dir: Path, seed_name: str = "gdino_sam2") -> dict[str, Any]:
+    variant = SEEDS[seed_name]
     import cv2
     import geometry
     media = repo_root / fixture["media"]["repository_path"]
@@ -74,7 +90,7 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
     indices = clips.track_plan(probed["timestamps_s"], truth_times, stride)
     frames_dir = output_dir / "frames" / fixture["id"]
     paths = label_package.extract(media, indices, [probed["pts"][i] for i in indices], frames_dir, fixture)
-    out_path = output_dir / "candidates" / track.METHOD / f"{fixture['id']}.jsonl"
+    out_path = output_dir / "candidates" / variant["method"] / f"{fixture['id']}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     partial = out_path.with_suffix(".jsonl.partial")
     summary = {"frames": len(indices), "lost": 0}
@@ -89,7 +105,7 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
                 extra: dict[str, Any] = {}
                 if position == 0:
                     rows, masks = detector.propose_with_masks(image)
-                    seed = track.choose_seed(rows, image.shape[1], image.shape[0])
+                    seed = variant["choose"](rows, image.shape[1], image.shape[0])
                     chosen = seed["selected_index"]
                     seed_mask = None if chosen is None else masks[chosen]
                     if seed_mask is not None:
@@ -103,7 +119,7 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
                     candidates = [] if row is None else [row]
                 summary["lost"] += not candidates
                 handle.write(json.dumps({
-                    "fixture_id": fixture["id"], "role": role, "method": track.METHOD, "frame_index": index,
+                    "fixture_id": fixture["id"], "role": role, "method": variant["method"], "frame_index": index,
                     "pts": probed["pts"][index], "time_s": probed["timestamps_s"][index],
                     "width_px": image.shape[1], "height_px": image.shape[0],
                     "latency_s": round(time.perf_counter() - started, 4), "candidates": candidates, **extra},
@@ -121,6 +137,7 @@ def parser() -> argparse.ArgumentParser:
                    help="defaults to validation/private/manifest.json and validation/private/vbt/manifest.json")
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--stride", type=int, default=clips.TRACK_STRIDE)
+    p.add_argument("--seed", choices=sorted(SEEDS), default="gdino_sam2", help="seed detector and rule")
     p.add_argument("--clip", action="append", help="restrict to these clip ids (still guarded)")
     p.add_argument("--force", action="store_true", help="rerun clips that already have output")
     return p
@@ -145,16 +162,16 @@ def main(argv: list[str] | None = None) -> int:
     import detectors
     import torch
     torch.manual_seed(0)
-    detector = detectors.build("gdino_sam2")
+    detector = detectors.build(args.seed)
     tracker = track.Sam2VideoTracker()
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_phase_a.write_record(output_dir / "run.json", provenance(detector, tracker, args.stride, repo_root), allowed)
+    run_phase_a.write_record(output_dir / "run.json", provenance(args.seed, detector, tracker, args.stride, repo_root), allowed)
     for name, role in allowed.items():
-        if (output_dir / "candidates" / track.METHOD / f"{name}.jsonl").is_file() and not args.force:
+        if (output_dir / "candidates" / SEEDS[args.seed]["method"] / f"{name}.jsonl").is_file() and not args.force:
             print(f"skip {name} (done)")
             continue
         started = time.perf_counter()
-        summary = run_clip(fixtures[name], role, repo_root, detector, tracker, args.stride, output_dir)
+        summary = run_clip(fixtures[name], role, repo_root, detector, tracker, args.stride, output_dir, args.seed)
         print(f"{name}: {time.perf_counter() - started:.1f} s {json.dumps(summary, sort_keys=True)}", flush=True)
     return 0
 

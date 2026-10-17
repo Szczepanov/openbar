@@ -14,8 +14,10 @@ Per method and clip:
   the clips that were not refused;
 - clips where every labelled frame is on target, and lost frames (no candidate at all).
 
-Phase A.2 ``track_sam2`` records hold at most the tracked circle; their frame 0 also carries the
-detector's ``seed`` candidates, which the refusal reads instead.
+Phase A.2 track records hold at most the tracked circle; their frame 0 also carries the seed
+detector's candidates and the run's recorded seed decision (``selected_index`` and ``refusal``),
+which frame-0 identity and the refusal read instead, so each seed rule is scored as it ran
+(``close-score-v1`` for ``track_sam2``, ``sam3-margin-v1`` for ``track_sam2_sam3seed``).
 
 No pass/fail verdict, no thresholds tuned here. Development clips only, so nothing generalises.
 """
@@ -101,8 +103,8 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
     if first_point is not None:
         frame0_rules, _ = clip_rules(first, records[1:])
         frame0 = {name: is_target(chosen, first_point) for name, chosen in frame0_rules.items()}
-        if "seed" in first:  # the track's frame-0 choice is the seed detector's plausible top-1
-            frame0[RULE_PLAUSIBLE_TOP1] = is_target(selection.select_top1(_plausible_seed(first)), first_point)
+        if "seed" in first:  # the track's frame-0 choice is the seed the run recorded
+            frame0[RULE_PLAUSIBLE_TOP1] = is_target(seed_choice(first), first_point)
     return {**out, "scored": True, "frame_recall": recall, "frame_top1": top1,
             "frame_plausible_top1": plausible_top1, "decision_time_s": decision["time_s"],
             "decision_from_label": decision["frame_index"] != first["frame_index"],
@@ -120,9 +122,21 @@ def _plausible_seed(record: dict[str, Any]) -> list[selection.Candidate]:
     return selection.plausible(seed, record["width_px"], record["height_px"])
 
 
+def seed_choice(record: dict[str, Any]) -> selection.Candidate | None:
+    """The seed the run recorded on frame 0; records without one fall back to the plausible top-1."""
+    seed = record["seed"]
+    if "selected_index" not in seed:
+        return selection.select_top1(_plausible_seed(record))
+    index = seed["selected_index"]
+    return None if index is None else selection.Candidate.from_dict(seed["candidates"][index])
+
+
 def frame0_refusal(record: dict[str, Any]) -> dict[str, Any]:
-    """``close-score-v1`` over the plausible candidates a detector saw on frame 0 (label-free)."""
-    return selection.refusal(_plausible_seed(record) if "seed" in record else _plausible(record))
+    """The refusal a track run recorded on frame 0, else ``close-score-v1`` over the plausible
+    candidates the detector saw on frame 0 (label-free)."""
+    if "seed" in record:
+        return record["seed"].get("refusal") or selection.refusal(_plausible_seed(record))
+    return selection.refusal(_plausible(record))
 
 
 def clip_rules(decision: dict[str, Any], others: Sequence[dict[str, Any]]

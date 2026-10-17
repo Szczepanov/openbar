@@ -39,6 +39,37 @@ MIN_OTHER_FRAMES = 4
 REFUSAL_RULE = "close-score-v1"
 REFUSAL_SCORE_RATIO = 0.9  # refuse when the runner-up scores at least this share of the best
 
+# SAM 3 seed (owner chose SAM 3 as the lead candidate on 2026-10-17). Fixed before the run that
+# scores it, but chosen knowing two Phase A figures: close-score-v1 would refuse 11 of 27 SAM 3
+# frame-0 decisions, and on self-back-squat-side-1015-06 the plate on the bar scores 0.95 against
+# 0.87 for a stored plate. SAM 3 scores saturate near 1 for clear plates, so a ratio says little;
+# an absolute margin does. A runner-up at the best candidate's spot (an inner rim or a duplicate
+# mask of the same plate) is not a competing plate and is skipped.
+IN_FRAME_RULE = "in-frame-v1"
+MARGIN_RULE = "sam3-margin-v1"
+MARGIN_SCORE = 0.05  # refuse when a different plate scores within this of the best
+
+
+def in_frame(candidates: Sequence[Candidate], width_px: int, height_px: int) -> list[Candidate]:
+    """Candidates whose centre lies in the frame (pixel centres, 0 <= x < width). A plate centred
+    off the edge cannot be the measured plate: its rim, and so the scale, is mostly unseen."""
+    return [c for c in candidates if 0 <= c.center_x_px < width_px and 0 <= c.center_y_px < height_px]
+
+
+def margin_refusal(candidates: Sequence[Candidate]) -> dict:
+    """``sam3-margin-v1`` on already-filtered candidates: refuse when a candidate at a different spot
+    scores within ``MARGIN_SCORE`` of the best. Same reporting shape as ``refusal``."""
+    ordered = _order(candidates)
+    if not ordered:
+        return {"rule": MARGIN_RULE, "refused": False, "reason": "no_candidate", "margin": None}
+    rivals = [c for c in ordered[1:] if not same_spot(ordered[0], c)]
+    if not rivals:
+        return {"rule": MARGIN_RULE, "refused": False, "reason": None, "margin": None}
+    margin = ordered[0].score - rivals[0].score
+    refused = margin < MARGIN_SCORE
+    return {"rule": MARGIN_RULE, "refused": refused, "reason": "close_scores" if refused else None,
+            "margin": round(margin, 5)}
+
 
 @dataclass(frozen=True)
 class Candidate:
