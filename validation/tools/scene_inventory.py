@@ -2,12 +2,15 @@
 """Validate a scene-inventory CSV downloaded from a labelling package page.
 
 The inventory lists the *other* circular objects on each labelled frame (not the target plate),
-classed with the wrong-target taxonomy of ``docs/plans/HOUGH_TOP_K_PREPARATION.md``. It is kept
-beside the label CSV as its own file with its own SHA-256, so a freeze record can cite it. It is
-research tooling: it never enters an annotation document or the canonical ``Analysis``.
+classed with the wrong-target taxonomy of ``docs/plans/HOUGH_TOP_K_PREPARATION.md`` plus
+``unknown`` for a circle the annotator cannot classify. Every object has a centre and a radius,
+because a later scorer matches candidates on both. The inventory is kept beside the label CSV as
+its own file with its own SHA-256, so a freeze record can cite it. It is research tooling: it never
+enters an annotation document or the canonical ``Analysis``.
 
-``validate`` checks the file against the package it came from (the frame list embedded in the
-package's ``index.html``) and prints a deterministic JSON summary including the file hash.
+``validate`` checks the file against the package it came from (the ``package_id`` and frame list
+embedded in the package's ``index.html``), optionally against that package's label CSV, and prints
+a deterministic JSON summary including the file hash.
 
 Standard library only.
 """
@@ -24,14 +27,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-COLUMNS = ("timestamp_s", "frame_index", "inventory_state", "object_index", "object_class",
+COLUMNS = ("package_id", "timestamp_s", "frame_index", "inventory_state", "object_index", "object_class",
            "x_px", "y_px", "radius_px", "notes")
 CLASSES = ("another_plate_target_bar", "concentric_rim", "other_loaded_bar", "stored_plate",
-           "rack_equipment", "background_object", "other")
+           "rack_equipment", "background_object", "other", "unknown")
 STATES = ("done", "not_done")
 OBJECT_FIELDS = ("object_index", "object_class", "x_px", "y_px", "radius_px", "notes")
+# Guard against re-marking the labelled plate as an inventory object; not a matching tolerance.
+SAME_CIRCLE_PX = 2.0
 CONFIG_LINE = re.compile(r"^const CONFIG = (\{.*\});$", re.M)
 NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?", re.ASCII)
+BOM = b"\xef\xbb\xbf"
 
 
 class InventoryError(ValueError):
@@ -66,8 +72,8 @@ def parse_object(row: dict[str, str], width: int, height: int, where: str) -> di
     x, y = finite(row["x_px"], "x_px", where), finite(row["y_px"], "y_px", where)
     if not (0 <= x < width and 0 <= y < height):
         raise InventoryError(f"{where}: centre ({x}, {y}) is outside 0 <= x < {width}, 0 <= y < {height}")
-    radius = finite(row["radius_px"], "radius_px", where) if row["radius_px"] else None
-    if radius is not None and radius <= 0:
+    radius = finite(row["radius_px"], "radius_px", where)
+    if radius <= 0:
         raise InventoryError(f"{where}: radius_px must be positive")
     if cls == "other" and not row["notes"].strip():
         raise InventoryError(f"{where}: an 'other' object needs a description in notes")
@@ -92,6 +98,17 @@ def frame_entry(rows: list[tuple[int, dict[str, str]]], width: int, height: int)
     return {"inventory_state": state, "objects": objects}
 
 
+def decode(data: bytes) -> str:
+    if data.startswith(BOM):
+        raise InventoryError("the file starts with a UTF-8 BOM, so it was re-saved by another program; "
+                             "download it again from the page")
+    text = data.decode("utf-8")
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            raise InventoryError(f"line {number}: blank line; the page never writes one")
+    return text
+
+
 def parse(csv_text: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     reader = csv.DictReader(io.StringIO(csv_text, newline=""))
     if tuple(reader.fieldnames or ()) != COLUMNS:
@@ -99,12 +116,17 @@ def parse(csv_text: str, config: dict[str, Any]) -> list[dict[str, Any]]:
     expected = {f"{frame['timestamp_s']:.6f}": frame["frame_index"] for frame in config["frames"]}
     grouped: dict[str, list[tuple[int, dict[str, str]]]] = {}
     order: list[str] = []
-    for line, row in enumerate(reader, start=2):
+    for row in reader:
+        line = reader.line_num
         if None in row or any(value is None for value in row.values()):
             raise InventoryError(f"line {line}: wrong number of columns")
+        if row["package_id"] != config.get("package_id"):
+            raise InventoryError(f"line {line}: package_id {row['package_id']!r} is not this package's "
+                                 f"{config.get('package_id')!r}")
         key = row["timestamp_s"]
         if key not in expected or row["frame_index"] != str(expected[key]):
-            raise InventoryError(f"line {line}: frame {row['frame_index']} at {key} s is not in the package")
+            raise InventoryError(f"line {line}: frame {row['frame_index']} at {key} s is not in the package "
+                                 "(a spreadsheet re-save can rewrite 0.000000 as 0)")
         if key not in grouped:
             grouped[key] = []
             order.append(key)
@@ -118,8 +140,29 @@ def parse(csv_text: str, config: dict[str, Any]) -> list[dict[str, Any]]:
             for key in order]
 
 
-def summary(csv_bytes: bytes, config: dict[str, Any]) -> dict[str, Any]:
-    frames = parse(csv_bytes.decode("utf-8"), config)
+def labelled_plates(label_csv_text: str) -> dict[str, tuple[float, float, float]]:
+    """Labelled plate centre and radius per timestamp, from the page's label CSV (frames with a radius)."""
+    plates = {}
+    for row in csv.DictReader(io.StringIO(label_csv_text, newline="")):
+        if row.get("annotation_state") == "labelled" and row.get("radius_px"):
+            plates[row["timestamp_s"]] = (float(row["x_px"]), float(row["y_px"]), float(row["radius_px"]))
+    return plates
+
+
+def require_not_the_plate(frames: list[dict[str, Any]], plates: dict[str, tuple[float, float, float]]) -> None:
+    for frame in frames:
+        plate = plates.get(f"{frame['timestamp_s']:.6f}")
+        for index, item in enumerate(frame["objects"]):
+            if plate and math.hypot(item["x_px"] - plate[0], item["y_px"] - plate[1]) <= SAME_CIRCLE_PX \
+                    and abs(item["radius_px"] - plate[2]) <= SAME_CIRCLE_PX:
+                raise InventoryError(f"frame {frame['frame_index']}, object {index}: this is the labelled plate, "
+                                     "not another object")
+
+
+def summary(csv_bytes: bytes, config: dict[str, Any], label_csv_text: str | None = None) -> dict[str, Any]:
+    frames = parse(decode(csv_bytes), config)
+    if label_csv_text is not None:
+        require_not_the_plate(frames, labelled_plates(label_csv_text))
     done = [frame for frame in frames if frame["inventory_state"] == "done"]
     if not done:
         raise InventoryError("no frame has a complete inventory")
@@ -134,7 +177,9 @@ def summary(csv_bytes: bytes, config: dict[str, Any]) -> dict[str, Any]:
         "inventory_sha256": hashlib.sha256(csv_bytes).hexdigest(),
         "frames": len(frames),
         "frames_done": len(done),
+        "done_timestamps_s": [frame["timestamp_s"] for frame in done],
         "objects_by_class": counts,
+        "checked_against_labels": label_csv_text is not None,
     }
 
 
@@ -144,6 +189,8 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="check an inventory CSV against its package and print a summary")
     validate.add_argument("--package", type=Path, required=True, help="labelling package folder (holds index.html)")
     validate.add_argument("--csv", type=Path, required=True, help="downloaded <fixture>.<annotator>.inventory.csv")
+    validate.add_argument("--labels", type=Path,
+                          help="the same package's label CSV; fails if an object re-marks the labelled plate")
     return result
 
 
@@ -151,7 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         config = package_config((args.package / "index.html").read_text(encoding="utf-8"))
-        result = summary(args.csv.read_bytes(), config)
+        labels = args.labels.read_text(encoding="utf-8") if args.labels else None
+        result = summary(args.csv.read_bytes(), config, labels)
     except (ValueError, KeyError, TypeError, csv.Error, OSError) as error:
         print(f"scene-inventory: {error}", file=sys.stderr)
         return 1

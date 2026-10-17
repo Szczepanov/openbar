@@ -367,10 +367,10 @@ class InventoryPageTests(unittest.TestCase):
         expression = (
             "(() => { let a = addObject(EMPTY_INVENTORY, {x: 10.004, y: 20.5}, 'stored_plate', '');"
             "a = sizeLastObject(a, {x: 13.004, y: 24.5});"
-            "a = addObject(a, {x: 300, y: 5}, 'other', 'lamp, \"round\"');"
+            "a = addObject(a, {x: 300, y: 5}, 'other', 'lamp, \"round\"'); a = sizeLastObject(a, {x: 300, y: 9});"
             "a = addObject(a, {x: 1, y: 1}, 'rack_equipment', ''); a = removeLastObject(a);"
             "const inv = {'0': toggleDone(a), '0.5': toggleDone(EMPTY_INVENTORY)};"
-            f"return inventoryRows({json.dumps(self.FRAMES)}, inv); }})()"
+            f"return inventoryRows({json.dumps(self.FRAMES)}, inv, {json.dumps(config['package_id'])}); }})()"
         )
         csv_text = self.run_inventory(expression)
         frames = scene_inventory.parse(csv_text, config)
@@ -378,25 +378,50 @@ class InventoryPageTests(unittest.TestCase):
         self.assertEqual(frames, [
             {"timestamp_s": 0.0, "frame_index": 0, "inventory_state": "done", "objects": [
                 {"object_class": "stored_plate", "x_px": 10.0, "y_px": 20.5, "radius_px": 5.0, "notes": ""},
-                {"object_class": "other", "x_px": 300.0, "y_px": 5.0, "radius_px": None, "notes": "lamp   round"},
+                {"object_class": "other", "x_px": 300.0, "y_px": 5.0, "radius_px": 4.0, "notes": "lamp   round"},
             ]},
             {"timestamp_s": 0.5, "frame_index": 10, "inventory_state": "done", "objects": []},
             {"timestamp_s": 1.0, "frame_index": 20, "inventory_state": "not_done", "objects": []},
         ])
 
     @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_editing_keeps_radius_and_completeness_explicit(self):
+        result = self.run_inventory(
+            "(() => { const one = addObject(EMPTY_INVENTORY, {x: 5, y: 5}, 'stored_plate', '');"
+            "return [sizeLastObject(EMPTY_INVENTORY, {x: 1, y: 1}), sizeLastObject(one, {x: 5.05, y: 5}).objects[0].r,"
+            "removeLastObject(toggleDone(one)).state, removeLastObject(EMPTY_INVENTORY),"
+            "sanitizeInventory({'0': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 2}]},"
+            "'0.5': {state: 'done'}, '1': {state: 'weird', objects: []}, '2': {state: 'done', objects: [{cls: 'x', x: 1, y: 1}]}})]; })()"
+        )
+
+        self.assertEqual(result, [
+            {"state": "not_done", "objects": []},
+            None,
+            "not_done",
+            {"state": "not_done", "objects": []},
+            {"0": {"state": "done", "objects": [{"cls": "stored_plate", "x": 1, "y": 2}]}},
+        ])
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
     def test_page_blocks_inventory_export_that_would_lose_or_hide_objects(self):
         frames = json.dumps(self.FRAMES)
+        sized = "sizeLastObject(addObject(EMPTY_INVENTORY, {x: 50, y: 50}, '%s', '%s'), {x: 50, y: 60})"
+        plate = "{'0': {state: 'labelled', x: 50.5, y: 50, r: 10.5}}"
         cases = {
-            "unchecked frame with objects": "{'0': addObject(EMPTY_INVENTORY, {x: 1, y: 1}, 'stored_plate', '')}",
-            "other without description": "{'0': toggleDone(addObject(EMPTY_INVENTORY, {x: 1, y: 1}, 'other', ' '))}",
-            "nothing done": "{}",
+            "unchecked frame with objects": (f"{{'0': {sized % ('stored_plate', '')}}}", "{}"),
+            "no radius": ("{'0': toggleDone(addObject(EMPTY_INVENTORY, {x: 1, y: 1}, 'stored_plate', ''))}", "{}"),
+            "other without description": (f"{{'0': toggleDone({sized % ('other', ' ')})}}", "{}"),
+            "re-marks the labelled plate": (f"{{'0': toggleDone({sized % ('stored_plate', '')})}}", plate),
+            "nothing done": ("{}", "{}"),
         }
-        for name, inventory in cases.items():
+        for name, (inventory, labels) in cases.items():
             with self.subTest(name):
-                self.assertIsNotNone(self.run_inventory(f"inventoryProblem({frames}, {inventory})"))
-        self.assertIsNone(self.run_inventory(f"inventoryProblem({frames}, {{'0.5': toggleDone(EMPTY_INVENTORY)}})"))
-
+                self.assertIsNotNone(self.run_inventory(f"inventoryProblem({frames}, {inventory}, {labels})"))
+        for inventory, labels in [
+            ("{'0.5': toggleDone(EMPTY_INVENTORY)}", "{}"),
+            (f"{{'0': toggleDone({sized % ('unknown', '')})}}", "{'0': {state: 'labelled', x: 200, y: 50, r: 10}}"),
+        ]:
+            self.assertIsNone(self.run_inventory(f"inventoryProblem({frames}, {inventory}, {labels})"))
 
 class OutputSafetyTests(unittest.TestCase):
     def test_non_redistributable_frames_must_stay_under_validation_private(self):

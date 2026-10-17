@@ -73,7 +73,8 @@
     For VBT clips, place the seed before the first rep.<br>
     <b>Scene inventory</b> (optional, separate file): <kbd>I</kbd> switches clicks from the plate centre to inventory
     objects. Pick a class, click the centre of every <i>other</i> circular object on the frame (not the labelled plate),
-    Shift+click its rim for a radius (optional), <kbd>Backspace</kbd> removes the last one. Type an "other" object's
+    then Shift+click its rim for its radius (required); <kbd>Backspace</kbd> removes the last one and reopens the frame.
+    Use "unknown" for a circle you cannot classify. Type an "other" object's
     description before clicking it. The plate keys, arrows and Shift+wheel are off in inventory mode. Press "Inventory complete"
     once every such object is listed, also when there are none, so "none" differs from "not checked".
     Check the download with <code>scene_inventory.py validate</code>.<br>
@@ -219,6 +220,7 @@ function updatePanel() {
 }
 function go(i) {
   cur = Math.max(0, Math.min(CONFIG.frames.length - 1, i));
+  document.getElementById("invnote").value = "";
   // The ring follows the frames: a frame with its own radius sets it, so a new frame starts from the last one.
   const r = labels[CONFIG.frames[cur].timestamp_s];
   if (r && r.r > 0) { ringR = r.r; saveRing(); }
@@ -370,12 +372,26 @@ function exportProblem(frames, labels) {
 }
 // END exportProblem
 // BEGIN inventory (pure; exercised by validation/tests/test_label_package.py)
-// Other circular objects on a frame, from the wrong-target taxonomy in HOUGH_TOP_K_PREPARATION.md.
-// "done" means every such object is listed, so a done frame without objects means "none", not "unchecked".
+// Other circular objects on a frame, from the wrong-target taxonomy in HOUGH_TOP_K_PREPARATION.md, plus
+// "unknown" for a circle the annotator cannot classify. "done" means every such object is listed, so a done
+// frame without objects means "none", not "unchecked". Every object needs a radius: package 7 matches a
+// candidate on centre and radius, and centre alone cannot tell a concentric rim from the plate.
 const INVENTORY_CLASSES = ["another_plate_target_bar", "concentric_rim", "other_loaded_bar", "stored_plate",
-  "rack_equipment", "background_object", "other"];
+  "rack_equipment", "background_object", "other", "unknown"];
 const EMPTY_INVENTORY = { state: "not_done", objects: [] };
+const INVENTORY_MIN_RADIUS_PX = 0.1;
+// Guard against re-marking the labelled plate as an inventory object; not a matching tolerance.
+const SAME_CIRCLE_PX = 2;
 function cleanNote(s) { return (s || "").replace(/[\r\n,"]/g, " ").trim(); }
+// Stored inventory from an older or edited page: keep only well-formed frames.
+function sanitizeInventory(raw) {
+  const ok = o => o && INVENTORY_CLASSES.includes(o.cls) && Number.isFinite(o.x) && Number.isFinite(o.y);
+  const result = {};
+  for (const [ts, iv] of Object.entries(raw && typeof raw === "object" ? raw : {})) {
+    if (iv && ["done", "not_done"].includes(iv.state) && Array.isArray(iv.objects) && iv.objects.every(ok)) result[ts] = iv;
+  }
+  return result;
+}
 function addObject(iv, p, cls, note) {
   return { ...iv, objects: [...iv.objects, { cls, x: p.x, y: p.y, r: null, note: cleanNote(note) }] };
 }
@@ -383,33 +399,43 @@ function addObject(iv, p, cls, note) {
 function sizeLastObject(iv, p) {
   const last = iv.objects[iv.objects.length - 1];
   const r = last ? Math.hypot(p.x - last.x, p.y - last.y) : 0;
-  return r > 0 ? { ...iv, objects: [...iv.objects.slice(0, -1), { ...last, r }] } : iv;
+  return r >= INVENTORY_MIN_RADIUS_PX ? { ...iv, objects: [...iv.objects.slice(0, -1), { ...last, r }] } : iv;
 }
-function removeLastObject(iv) { return { ...iv, objects: iv.objects.slice(0, -1) }; }
+// Removing an object reopens the frame, so a complete frame cannot silently become "none".
+function removeLastObject(iv) {
+  return iv.objects.length ? { state: "not_done", objects: iv.objects.slice(0, -1) } : iv;
+}
 function toggleDone(iv) { return { ...iv, state: iv.state === "done" ? "not_done" : "done" }; }
-function inventoryRows(frames, inventory) {
-  const head = "timestamp_s,frame_index,inventory_state,object_index,object_class,x_px,y_px,radius_px,notes";
+function sameAsPlate(o, plate) {
+  return Boolean(plate && plate.state === "labelled" && Number.isFinite(plate.x) && plate.r > 0 && o.r > 0 &&
+    Math.hypot(o.x - plate.x, o.y - plate.y) <= SAME_CIRCLE_PX && Math.abs(o.r - plate.r) <= SAME_CIRCLE_PX);
+}
+function inventoryRows(frames, inventory, packageId) {
+  const head = "package_id,timestamp_s,frame_index,inventory_state,object_index,object_class,x_px,y_px,radius_px,notes";
   const rows = [];
   for (const f of frames) {
     const iv = inventory[f.timestamp_s] || EMPTY_INVENTORY, ts = f.timestamp_s.toFixed(6);
     if (iv.state !== "done" || !iv.objects.length) {
-      rows.push([ts, f.frame_index, iv.state === "done" ? "done" : "not_done", "", "", "", "", "", ""].join(","));
+      rows.push([packageId, ts, f.frame_index, iv.state === "done" ? "done" : "not_done", "", "", "", "", "", ""].join(","));
       continue;
     }
-    iv.objects.forEach((o, i) => rows.push([ts, f.frame_index, "done", i, o.cls, o.x.toFixed(2), o.y.toFixed(2),
-      o.r ? o.r.toFixed(2) : "", cleanNote(o.note)].join(",")));
+    iv.objects.forEach((o, i) => rows.push([packageId, ts, f.frame_index, "done", i, o.cls, o.x.toFixed(2),
+      o.y.toFixed(2), o.r.toFixed(2), cleanNote(o.note)].join(",")));
   }
   return [head, ...rows].join("\n") + "\n";
 }
-function inventoryProblem(frames, inventory) {
+function inventoryProblem(frames, inventory, labels) {
   let done = 0;
   for (const f of frames) {
     const iv = inventory[f.timestamp_s] || EMPTY_INVENTORY;
     if (iv.state === "done") done += 1;
     else if (iv.objects.length) return `frame ${f.frame_index}: mark the inventory complete or remove its objects before export`;
-    for (const o of iv.objects) {
-      if (!INVENTORY_CLASSES.includes(o.cls)) return `frame ${f.frame_index}: unknown inventory class ${o.cls}`;
-      if (o.cls === "other" && !cleanNote(o.note)) return `frame ${f.frame_index}: describe each "other" object`;
+    for (const [i, o] of iv.objects.entries()) {
+      const where = `frame ${f.frame_index}, object ${i} (${o.cls})`;
+      if (!INVENTORY_CLASSES.includes(o.cls)) return `${where}: unknown inventory class`;
+      if (!(o.r >= INVENTORY_MIN_RADIUS_PX)) return `${where}: Shift+click its rim to record a radius`;
+      if (o.cls === "other" && !cleanNote(o.note)) return `${where}: needs a description; remove it and add it again`;
+      if (sameAsPlate(o, labels[f.timestamp_s])) return `${where}: this is the labelled plate, not another object`;
     }
   }
   return done ? null : "no frame has a complete inventory";
@@ -444,16 +470,19 @@ document.getElementById("export").onclick = () => {
 };
 
 document.getElementById("invexport").onclick = () => {
-  const problem = inventoryProblem(CONFIG.frames, inventory);
+  const problem = inventoryProblem(CONFIG.frames, inventory, labels);
   if (problem) { alert(problem); return; }
-  download(inventoryRows(CONFIG.frames, inventory), `${CONFIG.fixture_id}.${CONFIG.annotator_id}.inventory.csv`, "text/csv");
+  download(inventoryRows(CONFIG.frames, inventory, CONFIG.package_id), `${CONFIG.fixture_id}.${CONFIG.annotator_id}.inventory.csv`, "text/csv");
 };
-document.getElementById("invmode").onclick = () => { invMode = !invMode; draw(); };
-document.getElementById("invdone").onclick = () => setInv(toggleDone(inv()));
-document.getElementById("invundo").onclick = () => setInv(removeLastObject(inv()));
+// Buttons drop focus after a click so Space or Enter cannot toggle them again by accident.
+document.getElementById("invmode").onclick = e => { e.currentTarget.blur(); invMode = !invMode; draw(); };
+document.getElementById("invdone").onclick = e => { e.currentTarget.blur(); setInv(toggleDone(inv())); };
+document.getElementById("invundo").onclick = e => { e.currentTarget.blur(); setInv(removeLastObject(inv())); };
+// Loaded above; checked here, after INVENTORY_CLASSES is defined.
+inventory = sanitizeInventory(inventory);
 INVENTORY_CLASSES.forEach(v => {
   const b = document.createElement("button"); b.textContent = v.replace(/_/g, " "); b.dataset.v = v;
-  b.onclick = () => { invClass = v; draw(); }; document.getElementById("invclass").appendChild(b);
+  b.onclick = e => { e.currentTarget.blur(); invClass = v; draw(); }; document.getElementById("invclass").appendChild(b);
 });
 document.getElementById("annotator").textContent = `annotator ${CONFIG.annotator_id} · package ${CONFIG.package_id}`;
 buttons("state", STATES, "state"); buttons("visibility", VIS, "visibility"); buttons("quality", QUAL, "quality");
