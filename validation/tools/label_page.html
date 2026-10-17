@@ -320,7 +320,8 @@ document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT") return;
   const k = e.key.toLowerCase();
   if (k === "i" && !e.repeat) { invMode = !invMode; draw(); return; }
-  if (invMode && k === "backspace") { e.preventDefault(); setInv(removeLastObject(inv())); return; }
+  // A held Backspace removes one object, not every object on the frame.
+  if (invMode && k === "backspace") { e.preventDefault(); if (!e.repeat) setInv(removeLastObject(inv())); return; }
   if (k === "n") { go(cur + 1); return; }
   if (k === "p") { go(cur - 1); return; }
   if (k === "0") { fit(); draw(); return; }
@@ -383,9 +384,12 @@ const INVENTORY_MIN_RADIUS_PX = 0.1;
 // Guard against re-marking the labelled plate as an inventory object; not a matching tolerance.
 const SAME_CIRCLE_PX = 2;
 function cleanNote(s) { return (s || "").replace(/[\r\n,"]/g, " ").trim(); }
-// Stored inventory from an older or edited page: keep only well-formed frames.
-function sanitizeInventory(raw) {
-  const ok = o => o && INVENTORY_CLASSES.includes(o.cls) && Number.isFinite(o.x) && Number.isFinite(o.y);
+// Stored inventory from an older or edited page: keep only well-formed frames whose objects lie in the
+// image window clicks allow (0 <= x < width - 0.5).
+function sanitizeInventory(raw, width, height) {
+  const ok = o => o && INVENTORY_CLASSES.includes(o.cls) && Number.isFinite(o.x) && Number.isFinite(o.y) &&
+    o.x >= 0 && o.y >= 0 && o.x < width - 0.5 && o.y < height - 0.5 &&
+    (o.r === null || (Number.isFinite(o.r) && o.r > 0)) && typeof o.note === "string";
   const result = {};
   for (const [ts, iv] of Object.entries(raw && typeof raw === "object" ? raw : {})) {
     if (iv && ["done", "not_done"].includes(iv.state) && Array.isArray(iv.objects) && iv.objects.every(ok)) result[ts] = iv;
@@ -479,7 +483,7 @@ document.getElementById("invmode").onclick = e => { e.currentTarget.blur(); invM
 document.getElementById("invdone").onclick = e => { e.currentTarget.blur(); setInv(toggleDone(inv())); };
 document.getElementById("invundo").onclick = e => { e.currentTarget.blur(); setInv(removeLastObject(inv())); };
 // Loaded above; checked here, after INVENTORY_CLASSES is defined.
-inventory = sanitizeInventory(inventory);
+inventory = sanitizeInventory(inventory, CONFIG.width_px, CONFIG.height_px);
 INVENTORY_CLASSES.forEach(v => {
   const b = document.createElement("button"); b.textContent = v.replace(/_/g, " "); b.dataset.v = v;
   b.onclick = e => { e.currentTarget.blur(); invClass = v; draw(); }; document.getElementById("invclass").appendChild(b);

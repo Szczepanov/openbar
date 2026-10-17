@@ -259,7 +259,8 @@ prefilled from a detector.
   distinguishable from "not checked".
 - Export is blocked while a frame has objects but is not complete, an object has no radius, an
   `other` object has no description, or an object is within 2 px in centre and radius of the
-  labelled plate (a guard against re-marking the plate, not a matching tolerance).
+  labelled plate (a guard against re-marking the plate, not a matching tolerance), or no frame is
+  complete.
 
 "Download inventory CSV" writes `<fixture>.<annotator>.inventory.csv` with columns
 `package_id,timestamp_s,frame_index,inventory_state,object_index,object_class,x_px,y_px,radius_px,notes`:
@@ -275,8 +276,9 @@ python3 validation/tools/scene_inventory.py validate --package <package-dir> --c
 
 The command fails on a `package_id` from another package, an unknown class, a missing radius, a
 centre outside the image, a missing or reordered frame, objects on an unchecked frame, a UTF-8 BOM or
-blank line (signs of a re-save by another program: download it again), and, with `--labels`, an
-object that re-marks the labelled plate. It prints a summary with the file's SHA-256 and the
+blank line (signs of a re-save by another program: download it again), no complete frame, and, with
+`--labels`, an object that re-marks the labelled plate. `--labels` must be the same package's label
+CSV, read just as strictly: exact header, every package frame once in order, and finite coordinates. It prints a summary with the file's SHA-256 and the
 complete frames' timestamps for a freeze record to cite.
 
 ## Repeatability / annotation-noise check

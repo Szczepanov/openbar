@@ -390,8 +390,13 @@ class InventoryPageTests(unittest.TestCase):
             "(() => { const one = addObject(EMPTY_INVENTORY, {x: 5, y: 5}, 'stored_plate', '');"
             "return [sizeLastObject(EMPTY_INVENTORY, {x: 1, y: 1}), sizeLastObject(one, {x: 5.05, y: 5}).objects[0].r,"
             "removeLastObject(toggleDone(one)).state, removeLastObject(EMPTY_INVENTORY),"
-            "sanitizeInventory({'0': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 2}]},"
-            "'0.5': {state: 'done'}, '1': {state: 'weird', objects: []}, '2': {state: 'done', objects: [{cls: 'x', x: 1, y: 1}]}})]; })()"
+            "sanitizeInventory({'0': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 2, r: null, note: ''}]},"
+            "'0.5': {state: 'done'}, '1': {state: 'weird', objects: []},"
+            "'2': {state: 'done', objects: [{cls: 'x', x: 1, y: 1, r: null, note: ''}]},"
+            "'3': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 1, r: '5', note: ''}]},"
+            "'4': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 1, r: 5, note: 7}]},"
+            "'5': {state: 'done', objects: [{cls: 'stored_plate', x: -50, y: 1, r: 5, note: ''}]},"
+            "'6': {state: 'done', objects: [{cls: 'stored_plate', x: 99.5, y: 1, r: 5, note: ''}]}}, 100, 50)]; })()"
         )
 
         self.assertEqual(result, [
@@ -399,7 +404,7 @@ class InventoryPageTests(unittest.TestCase):
             None,
             "not_done",
             {"state": "not_done", "objects": []},
-            {"0": {"state": "done", "objects": [{"cls": "stored_plate", "x": 1, "y": 2}]}},
+            {"0": {"state": "done", "objects": [{"cls": "stored_plate", "x": 1, "y": 2, "r": None, "note": ""}]}},
         ])
 
     @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
@@ -422,6 +427,7 @@ class InventoryPageTests(unittest.TestCase):
             (f"{{'0': toggleDone({sized % ('unknown', '')})}}", "{'0': {state: 'labelled', x: 200, y: 50, r: 10}}"),
         ]:
             self.assertIsNone(self.run_inventory(f"inventoryProblem({frames}, {inventory}, {labels})"))
+
 
 class OutputSafetyTests(unittest.TestCase):
     def test_non_redistributable_frames_must_stay_under_validation_private(self):

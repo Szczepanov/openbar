@@ -150,21 +150,50 @@ class SummaryTests(unittest.TestCase):
             scene_inventory.summary((text + "\n").encode("utf-8"), CONFIG)
 
     def test_labels_reject_an_object_that_re_marks_the_labelled_plate(self):
-        result = scene_inventory.summary(VALID.encode("utf-8"), CONFIG, LABELS.replace("151.00,101.00,10.50", "40,40,8"))
+        result = scene_inventory.summary(VALID.encode("utf-8"), CONFIG,
+                                         LABELS.replace("151.00,101.00,10.50", "40.00,40.00,8.00").encode("utf-8"))
         self.assertTrue(result["checked_against_labels"])
 
         # Object 2 (150, 100, r 9.5) is within 2 px in centre and radius of the plate (151, 101, r 10.5).
         with self.assertRaisesRegex(scene_inventory.InventoryError, "frame 0, object 2: this is the labelled plate"):
-            scene_inventory.summary(VALID.encode("utf-8"), CONFIG, LABELS)
+            scene_inventory.summary(VALID.encode("utf-8"), CONFIG, LABELS.encode("utf-8"))
 
     def test_a_concentric_rim_with_a_different_radius_is_not_the_plate(self):
         text = frame0("done,0,concentric_rim,151.00,101.00,5.00,")
 
-        scene_inventory.summary(text.encode("utf-8"), CONFIG, LABELS)
+        scene_inventory.summary(text.encode("utf-8"), CONFIG, LABELS.encode("utf-8"))
+
+    def test_labels_must_be_this_packages_well_formed_label_csv(self):
+        rows = LABELS.splitlines()
+        cases = {
+            "the inventory itself": VALID,
+            "empty": "",
+            "not a number": LABELS.replace("151.00,101.00", "abc,101.00"),
+            "nan": LABELS.replace("151.00,101.00,10.50", "nan,nan,nan"),
+            "spreadsheet timestamp": LABELS.replace("\n0.000000,", "\n0,"),
+            "other package frames": LABELS.replace(",,12,", ",,13,"),
+            "missing frame": "\n".join(rows[:-1]) + "\n",
+            "truncated row": LABELS.replace(",,,,,,\n0.500000", ",,,,\n0.500000"),
+            "unknown state": LABELS.replace("not_annotated,unknown", "skipped,unknown"),
+            "bom": "\ufeff" + LABELS,
+            "blank line": LABELS.replace("\n", "\n\n", 1),
+        }
+        for name, text in cases.items():
+            with self.subTest(name), self.assertRaises(scene_inventory.InventoryError):
+                scene_inventory.summary(VALID.encode("utf-8"), CONFIG, text.encode("utf-8"))
+
+    def test_empty_frame_row_with_stray_fields_names_the_problem(self):
+        text = "\n".join([HEAD, f"{PID},0.000000,0,done,,,,,, ", *REST]) + "\n"
+        with self.assertRaisesRegex(scene_inventory.InventoryError, "without object_index must have empty object fields"):
+            scene_inventory.parse(text, CONFIG)
+
+    def test_line_numbers_ignore_unicode_line_separators_in_notes(self):
+        text = frame0("done,0,other,1.00,1.00,1.00,lamp\u2028x", "done,1,stored_plate,1.00,1.00,1.00,") + ""
+        scene_inventory.summary(text.encode("utf-8"), CONFIG)
 
 
 class CliTests(unittest.TestCase):
-    def run_cli(self, csv_text: str, page: str | None = None) -> tuple[int, str]:
+    def run_cli(self, csv_text: str, page: str | None = None, labels: str | None = None) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as temp:
             package = Path(temp)
             if page is None:
@@ -172,10 +201,14 @@ class CliTests(unittest.TestCase):
             if page:
                 (package / "index.html").write_text(page, encoding="utf-8")
             (package / "inventory.csv").write_bytes(csv_text.encode("utf-8"))
+            extra = []
+            if labels is not None:
+                (package / "labels.csv").write_bytes(labels.encode("utf-8"))
+                extra = ["--labels", str(package / "labels.csv")]
             out, err = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = scene_inventory.main(["validate", "--package", str(package),
-                                             "--csv", str(package / "inventory.csv")])
+                                             "--csv", str(package / "inventory.csv"), *extra])
         return code, out.getvalue() or err.getvalue()
 
     def test_validate_prints_the_same_summary_every_run(self):
@@ -193,6 +226,11 @@ class CliTests(unittest.TestCase):
         ]:
             with self.subTest(name):
                 code, output = self.run_cli(csv_text, page)
+                self.assertEqual(code, 1)
+                self.assertTrue(output.startswith("scene-inventory: "), output)
+        for name, labels in [("re-marked plate", LABELS), ("broken labels", "x\n")]:
+            with self.subTest(name):
+                code, output = self.run_cli(VALID, None, labels)
                 self.assertEqual(code, 1)
                 self.assertTrue(output.startswith("scene-inventory: "), output)
 

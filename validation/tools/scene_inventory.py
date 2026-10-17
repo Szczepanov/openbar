@@ -33,7 +33,12 @@ CLASSES = ("another_plate_target_bar", "concentric_rim", "other_loaded_bar", "st
            "rack_equipment", "background_object", "other", "unknown")
 STATES = ("done", "not_done")
 OBJECT_FIELDS = ("object_index", "object_class", "x_px", "y_px", "radius_px", "notes")
-# Guard against re-marking the labelled plate as an inventory object; not a matching tolerance.
+# The label CSV the same page writes (label_page.html csvRows), read only for the --labels guard.
+LABEL_COLUMNS = ("timestamp_s", "requested_timestamp_s", "frame_index", "annotation_state", "visibility", "quality",
+                 "x_px", "y_px", "radius_px", "diameter_px", "left_px", "top_px", "right_px", "bottom_px", "notes")
+LABEL_STATES = ("labelled", "unlabelable", "not_annotated")
+# Guard against re-marking the labelled plate as an inventory object; not a matching tolerance. The page
+# compares unrounded values and this tool the 2-decimal CSV values, so they can differ right at 2 px.
 SAME_CIRCLE_PX = 2.0
 CONFIG_LINE = re.compile(r"^const CONFIG = (\{.*\});$", re.M)
 NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?", re.ASCII)
@@ -86,7 +91,9 @@ def frame_entry(rows: list[tuple[int, dict[str, str]]], width: int, height: int)
     if len(states) != 1 or next(iter(states)) not in STATES:
         raise InventoryError(f"line {rows[0][0]}: inventory_state must be one of {STATES}, the same on every row of a frame")
     state = next(iter(states))
-    if len(rows) == 1 and not any(rows[0][1][field] for field in OBJECT_FIELDS):
+    if len(rows) == 1 and not rows[0][1]["object_index"]:
+        if any(rows[0][1][field] for field in OBJECT_FIELDS):
+            raise InventoryError(f"line {rows[0][0]}: a frame row without object_index must have empty object fields")
         return {"inventory_state": state, "objects": []}
     if state != "done":
         raise InventoryError(f"line {rows[0][0]}: objects are only allowed on a done frame")
@@ -103,7 +110,11 @@ def decode(data: bytes) -> str:
         raise InventoryError("the file starts with a UTF-8 BOM, so it was re-saved by another program; "
                              "download it again from the page")
     text = data.decode("utf-8")
-    for number, line in enumerate(text.splitlines(), start=1):
+    # Split on newlines only: str.splitlines would also split on form feeds or U+2028 inside a field.
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines[-1] == "":
+        lines = lines[:-1]
+    for number, line in enumerate(lines, start=1):
         if not line.strip():
             raise InventoryError(f"line {number}: blank line; the page never writes one")
     return text
@@ -140,12 +151,26 @@ def parse(csv_text: str, config: dict[str, Any]) -> list[dict[str, Any]]:
             for key in order]
 
 
-def labelled_plates(label_csv_text: str) -> dict[str, tuple[float, float, float]]:
-    """Labelled plate centre and radius per timestamp, from the page's label CSV (frames with a radius)."""
-    plates = {}
-    for row in csv.DictReader(io.StringIO(label_csv_text, newline="")):
-        if row.get("annotation_state") == "labelled" and row.get("radius_px"):
-            plates[row["timestamp_s"]] = (float(row["x_px"]), float(row["y_px"]), float(row["radius_px"]))
+def labelled_plates(label_csv: bytes, config: dict[str, Any]) -> dict[str, tuple[float, float, float]]:
+    """Labelled plate centre and radius per timestamp from the same package's label CSV (frames with a
+    radius). Read as strictly as the inventory, so a wrong or broken file fails instead of checking nothing."""
+    reader = csv.DictReader(io.StringIO(decode(label_csv), newline=""))
+    if tuple(reader.fieldnames or ()) != LABEL_COLUMNS:
+        raise InventoryError(f"--labels: header must be exactly {','.join(LABEL_COLUMNS)}")
+    expected = [(f"{frame['timestamp_s']:.6f}", str(frame["frame_index"])) for frame in config["frames"]]
+    seen, plates = [], {}
+    for row in reader:
+        where = f"--labels line {reader.line_num}"
+        if None in row or any(value is None for value in row.values()):
+            raise InventoryError(f"{where}: wrong number of columns")
+        seen.append((row["timestamp_s"], row["frame_index"]))
+        if row["annotation_state"] not in LABEL_STATES:
+            raise InventoryError(f"{where}: annotation_state {row['annotation_state']!r} is not one of {LABEL_STATES}")
+        if row["annotation_state"] == "labelled" and row["radius_px"]:
+            plates[row["timestamp_s"]] = (finite(row["x_px"], "x_px", where), finite(row["y_px"], "y_px", where),
+                                          finite(row["radius_px"], "radius_px", where))
+    if seen != expected:
+        raise InventoryError("--labels: the label CSV must list this package's frames once, in package order")
     return plates
 
 
@@ -159,10 +184,10 @@ def require_not_the_plate(frames: list[dict[str, Any]], plates: dict[str, tuple[
                                      "not another object")
 
 
-def summary(csv_bytes: bytes, config: dict[str, Any], label_csv_text: str | None = None) -> dict[str, Any]:
+def summary(csv_bytes: bytes, config: dict[str, Any], label_csv: bytes | None = None) -> dict[str, Any]:
     frames = parse(decode(csv_bytes), config)
-    if label_csv_text is not None:
-        require_not_the_plate(frames, labelled_plates(label_csv_text))
+    if label_csv is not None:
+        require_not_the_plate(frames, labelled_plates(label_csv, config))
     done = [frame for frame in frames if frame["inventory_state"] == "done"]
     if not done:
         raise InventoryError("no frame has a complete inventory")
@@ -179,7 +204,7 @@ def summary(csv_bytes: bytes, config: dict[str, Any], label_csv_text: str | None
         "frames_done": len(done),
         "done_timestamps_s": [frame["timestamp_s"] for frame in done],
         "objects_by_class": counts,
-        "checked_against_labels": label_csv_text is not None,
+        "checked_against_labels": label_csv is not None,
     }
 
 
@@ -198,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         config = package_config((args.package / "index.html").read_text(encoding="utf-8"))
-        labels = args.labels.read_text(encoding="utf-8") if args.labels else None
+        labels = args.labels.read_bytes() if args.labels else None
         result = summary(args.csv.read_bytes(), config, labels)
     except (ValueError, KeyError, TypeError, csv.Error, OSError) as error:
         print(f"scene-inventory: {error}", file=sys.stderr)
