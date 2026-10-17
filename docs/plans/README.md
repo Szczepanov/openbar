@@ -29,6 +29,9 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   With the baseline's plate-size window, top-1 selects the labelled plate on 23/25 clips (Hough 15/25),
   or 18/20 with a label-free frame-0 decision (Hough 13/20).
   Development estimate only; research code in `research/plate-detection/`.
+  [Phase A.2](../analysis/PLATE_DETECTION_PHASE_A2_RESULTS.md), which detects once on frame 0 and then tracks with
+  SAM 2.1 video, holds the plate on every labelled frame when the seed is right, but scores 276/388 frames overall
+  (per-frame 320/388) because a wrong seed stays wrong.
 
 ## Recommended plan structure
 
