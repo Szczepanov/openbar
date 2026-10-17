@@ -134,7 +134,10 @@ python research/plate-detection/score_phase_a.py --run-dir validation/private/pl
 ```
 
 Run record (private): `run.json` SHA-256 `b2d51f3758ac4d3839fc8bf74001953c2b9b77c34da59e5f2d389f197b9c8999`, code
-commit `d8f8ee7` (clean). Scores: `score.json` SHA-256
+commit `d8f8ee7` (clean), on the pre-merge #235 branch; this PR's commits are that work rebased onto the merged #235.
+The merge added one change on the seed path: `detectors.dedupe` now drops non-finite or zero-size boxes before NMS.
+That leaves the output for valid boxes unchanged, so the run's per-file source hashes differ from the rebased
+`detectors.py` only by that filter. Scores: `score.json` SHA-256
 `36b3bd4dff30de5573075fccd9b5a380a413d2c83f3d4060a01d142b34531606`; the Phase A rescore:
 `4113bfa81b03ad458f6917ba3fc6a8d70003c95feafd4a673c5d8295ae09b03d`. An earlier `run-1` was abandoned
 unscored after 2 clips: a GPU-sharing slowdown, then the provenance guard correctly refused to resume it under a
