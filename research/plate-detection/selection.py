@@ -1,0 +1,113 @@
+"""Label-free selection rules and the descriptive identity match used by the scorer (#233).
+
+Selection never reads labels. ``match`` is scoring only. Rules: ``top1`` (highest score),
+``plausible`` + ``top1``, ``largest-plausible-v1`` and ``motion-v1``.
+
+``motion-v1`` is designed against H1/H2 (PLATE_SELECTION_NEXT_ROUND_PLAN.md): clutter and stored
+plates stay put for the whole clip, and the plate on the lifted bar leaves its starting spot. For
+each plausible candidate on the decision frame it measures *persistence*: the share of the clip's
+other sampled frames where the same method reports a similar circle at the same spot. The least
+persistent plausible candidate wins.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Iterable, Sequence
+
+MATCH_RULE = "identity-loose-v1"
+MATCH_CENTRE_FRACTION = 0.25  # of the true radius
+MATCH_RADIUS_FRACTION = 0.25
+
+# Plausible plate size: the baseline's own PlateParams radius window (vbt_suggest.py), reused
+# unchanged so no new constant is tuned on development clips.
+MIN_RADIUS_FRACTION = 0.04  # of the shorter frame side
+MAX_RADIUS_FRACTION = 0.30
+LARGEST_RULE = "largest-plausible-v1"
+
+MOTION_RULE = "motion-v1"
+PLAUSIBLE_SCORE_FRACTION = 0.5  # of the best score on the decision frame
+SAME_SPOT_CENTRE_FRACTION = 0.25  # of the candidate radius
+SAME_SPOT_RADIUS_FRACTION = 0.25
+MIN_OTHER_FRAMES = 4
+
+
+@dataclass(frozen=True)
+class Candidate:
+    center_x_px: float
+    center_y_px: float
+    radius_px: float
+    score: float
+
+    @staticmethod
+    def from_dict(row: dict) -> "Candidate":
+        return Candidate(float(row["center_x_px"]), float(row["center_y_px"]),
+                         float(row["radius_px"]), float(row["score"]))
+
+
+def match(candidate: Candidate, x: float, y: float, r: float) -> bool:
+    """Same physical plate, loosely: centre within 25% and radius within 25% of the true radius."""
+    return (math.hypot(candidate.center_x_px - x, candidate.center_y_px - y) <= MATCH_CENTRE_FRACTION * r
+            and abs(candidate.radius_px - r) <= MATCH_RADIUS_FRACTION * r)
+
+
+def _order(candidates: Iterable[Candidate]) -> list[Candidate]:
+    """Deterministic order: score descending, then geometry, so ties never depend on input order."""
+    return sorted(candidates, key=lambda c: (-c.score, c.center_x_px, c.center_y_px, c.radius_px))
+
+
+def select_top1(candidates: Sequence[Candidate]) -> Candidate | None:
+    ordered = _order(candidates)
+    return ordered[0] if ordered else None
+
+
+def plausible(candidates: Sequence[Candidate], width_px: int, height_px: int) -> list[Candidate]:
+    """Candidates whose radius fits the baseline's plate-size window for this frame.
+
+    Open-vocabulary detectors also box the whole loaded barbell or the lifter for "barbell plate";
+    those circles are far larger than any plate that fits the frame.
+    """
+    shorter = min(width_px, height_px)
+    low, high = MIN_RADIUS_FRACTION * shorter, MAX_RADIUS_FRACTION * shorter
+    return [c for c in candidates if low <= c.radius_px <= high]
+
+
+def select_largest(candidates: Sequence[Candidate]) -> Candidate | None:
+    """Largest candidate among those scoring at least PLAUSIBLE_SCORE_FRACTION of the best.
+
+    In a side view the plate on the lifted bar is usually nearer the camera than stored plates.
+    """
+    ordered = _order(candidates)
+    if not ordered:
+        return None
+    floor = PLAUSIBLE_SCORE_FRACTION * ordered[0].score
+    return min((c for c in ordered if c.score >= floor), key=lambda c: (-c.radius_px, -c.score, c.center_x_px))
+
+
+def same_spot(a: Candidate, b: Candidate) -> bool:
+    return (math.hypot(a.center_x_px - b.center_x_px, a.center_y_px - b.center_y_px)
+            <= SAME_SPOT_CENTRE_FRACTION * a.radius_px
+            and abs(a.radius_px - b.radius_px) <= SAME_SPOT_RADIUS_FRACTION * a.radius_px)
+
+
+def persistence(candidate: Candidate, other_frames: Sequence[Sequence[Candidate]]) -> float:
+    if not other_frames:
+        raise ValueError("persistence needs at least one other frame")
+    hits = sum(1 for frame in other_frames if any(same_spot(candidate, other) for other in frame))
+    return hits / len(other_frames)
+
+
+def select_motion(decision: Sequence[Candidate], other_frames: Sequence[Sequence[Candidate]]
+                  ) -> tuple[Candidate | None, dict]:
+    """Least persistent plausible candidate; falls back to top-1 with too few other frames."""
+    ordered = _order(decision)
+    if not ordered:
+        return None, {"rule": MOTION_RULE, "fallback": None}
+    if len(other_frames) < MIN_OTHER_FRAMES:
+        return ordered[0], {"rule": MOTION_RULE, "fallback": "top1_too_few_frames"}
+    floor = PLAUSIBLE_SCORE_FRACTION * ordered[0].score
+    plausible = [c for c in ordered if c.score >= floor]
+    scored = [(persistence(c, other_frames), index, c) for index, c in enumerate(plausible)]
+    best_p, _, best = min(scored, key=lambda item: (item[0], item[1]))
+    return best, {"rule": MOTION_RULE, "fallback": None, "plausible": len(plausible),
+                  "persistence": [round(p, 4) for p, _, _ in scored], "selected_persistence": round(best_p, 4)}
