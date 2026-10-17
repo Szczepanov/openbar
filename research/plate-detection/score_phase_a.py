@@ -8,7 +8,14 @@ Per method and clip:
 - clip selection on the decision frame (the first labelled frame), by ``top1`` and ``motion-v1``;
 - geometry of the best-matching candidate: centre error and radius error, relative to the true
   radius;
-- per-frame latency.
+- per-frame latency;
+- the ``close-score-v1`` refusal on the label-free frame 0 (Phase A.2): refused clips are reported
+  separately, with what plausible top-1 would have chosen, and frame identity is also counted over
+  the clips that were not refused;
+- clips where every labelled frame is on target, and lost frames (no candidate at all).
+
+Phase A.2 ``track_sam2`` records hold at most the tracked circle; their frame 0 also carries the
+detector's ``seed`` candidates, which the refusal reads instead.
 
 No pass/fail verdict, no thresholds tuned here. Development clips only, so nothing generalises.
 """
@@ -67,6 +74,8 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
     pairs = labelled_frames(records, points)
     out: dict[str, Any] = {
         "sampled_frames": len(records), "labelled_frames": len(pairs),
+        "lost_frames": sum(not r["candidates"] for r in records),
+        "frame0_refusal": frame0_refusal(records[0]) if records else None,
         "latency_s": [r["latency_s"] for r in records],
         "candidates_per_frame": [len(r["candidates"]) for r in records],
     }
@@ -92,6 +101,8 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
     if first_point is not None:
         frame0_rules, _ = clip_rules(first, records[1:])
         frame0 = {name: is_target(chosen, first_point) for name, chosen in frame0_rules.items()}
+        if "seed" in first:  # the track's frame-0 choice is the seed detector's plausible top-1
+            frame0[RULE_PLAUSIBLE_TOP1] = is_target(selection.select_top1(_plausible_seed(first)), first_point)
     return {**out, "scored": True, "frame_recall": recall, "frame_top1": top1,
             "frame_plausible_top1": plausible_top1, "decision_time_s": decision["time_s"],
             "decision_from_label": decision["frame_index"] != first["frame_index"],
@@ -102,6 +113,16 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
 
 def _plausible(record: dict[str, Any]) -> list[selection.Candidate]:
     return selection.plausible(candidates_of(record), record["width_px"], record["height_px"])
+
+
+def _plausible_seed(record: dict[str, Any]) -> list[selection.Candidate]:
+    seed = [selection.Candidate.from_dict(row) for row in record["seed"]["candidates"]]
+    return selection.plausible(seed, record["width_px"], record["height_px"])
+
+
+def frame0_refusal(record: dict[str, Any]) -> dict[str, Any]:
+    """``close-score-v1`` over the plausible candidates a detector saw on frame 0 (label-free)."""
+    return selection.refusal(_plausible_seed(record) if "seed" in record else _plausible(record))
 
 
 def clip_rules(decision: dict[str, Any], others: Sequence[dict[str, Any]]
@@ -128,6 +149,8 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
     frames = sum(c["labelled_frames"] for c in scored)
     centre = [v for c in scored for v in c["centre_error_rel"]]
     radius = [abs(v) for c in scored for v in c["radius_error_rel"]]
+    accepted = [c for c in scored if not c["frame0_refusal"]["refused"]]
+    with0 = [c for c in scored if c["clip_frame0"] is not None]
     latency = [v for c in per_clip.values() for v in c["latency_s"]]
     counts = [v for c in per_clip.values() for v in c["candidates_per_frame"]]
     return {
@@ -140,6 +163,21 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "frame0_clips": sum(c["clip_frame0"] is not None for c in scored),
         "clip_frame0": {rule: sum(c["clip_frame0"][rule] for c in scored if c["clip_frame0"] is not None)
                         for rule in RULES},
+        "clips_every_frame_on_target": sum(c["frame_plausible_top1"] == c["labelled_frames"] for c in scored),
+        "lost_frames": sum(c["lost_frames"] for c in per_clip.values()),
+        "sampled_frames": sum(c["sampled_frames"] for c in per_clip.values()),
+        "refusal": {
+            "rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            "refused_clips": sorted(k for k, c in per_clip.items() if c["scored"] and c["frame0_refusal"]["refused"]),
+            "frame0_accepted": sum(not c["frame0_refusal"]["refused"] for c in with0),
+            "frame0_accepted_correct": sum(c["clip_frame0"][RULE_PLAUSIBLE_TOP1] for c in with0
+                                           if not c["frame0_refusal"]["refused"]),
+            "frame0_refused": sum(c["frame0_refusal"]["refused"] for c in with0),
+            "frame0_refused_would_be_correct": sum(c["clip_frame0"][RULE_PLAUSIBLE_TOP1] for c in with0
+                                                   if c["frame0_refusal"]["refused"]),
+            "accepted_labelled_frames": sum(c["labelled_frames"] for c in accepted),
+            "accepted_frame_plausible_top1": sum(c["frame_plausible_top1"] for c in accepted),
+        },
         "centre_error_rel_median": _quantile(centre, 0.5), "centre_error_rel_p90": _quantile(centre, 0.9),
         "radius_abs_error_rel_median": _quantile(radius, 0.5), "radius_abs_error_rel_p90": _quantile(radius, 0.9),
         "latency_s_median": statistics.median(latency) if latency else None,
@@ -182,6 +220,36 @@ def table(result: dict[str, Any]) -> str:
                      f"{a['frame_recall']}/{f} | {a['frame_top1']}/{f} | {a['frame_plausible_top1']}/{f} | "
                      f"{fmt(a['centre_error_rel_median'])} | {fmt(a['radius_abs_error_rel_median'])} | "
                      f"{fmt(a['latency_s_median'])} s |")
+    lines += ["", "| Method | Frame-0 refused (would be correct) | Frame-0 accepted correct | "
+              "Accepted-clip frame plausible top-1 | Clips with every labelled frame on target | Lost frames |",
+              "|---" * 6 + "|"]
+    for name, data in result["methods"].items():
+        a, r = data["all"], data["all"]["refusal"]
+        lines.append(f"| {name} | {r['frame0_refused']} ({r['frame0_refused_would_be_correct']}) | "
+                     f"{r['frame0_accepted_correct']}/{r['frame0_accepted']} | "
+                     f"{r['accepted_frame_plausible_top1']}/{r['accepted_labelled_frames']} | "
+                     f"{a['clips_every_frame_on_target']}/{a['scored_clips']} | "
+                     f"{a['lost_frames']}/{a['sampled_frames']} |")
+    return "\n".join(lines)
+
+
+def per_clip_table(methods: dict[str, dict[str, Any]]) -> str:
+    """Per scored clip and method: frame plausible top-1 over labelled frames, the frame-0 outcome
+    (``ok``, ``miss``, or ``-`` without a frame-0 label) and ``R`` when frame 0 was refused."""
+    names = list(methods)
+    scored = sorted({k for m in methods.values() for k, c in m["per_clip"].items() if c["scored"]})
+    lines = ["| Clip | " + " | ".join(names) + " |", "|---" * (1 + len(names)) + "|"]
+    for clip in scored:
+        cells = []
+        for name in names:
+            c = methods[name]["per_clip"].get(clip)
+            if c is None or not c["scored"]:
+                cells.append("–")
+                continue
+            f0 = "-" if c["clip_frame0"] is None else ("ok" if c["clip_frame0"][RULE_PLAUSIBLE_TOP1] else "miss")
+            refused = " R" if c["frame0_refusal"]["refused"] else ""
+            cells.append(f"{c['frame_plausible_top1']}/{c['labelled_frames']} {f0}{refused}")
+        lines.append(f"| {clip} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -190,11 +258,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--run-dir", type=Path, required=True)
     p.add_argument("--repo-root", type=Path, required=True, help="checkout holding validation/private labels")
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--compare", type=Path, action="append", default=[],
+                   help="another run's score.json; its methods join the printed per-clip table only")
     args = p.parse_args(argv)
     roles = json.loads((args.run_dir / "run.json").read_text(encoding="utf-8"))["clips"]
     result = score_run(args.run_dir, args.repo_root / "validation" / "private", roles)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
     print(table(result))
+    methods: dict[str, Any] = {}
+    for path in args.compare:
+        methods.update(json.loads(path.read_text(encoding="utf-8"))["methods"])
+    methods.update(result["methods"])
+    print()
+    print(per_clip_table(methods))
     return 0
 
 
