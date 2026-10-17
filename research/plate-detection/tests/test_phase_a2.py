@@ -110,6 +110,22 @@ class Sam3RuleTests(unittest.TestCase):
         self.assertEqual((seed["selected_index"], seed["refusal"]["reason"]), (None, "no_candidate"))
 
 
+class TrackerChoiceTests(unittest.TestCase):
+    def test_method_names_keep_phase_a2_names(self) -> None:
+        self.assertEqual(track.method_name("sam2", "gdino_sam2"), track.METHOD)
+        self.assertEqual(track.method_name("sam2", "sam3"), track.SAM3_METHOD)
+        self.assertEqual(track.method_name("edgetam", "sam3"), "track_edgetam_sam3seed")
+        self.assertEqual(track.method_name("edgetam", "gdino_sam2"), "track_edgetam")
+        with self.assertRaises(ValueError):
+            track.method_name("csrt", "sam3")
+
+    def test_trackers_are_pinned_transformers_video_models(self) -> None:
+        self.assertEqual(sorted(track.TRACKERS), ["edgetam", "sam2"])
+        self.assertEqual(track.TRACKERS["edgetam"]["model_class"], "EdgeTamVideoModel")
+        self.assertRegex(track.TRACKERS["edgetam"]["revision"], r"^[0-9a-f]{40}$")
+        self.assertEqual(track.TRACKERS["sam2"]["checkpoint"], track.SAM2_VIDEO_CHECKPOINT)
+
+
 class SeedTests(unittest.TestCase):
     def test_plausible_top1_index(self) -> None:
         rows = [row(500, 900, 700, 0.9), row(300, 600, 100, 0.4), row(800, 600, 90, 0.5)]
