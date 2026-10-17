@@ -26,7 +26,7 @@ SCORED_DEVELOPMENT_ONLY = frozenset({
 })
 GRID_STEP_S = 0.5
 MAX_GRID_FRAMES = 40
-TRACK_STRIDE = 2  # Phase A.2: every 2nd decoded frame (about 30 fps on these 60 fps clips)
+TRACK_STRIDE = 2  # Phase A.2: every 2nd decoded frame (about 30 fps on 60 fps clips, 15 fps on 30 fps clips)
 
 
 class ClipRefused(RuntimeError):

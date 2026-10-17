@@ -33,8 +33,9 @@ SAME_SPOT_RADIUS_FRACTION = 0.25
 MIN_OTHER_FRAMES = 4
 
 # Refusal (Phase A.2): fixed before any A.2 result was produced, but after reading the Phase A failure
-# review, which reports one stored plate scoring 0.43 against 0.41 for the target. Scale-free, so it
-# applies to any method's own score.
+# review, which reports one stored plate scoring 0.43 against 0.41 for the target. A ratio needs no
+# common score scale, but it assumes the method's scores spread out between objects. GroundingDINO's do;
+# SAM 3 gives several plates scores above 0.9, so the same ratio refuses 11 of its 27 frame-0 decisions.
 REFUSAL_RULE = "close-score-v1"
 REFUSAL_SCORE_RATIO = 0.9  # refuse when the runner-up scores at least this share of the best
 

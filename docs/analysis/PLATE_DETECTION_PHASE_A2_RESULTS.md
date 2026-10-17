@@ -44,7 +44,8 @@ frame, 320/388 labelled frames in Phase A)?
 
 Session memory is bounded: after each frame, frames and non-conditioning outputs older than the model's memory window
 (`max(num_maskmem, max_object_pointers_in_encoder) + 1` frames) are dropped. The model never reads them, so the output
-does not change.
+does not change. Checked on `vbt-e2d13139fc682295` (187 tracked frames, window 17): with and without pruning, every
+mask, object-score logit and fitted circle is identical.
 
 Scoring (`score_phase_a.py`, extended): the same `identity-loose-v1` match and the same 388 labelled frames on 25
 clips as Phase A. A `track_sam2` frame holds at most one candidate, so frame recall, top-1 and plausible top-1
@@ -109,6 +110,12 @@ Per clip (labelled frames on target; frame-0 outcome `ok` / `miss`, or `-` with 
 - Stride 2 halves the frame rate; a faster lift or a lower frame rate might lose the plate where this run did not.
   Whether a different stride changes identity was not tested.
 - The tracker score is not a confidence that the identity is right: it was about 0.9999 on all three wrong seeds.
+- The tracker sees frames as consecutive steps. The planned frames are not evenly spaced in time: labelled frames
+  are inserted between the stride frames, and stride 2 is 30 fps on the 60 fps clips but 15 fps on the 30 fps
+  ones. SAM 2.1's memory treats each step the same, whatever its time gap.
+- `close-score-v1` depends on how a method's scores spread. On SAM 3 (Phase A results, SAM 3 section) several plates
+  score above 0.9, and the same 0.9 ratio would refuse 11 of 27 frame-0 decisions, although SAM 3's frame-0 top-1
+  is right on 19/20. The ratio was fixed for GroundingDINO-style scores; a SAM 3 seed would need its own rule.
 - GPU inference is not bit-for-bit reproducible across GPUs or library versions; `run.json` records packages,
   checkpoint revisions, weight hashes and per-file source hashes.
 - No candidate enters canonical `Analysis` or a #95/#113 session record; all candidates are machine-origin.
