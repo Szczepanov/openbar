@@ -240,6 +240,47 @@ The importer rejects unknown/missing CSV columns, malformed target-size represen
 fake centres on missing samples, timestamp-order violations, source-hash mismatches, and
 coordinate/orientation inconsistencies.
 
+### Optional scene inventory
+
+The labelling page can also record a scene inventory: every *other* circular object on a frame (not
+the labelled plate), classed with the wrong-target taxonomy of
+[HOUGH_TOP_K_PREPARATION.md](../plans/HOUGH_TOP_K_PREPARATION.md): `another_plate_target_bar`,
+`concentric_rim`, `other_loaded_bar`, `stored_plate`, `rack_equipment`, `background_object`, `other`
+(with a description in notes), or `unknown` for a circle that cannot be classified. Nothing is
+prefilled from a detector.
+
+- Press `I` to switch clicks to inventory objects, pick a class, click the object's centre, then
+  Shift+click its rim. The radius is required, because a candidate is matched on centre **and**
+  radius, and centre alone cannot tell a concentric rim from the plate. `Backspace` removes the last
+  object and reopens the frame. An `other` object takes the description typed before its click.
+- In inventory mode the plate-label keys, arrow nudges and Shift+wheel are off, so the plate label
+  cannot change by accident.
+- "Inventory complete" marks a frame as checked, also when it has no other objects, so "none" is
+  distinguishable from "not checked".
+- Export is blocked while a frame has objects but is not complete, an object has no radius, an
+  `other` object has no description, or an object is within 2 px in centre and radius of the
+  labelled plate (a guard against re-marking the plate, not a matching tolerance), or no frame is
+  complete.
+
+"Download inventory CSV" writes `<fixture>.<annotator>.inventory.csv` with columns
+`package_id,timestamp_s,frame_index,inventory_state,object_index,object_class,x_px,y_px,radius_px,notes`:
+one empty row for a frame that is `not_done` or `done` without objects, otherwise one row per object.
+It is a separate file from the label CSV and never enters an annotation document or the canonical
+`Analysis`. A wrong top-1 that matches no inventory object is scored `unknown/unresolvable`; that
+outcome is separate from an object recorded as `unknown`. Keep the file beside the label CSV and
+check it against its package:
+
+```bash
+python3 validation/tools/scene_inventory.py validate --package <package-dir> --csv <inventory.csv> [--labels <labels.csv>]
+```
+
+The command fails on a `package_id` from another package, an unknown class, a missing radius, a
+centre outside the image, a missing or reordered frame, objects on an unchecked frame, a UTF-8 BOM or
+blank line (signs of a re-save by another program: download it again), no complete frame, and, with
+`--labels`, an object that re-marks the labelled plate. `--labels` must be the same package's label
+CSV, read just as strictly: exact header, every package frame once in order, and finite coordinates. It prints a summary with the file's SHA-256 and the
+complete frames' timestamps for a freeze record to cite.
+
 ## Repeatability / annotation-noise check
 
 Repeat a small set of the same actual decoded timestamps without copying the first-pass

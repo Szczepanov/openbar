@@ -47,9 +47,17 @@
     <div class="row" id="quality"></div>
   </div>
   <input id="notes" placeholder="notes (optional)" style="background:#14171c;color:var(--text);border:1px solid #3a4250;border-radius:6px;padding:6px">
+  <div>
+    <div class="muted">Scene inventory (optional): other circular objects on this frame</div>
+    <div class="row"><button id="invmode">Inventory mode <kbd>I</kbd></button></div>
+    <div class="row" id="invclass"></div>
+    <input id="invnote" placeholder="object description (required for other)" style="background:#14171c;color:var(--text);border:1px solid #3a4250;border-radius:6px;padding:6px;width:100%">
+    <div class="row"><button id="invdone">Inventory complete</button><button id="invundo">Remove last object</button></div>
+    <div id="invinfo" class="muted"></div>
+  </div>
   <div class="row"><button id="prev">&larr; Prev</button><button id="next">Next &rarr;</button><button id="clear">Clear centre</button></div>
   <div id="strip"></div>
-  <div class="row"><button id="export">Download CSV</button></div>
+  <div class="row"><button id="export">Download CSV</button><button id="invexport">Download inventory CSV</button></div>
   <div id="progress" class="muted"></div>
   <div id="ringinfo" class="muted"></div>
   <div class="muted">
@@ -63,6 +71,13 @@
     Create the tracker seed with <code>annotations.py seed</code> from the first frame that has a centre and a radius.
     Click the centre, Shift+click the rim, choose quality with <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>, then download CSV.
     For VBT clips, place the seed before the first rep.<br>
+    <b>Scene inventory</b> (optional, separate file): <kbd>I</kbd> switches clicks from the plate centre to inventory
+    objects. Pick a class, click the centre of every <i>other</i> circular object on the frame (not the labelled plate),
+    then Shift+click its rim for its radius (required); <kbd>Backspace</kbd> removes the last one and reopens the frame.
+    Use "unknown" for a circle you cannot classify. Type an "other" object's
+    description before clicking it. The plate keys, arrows and Shift+wheel are off in inventory mode. Press "Inventory complete"
+    once every such object is listed, also when there are none, so "none" differs from "not checked".
+    Check the download with <code>scene_inventory.py validate</code>.<br>
     The dashed ring follows the cursor: line it up with the plate's outer rim and click. The click is the centre, and a
     frame without a radius takes the ring's radius; if the ring does not fit, correct it with Shift+wheel before
     choosing quality. Each new frame starts with the previous frame's radius.
@@ -82,6 +97,11 @@ const VIS = ["visible", "partially_occluded", "fully_occluded", "unknown"];
 const QUAL = ["high", "medium", "low"];
 let labels = {};
 try { labels = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { labels = {}; }
+// Scene inventory: other circular objects per frame, kept apart from the plate labels and exported separately.
+const INV_KEY = KEY + "-inventory";
+let inventory = {};
+try { inventory = JSON.parse(localStorage.getItem(INV_KEY) || "{}"); } catch (e) { inventory = {}; }
+let invMode = false, invClass = "another_plate_target_bar";
 let cur = 0, zoom = 1, panX = 0, panY = 0, mouse = null, dragging = null, placing = false;
 // Aiming ring radius in image pixels, kept per package. It is a cursor aid, never a label by itself.
 const RING_KEY = KEY + "-ring";
@@ -98,6 +118,12 @@ function rec() {
   return labels[ts];
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) {} renderCsv(); }
+function inv() { return inventory[CONFIG.frames[cur].timestamp_s] || EMPTY_INVENTORY; }
+function setInv(v) {
+  inventory = { ...inventory, [CONFIG.frames[cur].timestamp_s]: v };
+  try { localStorage.setItem(INV_KEY, JSON.stringify(inventory)); } catch (e) {}
+  draw();
+}
 function saveRing() { try { localStorage.setItem(RING_KEY, String(ringR)); } catch (e) {} }
 function setRec(r) { labels[CONFIG.frames[cur].timestamp_s] = r; }
 
@@ -122,8 +148,15 @@ function draw() {
   if (im.complete) { ctx.imageSmoothingEnabled = zoom < 2; ctx.drawImage(im, panX, panY, CONFIG.width_px * zoom, CONFIG.height_px * zoom); }
   const r = rec();
   if (r.x !== null) { const p = toCanvas(r.x, r.y); mark(ctx, p.cx, p.cy, r.r, zoom); }
-  if (mouse && ringR && !dragging) drawRing(mouse.cx, mouse.cy);
+  inv().objects.forEach((o, i) => { const p = toCanvas(o.x, o.y); markObject(ctx, p.cx, p.cy, o.r, zoom, `${i} ${o.cls}`); });
+  if (mouse && ringR && !dragging && !invMode) drawRing(mouse.cx, mouse.cy);
   drawLoupe(); updatePanel();
+}
+function markObject(c, x, y, r, scale, text) {
+  c.save(); c.strokeStyle = "#ff5dd2"; c.fillStyle = "#ff5dd2"; c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(x - 7, y - 7); c.lineTo(x + 7, y + 7); c.moveTo(x + 7, y - 7); c.lineTo(x - 7, y + 7); c.stroke();
+  if (r) { c.setLineDash([3, 3]); c.beginPath(); c.arc(x, y, r * scale, 0, Math.PI * 2); c.stroke(); }
+  c.font = "12px system-ui, sans-serif"; c.fillText(text, x + 9, y - 9); c.restore();
 }
 function drawRing(cx, cy) {
   ctx.save(); ctx.strokeStyle = "rgba(255,176,32,.9)"; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
@@ -163,6 +196,14 @@ function updatePanel() {
   for (const [id, field] of [["state", "state"], ["visibility", "visibility"], ["quality", "quality"]])
     document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === r[field]));
   document.getElementById("notes").value = r.notes || "";
+  const iv = inv();
+  document.getElementById("invmode").classList.toggle("on", invMode);
+  document.querySelectorAll("#invclass button").forEach(b => b.classList.toggle("on", b.dataset.v === invClass));
+  document.getElementById("invdone").classList.toggle("on", iv.state === "done");
+  const invDone = CONFIG.frames.filter(fr => (inventory[fr.timestamp_s] || EMPTY_INVENTORY).state === "done").length;
+  document.getElementById("invinfo").textContent = `${iv.objects.length} object(s) here, inventory ` +
+    (iv.state === "done" ? "complete" : "not complete") + ` · ${invDone}/${CONFIG.frames.length} frames complete` +
+    (invMode ? " · clicks add objects" : "");
   document.getElementById("ringinfo").textContent = ringR
     ? `aiming ring r=${ringR.toFixed(2)} px (Shift+wheel ±0.1, [ ] ±1)` : "Shift+click the plate rim once to set the aiming ring";
   const strip = document.getElementById("strip"); strip.innerHTML = "";
@@ -179,6 +220,7 @@ function updatePanel() {
 }
 function go(i) {
   cur = Math.max(0, Math.min(CONFIG.frames.length - 1, i));
+  document.getElementById("invnote").value = "";
   // The ring follows the frames: a frame with its own radius sets it, so a new frame starts from the last one.
   const r = labels[CONFIG.frames[cur].timestamp_s];
   if (r && r.r > 0) { ringR = r.r; saveRing(); }
@@ -234,6 +276,14 @@ stage.addEventListener("mousedown", e => {
   if (e.button !== 0) { dragging = { x: e.clientX, y: e.clientY, px: panX, py: panY }; return; }
   const p = toImage(cx, cy), r = rec();
   if (!inImage(p)) return;
+  if (invMode) {
+    if (e.shiftKey) { setInv(sizeLastObject(inv(), p)); return; }
+    // The description belongs to one "other" object; clear it so it cannot carry over to the next one.
+    const note = document.getElementById("invnote");
+    setInv(addObject(inv(), p, invClass, invClass === "other" ? note.value : ""));
+    note.value = "";
+    return;
+  }
   if (e.shiftKey) {
     if (r.x === null) return;
     ringR = Math.hypot(p.x - r.x, p.y - r.y); saveRing();
@@ -252,6 +302,7 @@ stage.addEventListener("mouseleave", () => { mouse = null; draw(); });
 stage.addEventListener("wheel", e => {
   e.preventDefault();
   if (e.shiftKey) {
+    if (invMode) return;
     // Shift+wheel: radius +/- 0.1 px. Browsers often report Shift+wheel as horizontal (deltaX).
     const delta = e.deltaY || e.deltaX;
     if (!delta || !ringR) return;
@@ -266,11 +317,16 @@ stage.addEventListener("wheel", e => {
 }, { passive: false });
 document.getElementById("notes").addEventListener("input", e => { rec().notes = e.target.value.replace(/[\r\n,"]/g, " "); save(); });
 document.addEventListener("keydown", e => {
-  if (e.target.id === "notes") return;
+  if (e.target.tagName === "INPUT") return;
   const k = e.key.toLowerCase();
+  if (k === "i" && !e.repeat) { invMode = !invMode; draw(); return; }
+  // A held Backspace removes one object, not every object on the frame.
+  if (invMode && k === "backspace") { e.preventDefault(); if (!e.repeat) setInv(removeLastObject(inv())); return; }
   if (k === "n") { go(cur + 1); return; }
   if (k === "p") { go(cur - 1); return; }
   if (k === "0") { fit(); draw(); return; }
+  // Inventory mode never edits the plate label: its keys, nudges and ring resizes are off.
+  if (invMode) return;
   const nudged = nudgeCentre(rec(), k, CONFIG.width_px, CONFIG.height_px);
   if (nudged) { e.preventDefault(); setRec(nudged); save(); draw(); return; }
   const resize = k === "[" || k === "]";
@@ -316,6 +372,79 @@ function exportProblem(frames, labels) {
   return null;
 }
 // END exportProblem
+// BEGIN inventory (pure; exercised by validation/tests/test_label_package.py)
+// Other circular objects on a frame, from the wrong-target taxonomy in HOUGH_TOP_K_PREPARATION.md, plus
+// "unknown" for a circle the annotator cannot classify. "done" means every such object is listed, so a done
+// frame without objects means "none", not "unchecked". Every object needs a radius: package 7 matches a
+// candidate on centre and radius, and centre alone cannot tell a concentric rim from the plate.
+const INVENTORY_CLASSES = ["another_plate_target_bar", "concentric_rim", "other_loaded_bar", "stored_plate",
+  "rack_equipment", "background_object", "other", "unknown"];
+const EMPTY_INVENTORY = { state: "not_done", objects: [] };
+const INVENTORY_MIN_RADIUS_PX = 0.1;
+// Guard against re-marking the labelled plate as an inventory object; not a matching tolerance.
+const SAME_CIRCLE_PX = 2;
+function cleanNote(s) { return (s || "").replace(/[\r\n,"]/g, " ").trim(); }
+// Stored inventory from an older or edited page: keep only well-formed frames whose objects lie in the
+// image window clicks allow (0 <= x < width - 0.5).
+function sanitizeInventory(raw, width, height) {
+  const ok = o => o && INVENTORY_CLASSES.includes(o.cls) && Number.isFinite(o.x) && Number.isFinite(o.y) &&
+    o.x >= 0 && o.y >= 0 && o.x < width - 0.5 && o.y < height - 0.5 &&
+    (o.r === null || (Number.isFinite(o.r) && o.r > 0)) && typeof o.note === "string";
+  const result = {};
+  for (const [ts, iv] of Object.entries(raw && typeof raw === "object" ? raw : {})) {
+    if (iv && ["done", "not_done"].includes(iv.state) && Array.isArray(iv.objects) && iv.objects.every(ok)) result[ts] = iv;
+  }
+  return result;
+}
+function addObject(iv, p, cls, note) {
+  return { ...iv, objects: [...iv.objects, { cls, x: p.x, y: p.y, r: null, note: cleanNote(note) }] };
+}
+// Shift+click on the rim of the last added object sets its radius.
+function sizeLastObject(iv, p) {
+  const last = iv.objects[iv.objects.length - 1];
+  const r = last ? Math.hypot(p.x - last.x, p.y - last.y) : 0;
+  return r >= INVENTORY_MIN_RADIUS_PX ? { ...iv, objects: [...iv.objects.slice(0, -1), { ...last, r }] } : iv;
+}
+// Removing an object reopens the frame, so a complete frame cannot silently become "none".
+function removeLastObject(iv) {
+  return iv.objects.length ? { state: "not_done", objects: iv.objects.slice(0, -1) } : iv;
+}
+function toggleDone(iv) { return { ...iv, state: iv.state === "done" ? "not_done" : "done" }; }
+function sameAsPlate(o, plate) {
+  return Boolean(plate && plate.state === "labelled" && Number.isFinite(plate.x) && plate.r > 0 && o.r > 0 &&
+    Math.hypot(o.x - plate.x, o.y - plate.y) <= SAME_CIRCLE_PX && Math.abs(o.r - plate.r) <= SAME_CIRCLE_PX);
+}
+function inventoryRows(frames, inventory, packageId) {
+  const head = "package_id,timestamp_s,frame_index,inventory_state,object_index,object_class,x_px,y_px,radius_px,notes";
+  const rows = [];
+  for (const f of frames) {
+    const iv = inventory[f.timestamp_s] || EMPTY_INVENTORY, ts = f.timestamp_s.toFixed(6);
+    if (iv.state !== "done" || !iv.objects.length) {
+      rows.push([packageId, ts, f.frame_index, iv.state === "done" ? "done" : "not_done", "", "", "", "", "", ""].join(","));
+      continue;
+    }
+    iv.objects.forEach((o, i) => rows.push([packageId, ts, f.frame_index, "done", i, o.cls, o.x.toFixed(2),
+      o.y.toFixed(2), o.r.toFixed(2), cleanNote(o.note)].join(",")));
+  }
+  return [head, ...rows].join("\n") + "\n";
+}
+function inventoryProblem(frames, inventory, labels) {
+  let done = 0;
+  for (const f of frames) {
+    const iv = inventory[f.timestamp_s] || EMPTY_INVENTORY;
+    if (iv.state === "done") done += 1;
+    else if (iv.objects.length) return `frame ${f.frame_index}: mark the inventory complete or remove its objects before export`;
+    for (const [i, o] of iv.objects.entries()) {
+      const where = `frame ${f.frame_index}, object ${i} (${o.cls})`;
+      if (!INVENTORY_CLASSES.includes(o.cls)) return `${where}: unknown inventory class`;
+      if (!(o.r >= INVENTORY_MIN_RADIUS_PX)) return `${where}: Shift+click its rim to record a radius`;
+      if (o.cls === "other" && !cleanNote(o.note)) return `${where}: needs a description; remove it and add it again`;
+      if (sameAsPlate(o, labels[f.timestamp_s])) return `${where}: this is the labelled plate, not another object`;
+    }
+  }
+  return done ? null : "no frame has a complete inventory";
+}
+// END inventory
 // BEGIN progress (pure; exercised by validation/tests/test_label_package.py)
 // Counts for the status line. The seed is the first frame in time order with a centre and a radius;
 // annotations.py seed selects that row explicitly, because trackers run forward from the seed.
@@ -344,6 +473,21 @@ document.getElementById("export").onclick = () => {
   download(csvText(), `${CONFIG.fixture_id}.${CONFIG.annotator_id}.labels.csv`, "text/csv");
 };
 
+document.getElementById("invexport").onclick = () => {
+  const problem = inventoryProblem(CONFIG.frames, inventory, labels);
+  if (problem) { alert(problem); return; }
+  download(inventoryRows(CONFIG.frames, inventory, CONFIG.package_id), `${CONFIG.fixture_id}.${CONFIG.annotator_id}.inventory.csv`, "text/csv");
+};
+// Buttons drop focus after a click so Space or Enter cannot toggle them again by accident.
+document.getElementById("invmode").onclick = e => { e.currentTarget.blur(); invMode = !invMode; draw(); };
+document.getElementById("invdone").onclick = e => { e.currentTarget.blur(); setInv(toggleDone(inv())); };
+document.getElementById("invundo").onclick = e => { e.currentTarget.blur(); setInv(removeLastObject(inv())); };
+// Loaded above; checked here, after INVENTORY_CLASSES is defined.
+inventory = sanitizeInventory(inventory, CONFIG.width_px, CONFIG.height_px);
+INVENTORY_CLASSES.forEach(v => {
+  const b = document.createElement("button"); b.textContent = v.replace(/_/g, " "); b.dataset.v = v;
+  b.onclick = e => { e.currentTarget.blur(); invClass = v; draw(); }; document.getElementById("invclass").appendChild(b);
+});
 document.getElementById("annotator").textContent = `annotator ${CONFIG.annotator_id} · package ${CONFIG.package_id}`;
 buttons("state", STATES, "state"); buttons("visibility", VIS, "visibility"); buttons("quality", QUAL, "quality");
 window.addEventListener("resize", () => { fit(); draw(); });
