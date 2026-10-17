@@ -148,8 +148,9 @@ Run record (private): `run.json` SHA-256 `2f3ca5ee806f51423ff614ba268b5c5d4d3241
 1. **SAM 3** is done (above). It is the best zero-shot proposer here; a SAM 3-based candidate, or SAM 3 as the
    label source for Phase B, is the natural next freeze candidate, subject to its licence review.
 2. **Detect once, then track** (Phase A.2): take the plausible top-1 on a decision frame and propagate it with SAM 2
-   video tracking. This yields one identity per clip and a full trajectory, and tests whether
-   tracking improves frame-level identity over 320/388.
+   video tracking. Done: [Phase A.2 results](PLATE_DETECTION_PHASE_A2_RESULTS.md). Tracking holds the plate on every
+   labelled frame when the frame-0 seed is right (276/276), but a wrong seed is wrong on every frame, so overall
+   it scores 276/388 against 320/388 for per-frame detection.
 3. **Recall on small or ambiguous plates**: prompt variants and tiling for distant plates, and an explicit refusal
    when two plausible plates are close in score.
 4. **Phase B (needs a new owner decision)**: distil GroundingDINO + SAM 2.1 labels, with owner spot checks, into a

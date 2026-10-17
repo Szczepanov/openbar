@@ -30,6 +30,9 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   or 18/20 with a label-free frame-0 decision (Hough 13/20).
   SAM 3 (run after access was granted): raw top-1 24/25, 19/20 at frame 0.
   Development estimate only; research code in `research/plate-detection/`.
+  [Phase A.2](../analysis/PLATE_DETECTION_PHASE_A2_RESULTS.md), which detects once on frame 0 and then tracks with
+  SAM 2.1 video, holds the plate on every labelled frame when the seed is right, but scores 276/388 frames overall
+  (per-frame 320/388) because a wrong seed stays wrong.
 
 ## Recommended plan structure
 
