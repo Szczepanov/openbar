@@ -25,9 +25,10 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   tolerances, scene inventory, refusal cases and new sessions. None of these plans authorizes M1
   entry or Prompt 2.
 - [Open-vocabulary plate detection, Phase A (#233)](../analysis/PLATE_DETECTION_PHASE_A_RESULTS.md):
-  owner-approved GroundingDINO and SAM 2.1 (SAM 3 pending gated access) on the 27 development clips.
+  owner-approved GroundingDINO, SAM 2.1 and SAM 3 on the 27 development clips.
   With the baseline's plate-size window, top-1 selects the labelled plate on 23/25 clips (Hough 15/25),
   or 18/20 with a label-free frame-0 decision (Hough 13/20).
+  SAM 3 (run after access was granted): raw top-1 24/25, 19/20 at frame 0.
   Development estimate only; research code in `research/plate-detection/`.
 
 ## Recommended plan structure

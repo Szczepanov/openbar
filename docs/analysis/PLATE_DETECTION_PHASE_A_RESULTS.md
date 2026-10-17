@@ -18,7 +18,10 @@ no number below generalises beyond these clips. Approval, scope and model licenc
 - **Geometry.** SAM 2.1 masks with a robust rim fit give a median radius error of 1.4% of the true radius
   (box only 4.9%, Hough 2.9%). The median centre error is 2.6% of the radius.
 - **Cost.** Median 0.56 s per frame for GroundingDINO + SAM 2.1 on an RTX 3060 Ti (box only 0.34 s, Hough 0.07 s).
-- **SAM 3** was not run: the gated checkpoint request is awaiting Meta's review. The runner supports it unchanged.
+- **SAM 3** (run after access was granted, same frames and rules) is the strongest method: raw top-1 already selects
+  the labelled plate on **24/25** clips (19/20 on frame 0) with no size window needed, and it finds the plate on
+  375/388 labelled frames. Its only miss is the ambiguous two-target clip. Median radius error 1.6%, 0.72 s per
+  frame. See [SAM 3](#sam-3).
 - **The two selection rules designed against H1/H2 do not help here.** For GroundingDINO + SAM 2.1,
   `largest-plausible-v1` gives 19/25 and `motion-v1` 13/25 (19/25 after the size window), against 23/25 for
   plausible top-1. Box only: 17/25, 19/25 and 20/25. Hough: 15/25 and 8/25.
@@ -69,7 +72,8 @@ deliberately loose and is not the frozen evaluation's Tc/Tr tolerance.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | hough | 20/25 | 15/25 | 15/25 | 15/25 | 8/25 | 8/25 | 13/20 | 258/388 | 130/388 | 0.045 (0.151) | 0.029 (0.087) | 0.072 s (0.221 s) |
 | gdino_box | 24/25 | 14/25 | **23/25** | 17/25 | 19/25 | 20/25 | **18/20** | 326/388 | 265/388 | 0.028 (0.134) | 0.049 (0.114) | 0.335 s (0.381 s) |
-| gdino_sam2 | 24/25 | 15/25 | **23/25** | 19/25 | 13/25 | 19/25 | **18/20** | **354/388** | **320/388** | 0.026 (0.182) | **0.014** (0.056) | 0.555 s (0.642 s) |
+| gdino_sam2 | 24/25 | 15/25 | **23/25** | 19/25 | 13/25 | 19/25 | **18/20** | 354/388 | **320/388** | 0.026 (0.182) | **0.014** (0.056) | 0.555 s (0.642 s) |
+| sam3 | 24/25 | **24/25** | **24/25** | 20/25 | 17/25 | 18/25 | **19/20** | **375/388** | 316/388 | 0.027 (0.150) | 0.016 (0.067) | 0.721 s (0.915 s) |
 
 Geometry columns are over frames where the labelled plate is among the candidates (best-matching candidate),
 relative to the true radius. Frame columns pool the 388 labelled frames, so clips weigh unequally:
@@ -78,6 +82,30 @@ relative to the true radius. Frame columns pool the 388 labelled frames, so clip
 By clip group (`gdino_sam2`, plausible top-1): exploration 12/12, scored-development-only 11/13. Hough: 10/12 and
 5/13. Hough's misses concentrate on the 2026-10-15 snatch session, where the plate is never its top-1. At frame 0
 both GroundingDINO variants miss the same two clips as on the first labelled frame (below).
+
+## SAM 3
+
+Run separately once Meta granted access, into its own run directory, with the committed harness (5135548, identical
+to the merged #235). Checkpoint `facebook/sam3` revision `3c879f39`, bfloat16, prompts "weight plate" and "barbell
+plate", score threshold 0.30, mask threshold 0.50, the same NMS and rim fit as `gdino_sam2`.
+
+- **Selection.** Raw top-1 is right on 24/25 clips and on 19/20 at frame 0; the size window changes nothing. SAM 3
+  ranks the plate on the bar above the stored floor plate in `self-back-squat-side-1015-06` (score 0.95 vs 0.87 on
+  frame 0), which both GroundingDINO variants got wrong.
+- **Remaining miss.** `self-other-side-0215-27`, the ambiguous two-target scene: no candidate matches the labelled
+  background plate on the decision frame.
+- **Per frame.** Recall 375/388 (GroundingDINO + SAM 2.1: 354/388). Plausible top-1 per frame is 316/388, about the
+  same as `gdino_sam2` (320/388): SAM 3 proposes more circles per frame (median 7 against 4) and outside the
+  decision frame another candidate outranks the target on some frames (top-1 is right on 299 of the 375 frames
+  where the target is a candidate).
+- **Geometry and cost.** Median radius error 1.6% (p90 6.7%), centre error 2.7% of the radius. Median 0.72 s per
+  frame for both prompts together; the GPU was shared with another session's job during the run, so this is an
+  upper estimate.
+- **Licence.** Meta's SAM License, not Apache-2.0: fine for this research, but anything shipped with it needs the
+  separate licence review that #233 requires.
+
+Run record (private): `run.json` SHA-256 `2f3ca5ee806f51423ff614ba268b5c5d4d324116f8ef069f47230aaf0925cc20`,
+`score.json` SHA-256 `61f419e7b0e8ad90289d09fa1ebb79f1297113ebe32e3746de158dac2024edf9`.
 
 ## Failure review (decision-frame overlays, private, `overlay.py`)
 
@@ -117,7 +145,8 @@ both GroundingDINO variants miss the same two clips as on the first labelled fra
 
 ## Next steps
 
-1. **SAM 3** on the same frames when the gated access is approved; score with the same rules.
+1. **SAM 3** is done (above). It is the best zero-shot proposer here; a SAM 3-based candidate, or SAM 3 as the
+   label source for Phase B, is the natural next freeze candidate, subject to its licence review.
 2. **Detect once, then track** (Phase A.2): take the plausible top-1 on a decision frame and propagate it with SAM 2
    video tracking. This yields one identity per clip and a full trajectory, and tests whether
    tracking improves frame-level identity over 320/388.
