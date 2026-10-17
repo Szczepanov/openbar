@@ -26,6 +26,7 @@ SCORED_DEVELOPMENT_ONLY = frozenset({
 })
 GRID_STEP_S = 0.5
 MAX_GRID_FRAMES = 40
+TRACK_STRIDE = 2  # Phase A.2: every 2nd decoded frame (about 30 fps on these 60 fps clips)
 
 
 class ClipRefused(RuntimeError):
@@ -71,21 +72,37 @@ def development_clips(fixtures: dict[str, dict[str, Any]]) -> dict[str, str]:
     return allowed
 
 
-def frame_plan(timestamps_s: list[float], truth_times_s: list[float]) -> list[int]:
-    """Decoded frame indices to run: the frame nearest each labelled time, plus a uniform grid every
-    GRID_STEP_S (thinned to MAX_GRID_FRAMES evenly spaced), sorted and unique."""
-    if not timestamps_s:
-        raise ValueError("no decoded frames")
+def _nearest(timestamps_s: list[float]):
     from bisect import bisect_left
 
     def nearest(t: float) -> int:
         right = bisect_left(timestamps_s, t)
         options = [i for i in (right - 1, right) if 0 <= i < len(timestamps_s)]
         return min(options, key=lambda i: (abs(timestamps_s[i] - t), i))
+    return nearest
 
+
+def frame_plan(timestamps_s: list[float], truth_times_s: list[float]) -> list[int]:
+    """Decoded frame indices to run: the frame nearest each labelled time, plus a uniform grid every
+    GRID_STEP_S (thinned to MAX_GRID_FRAMES evenly spaced), sorted and unique."""
+    if not timestamps_s:
+        raise ValueError("no decoded frames")
+    nearest = _nearest(timestamps_s)
     start, end = timestamps_s[0], timestamps_s[-1]
     grid_times = [start + k * GRID_STEP_S for k in range(int((end - start) / GRID_STEP_S) + 1)]
     if len(grid_times) > MAX_GRID_FRAMES:
         step = (len(grid_times) - 1) / (MAX_GRID_FRAMES - 1)
         grid_times = [grid_times[round(k * step)] for k in range(MAX_GRID_FRAMES)]
     return sorted({nearest(t) for t in [*grid_times, *truth_times_s]})
+
+
+def track_plan(timestamps_s: list[float], truth_times_s: list[float], stride: int = TRACK_STRIDE) -> list[int]:
+    """Decoded frame indices a tracker runs on, in order: every ``stride``-th frame from frame 0
+    (the label-free decision frame), plus the frame nearest each labelled time so every label is
+    scorable. Labelled times add frames only; they never choose the decision frame."""
+    if not timestamps_s:
+        raise ValueError("no decoded frames")
+    if stride < 1:
+        raise ValueError("stride must be at least 1")
+    nearest = _nearest(timestamps_s)
+    return sorted({*range(0, len(timestamps_s), stride), *(nearest(t) for t in truth_times_s)})

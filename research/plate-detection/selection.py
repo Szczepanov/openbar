@@ -1,7 +1,8 @@
 """Label-free selection rules and the descriptive identity match used by the scorer (#233).
 
 Selection never reads labels. ``match`` is scoring only. Rules: ``top1`` (highest score),
-``plausible`` + ``top1``, ``largest-plausible-v1`` and ``motion-v1``.
+``plausible`` + ``top1``, ``largest-plausible-v1`` and ``motion-v1``, plus the ``close-score-v1``
+refusal (Phase A.2).
 
 ``motion-v1`` is designed against H1/H2 (PLATE_SELECTION_NEXT_ROUND_PLAN.md): clutter and stored
 plates stay put for the whole clip, and the plate on the lifted bar leaves its starting spot. For
@@ -30,6 +31,12 @@ PLAUSIBLE_SCORE_FRACTION = 0.5  # of the best score on the decision frame
 SAME_SPOT_CENTRE_FRACTION = 0.25  # of the candidate radius
 SAME_SPOT_RADIUS_FRACTION = 0.25
 MIN_OTHER_FRAMES = 4
+
+# Refusal (Phase A.2): fixed before any A.2 result was produced, but after reading the Phase A failure
+# review, which reports one stored plate scoring 0.43 against 0.41 for the target. Scale-free, so it
+# applies to any method's own score.
+REFUSAL_RULE = "close-score-v1"
+REFUSAL_SCORE_RATIO = 0.9  # refuse when the runner-up scores at least this share of the best
 
 
 @dataclass(frozen=True)
@@ -111,3 +118,19 @@ def select_motion(decision: Sequence[Candidate], other_frames: Sequence[Sequence
     best_p, _, best = min(scored, key=lambda item: (item[0], item[1]))
     return best, {"rule": MOTION_RULE, "fallback": None, "plausible": len(plausible),
                   "persistence": [round(p, 4) for p, _, _ in scored], "selected_persistence": round(best_p, 4)}
+
+
+def refusal(candidates: Sequence[Candidate]) -> dict:
+    """``close-score-v1`` on already-filtered (plausible) candidates: refuse when the two best are
+    too close in score to name one plate without a human. One candidate or none never refuses here;
+    no candidate is reported as ``no_candidate``."""
+    ordered = _order(candidates)
+    if not ordered:
+        return {"rule": REFUSAL_RULE, "refused": False, "reason": "no_candidate", "ratio": None}
+    if len(ordered) == 1:
+        return {"rule": REFUSAL_RULE, "refused": False, "reason": None, "ratio": None}
+    best, second = ordered[0].score, ordered[1].score
+    ratio = second / best if best > 0 else 1.0
+    refused = ratio >= REFUSAL_SCORE_RATIO
+    return {"rule": REFUSAL_RULE, "refused": refused, "reason": "close_scores" if refused else None,
+            "ratio": round(ratio, 4)}

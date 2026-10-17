@@ -137,19 +137,25 @@ class GroundingDinoProposer(_Torch):
         return [m.squeeze().numpy().astype(bool) for m in masks]
 
     def propose(self, image: np.ndarray) -> list[dict[str, Any]]:
+        return self.propose_with_masks(image)[0]
+
+    def propose_with_masks(self, image: np.ndarray) -> tuple[list[dict[str, Any]], list[np.ndarray | None]]:
+        """Candidate rows and, aligned with them, the SAM 2.1 mask each circle was fitted to (None
+        for box-only circles). Phase A.2 propagates the selected mask through the clip."""
         from PIL import Image
         pil = Image.fromarray(image[:, :, ::-1].copy())
         found = self._boxes(pil)
         if not found:
-            return []
+            return [], []
         masks = self._masks(pil, [box for box, _, _ in found]) if self.sam is not None else [None] * len(found)
-        rows = []
+        rows, used = [], []
         for (box, score, label), mask in zip(found, masks):
             circle = geometry.circle_from_mask(mask) if mask is not None else None
             if circle is None:
                 circle = geometry.circle_from_box(*box)
             rows.append(_row(circle, score, prompt=label, box_xyxy=[round(v, 2) for v in box]))
-        return rows
+            used.append(mask if circle.fit != "box" else None)
+        return rows, used
 
 
 class Sam3Proposer(_Torch):
