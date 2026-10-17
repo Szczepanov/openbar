@@ -361,6 +361,8 @@ jobs:
         run: python -m unittest discover -v -s research/gpu-tracking/tests -p 'test_track_gpu_output.py'
       - name: VBT workflow orchestration tests
         run: python -m unittest discover -v -s research/vbt-workflow/tests -p 'test_*.py'
+      - name: Plate detection pure-function research tests (no models)
+        run: python -W error -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 
   dependencies:
     name: Dependency Policy
