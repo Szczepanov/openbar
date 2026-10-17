@@ -17,7 +17,11 @@ Licence: Meta's **SAM License**, last updated 19 November 2025
 - **Restrictions:** compliance with applicable law, including trade-control and privacy law; no
   reverse engineering of the materials; no military, warfare, nuclear, espionage or weapons end uses.
 - **Outputs:** masks, boxes and scores the model produces are not restricted beyond the warranty
-  disclaimer. The text does not address models trained on those outputs.
+  disclaimer. The text neither permits nor forbids training other models on those outputs; it is
+  silent.
+- **Access gate:** the Hugging Face checkpoint is gated. Requesting access shares the account's contact
+  details with Meta under the Meta Privacy Policy. The model card declares the licence as "other" and
+  shows no separate acceptable-use policy on the public page.
 - **Other terms:** provided as is, with no warranty. There is no patent grant. The licence terminates
   for breach, or if the user sues Meta over IP; on termination the materials must be deleted. You must
   indemnify Meta against third-party claims. California law applies. Meta may change the terms, and
@@ -35,7 +39,7 @@ under Meta's terms, so the MIT code and the SAM 3 weights must stay separate:
 | Owner's personal home-PC pipeline (process between sets, confirm on the session page) | Allowed |
 | Committing SAM 3 weights or vendored SAM 3 code to this repository | Not allowed: weights stay downloaded under `validation/private/models/`, git-ignored, with SHA-256 in run provenance |
 | Code in this repository that loads SAM 3 through `transformers` (Apache-2.0) | Allowed; the user downloads the weights and accepts Meta's terms themselves |
-| Training a small detector on SAM 3 masks or boxes (Phase B) | Allowed by the text, which does not restrict outputs; the trained detector should be Apache-2.0 or MIT and should not contain SAM 3 weights |
+| Training a small detector on SAM 3 masks or boxes (Phase B) | Not restricted by the text, which is silent on training from outputs (no explicit permission either); the trained detector should be Apache-2.0 or MIT and must not contain SAM 3 weights |
 | Shipping SAM 3 weights inside a distributed app | Needs a new review: ship the SAM License with them, show it in third-party notices, and check the end-use and trade-control terms for the distribution channel |
 
 ## Owner decision
