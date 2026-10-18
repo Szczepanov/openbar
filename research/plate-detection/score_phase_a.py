@@ -17,7 +17,7 @@ Per method and clip:
 Phase A.2 track records hold at most the tracked circle; their frame 0 also carries the seed
 detector's candidates and the run's recorded seed decision (``selected_index`` and ``refusal``),
 which frame-0 identity and the refusal read instead, so each seed rule is scored as it ran
-(``close-score-v1`` for ``track_sam2``, ``sam3-margin-v1`` for ``track_sam2_sam3seed``).
+(``close-score-v1`` for ``track_sam2``, ``sam3-margin-v2`` for ``track_sam2_sam3seed``).
 
 No pass/fail verdict, no thresholds tuned here. Development clips only, so nothing generalises.
 """
@@ -203,7 +203,9 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 REFUSAL_CONSTANTS = {selection.REFUSAL_RULE: {"score_ratio": selection.REFUSAL_SCORE_RATIO},
-                     selection.MARGIN_RULE: {"margin_score": selection.MARGIN_SCORE}}
+                     selection.MARGIN_RULE: {"margin_score": selection.MARGIN_SCORE,
+                                             "concentric_centre_fraction": selection.SAME_SPOT_CENTRE_FRACTION,
+                                             "score_decimals": selection.SCORE_DECIMALS}}
 
 
 def refusal_rule(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:

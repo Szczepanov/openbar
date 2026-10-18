@@ -36,7 +36,10 @@ margin. Treat the refusal numbers as optimistic.
 
 EdgeTAM was added afterwards as a tracker option only (d4c8ae8, d0caa1b): same seed rule, same loop, a different
 checkpoint (`yonigozlan/EdgeTAM-hf` revision c266ce53, a transformers conversion of `facebook/EdgeTAM`, 13.9M
-parameters, needs `timm` for its RepViT backbone).
+parameters). Its RepViT backbone is built by `timm` 1.0.20 (Apache-2.0), added to the research requirements for
+this owner-approved model. `timm` read only a backbone config file (`timm/repvit_m1.dist_in1k/config.json`) from
+the Hub cache; all weights come from the hashed EdgeTAM checkpoint. That config file is not pinned or hashed, and
+the EdgeTAM run's `run.json` predates recording the `timm` version (now recorded).
 
 ## Results
 
@@ -45,11 +48,12 @@ Both runs used torch 2.8.0+cu126 on an RTX 3060 Ti. A.2 is the earlier Grounding
 
 | | Clips on target on every labelled frame | Labelled frames on target | Frame-0 refused (would be correct) | Accepted frame-0 correct | Lost frames | Centre err / r, median (p90) | Radius err, median (p90) | Median s/frame |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A.2: GroundingDINO seed + SAM 2.1 | 22/25 | 276/388 | 1 (0) | 18/19 | 0 | see A.2 | see A.2 | see A.2 |
+| A.2: GroundingDINO seed + SAM 2.1 | 22/25 | 276/388 | 1 (0) | 18/19 | 36/11,719 | see A.2 | see A.2 | see A.2 |
 | **SAM 3 seed + SAM 2.1** | **24/25** | **316/388** | 1 (1) | 18/19 | 0/11,719 | 0.022 (0.069) | 0.013 (0.045) | 0.33 |
 | SAM 3 seed + EdgeTAM | 23/25 | 293/388 | 1 (1) | 18/19 | 153/11,719 | 0.022 (0.065) | 0.013 (0.040) | 0.08 |
 
-Geometry is over labelled frames where the tracked plate is the labelled one. The median seconds per frame include
+Geometry is over labelled frames where the tracked plate is the labelled one, so the two trackers' geometry is
+computed over different frame sets (316 and 293 frames) and only the medians are compared below. The median seconds per frame include
 the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say nothing about a phone.
 
 ### SAM 3 seed
@@ -61,16 +65,20 @@ the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say 
   Its margin was 0.059, just above 0.05, so `sam3-margin-v2` accepted it. `close-score-v1` would have refused it,
   along with 6 other clips whose seed was right.
 - **False refusal: `vbt-45854c8cdf352a6f`.** The margin was 0.047 between two plates; the seed was correct.
+- **Refusals overall: 3 of 27 frame-0 decisions.** Besides `vbt-45854c8cdf352a6f`, the rule refused the two
+  unscored exploration clips (`self-snatch-ohs-side-001`, `self-snatch-unknown-0219-28`, margin 0.020 each), which
+  have no labels, so whether they were right is unknown.
 - On the 24 clips with a correct seed, SAM 2.1 kept the plate on every labelled frame and lost no frame.
 
 ### EdgeTAM against SAM 2.1, same seeds
 
-- **Same as SAM 2.1 on 24 of 25 clips,** with the same median errors and slightly lower p90 errors, at about a
-  quarter of the desktop time per frame.
+- **Same as SAM 2.1 on 24 of 25 clips,** with the same median centre and radius errors, at about a quarter of the
+  desktop time per frame.
 - **`self-clean-side-0203-17`: lost, then a silent wrong track.** EdgeTAM tracked the plate for 6.2 s, reported it
   lost for 8 s (no coordinate, correctly), and from 14.1 s locked onto a different object at plate-like radii
-  (36–169 px). 13 labelled frames between 15 s and 28 s are on the wrong object with a tracker score that does not
-  flag it. SAM 2.1 tracked the whole clip correctly. This breaks "lost means no coordinate" in spirit: a wrong
+  (36–169 px at the labelled frames; 22–413 px between them). 13 labelled frames between 15 s and 28 s are on the
+  wrong object. Its tracker score there was 0.56–0.98, against 0.97–1.0 while on target, so a score threshold might
+  catch some of these frames, but no rule in this run flags them. SAM 2.1 tracked the whole clip correctly. This breaks "lost means no coordinate" in spirit: a wrong
   position is reported as a tracked one.
 
 ## Limits
@@ -78,19 +86,25 @@ the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say 
 - 25 scored clips from few sessions; one or two clips decide each difference. Development estimates only.
 - The refusal rule was chosen knowing the facts listed above; its one catch and one false refusal are not evidence
   of how it behaves on new sessions.
+- SAM 3 ran in bfloat16, so its scores come in steps of 1/256 (about 0.004). The 0.05 margin falls between 12 and 13
+  steps: `vbt-45854c8cdf352a6f` (12 steps) and `self-other-side-0215-27` (15 steps) are one to three steps from the
+  other outcome, which a different GPU or library version could change.
+- Nine of the 25 scored clips (eight `vbt-*` clips and `self-hang-snatch-side-002`) have a single labelled frame,
+  so for them "on target on every labelled frame" only checks the seed.
 - Labelled frames are 1 s apart in the long clips, so a short wrong segment between labels can be missed. The
   EdgeTAM failure is long enough to show; shorter ones may not.
 - GPU inference is not bit-for-bit reproducible across GPUs or library versions; `run.json` records packages,
   checkpoint revisions, weight hashes and source hashes.
-- EdgeTAM's masks come out at 256×256 before upscaling, so each mask cell spans several source pixels. The 1.3%
+- Both trackers predict masks at 256×256 before upscaling, so each mask cell spans several source pixels. The 1.3%
   median radius error is far from the ±0.5% scale a VBT number needs, for both trackers.
 - No candidate enters canonical `Analysis` or a #95/#113 session record; all output is machine-origin.
 
 ## What this suggests (no decision taken)
 
-1. A SAM 3 seed is a clear improvement over the GroundingDINO seed for picking the plate. The two-plate scene is
+1. A SAM 3 seed improved on the GroundingDINO seed on these clips. The two-plate scene is
    still a job for a human tap or a refusal, which the #95 confirmation step already provides.
-2. EdgeTAM is accurate enough to follow the plate on the phone, but it needs an identity check after any loss:
+2. On desktop, EdgeTAM followed the plate as well as SAM 2.1 on 24 of 25 clips; nothing was run on a phone. It
+   needs an identity check after any loss:
    re-detection against the seed, or a check that position, radius and motion stay consistent, before a re-acquired
    track is trusted. Until then, frames after a loss should count as lost.
 3. Neither tracker's mask gives the scale. A full-resolution rim fit (ellipse on sub-pixel edge points) is the
@@ -101,8 +115,9 @@ the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say 
 
 ## Reproduce
 
-Same venv and checkpoint cache as Phase A (`research/plate-detection/requirements.txt`, `HF_HUB_CACHE` pointing to
-`validation/private/models/hf`). From a worktree, with private data in the main checkout:
+Same venv and checkpoint cache as Phase A, with `HF_HUB_CACHE` pointing to `validation/private/models/hf` and
+`HF_HUB_OFFLINE=1`. Both runs used torch 2.8.0+cu126 and torchvision 0.23.0; the requirements now pin torch 2.14.1
+(#241), so a rerun from the current pins is a different environment. From a worktree, with private data in the main checkout:
 
 ```bash
 python research/plate-detection/run_phase_a2.py --repo-root <main checkout> --seed sam3 --output-dir validation/private/plate-detection-sam3-seed/run-2

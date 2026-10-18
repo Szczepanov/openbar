@@ -37,12 +37,15 @@ TRACKERS = {
                 "revision": "c266ce53b3fc00f0f495b583f6a116c4e57f53bb"},
 }
 OBJECT_ID = 1
+SEED_NAMES = ("gdino_sam2", "sam3")
 
 
 def method_name(tracker: str, seed: str) -> str:
     """Output method for a tracker and seed; the two Phase A.2 names are kept unchanged."""
     if tracker not in TRACKERS:
         raise ValueError(f"unknown tracker {tracker!r}")
+    if seed not in SEED_NAMES:
+        raise ValueError(f"unknown seed {seed!r}; a new seed needs its own method suffix")
     return f"track_{tracker}" + ("_sam3seed" if seed == "sam3" else "")
 
 

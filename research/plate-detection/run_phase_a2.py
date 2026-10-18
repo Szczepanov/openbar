@@ -12,7 +12,7 @@ carries the seed candidates, the selected index and the ``close-score-v1`` refus
 ``candidates/track_edgetam[_sam3seed]/``.
 
 ``--seed sam3`` swaps the seed for SAM 3 (``track.choose_seed_sam3``: size window, ``in-frame-v1``,
-``sam3-margin-v1`` refusal) and writes under ``candidates/track_sam2_sam3seed/``; tracking is unchanged.
+``sam3-margin-v2`` refusal) and writes under ``candidates/track_sam2_sam3seed/``; tracking is unchanged.
 Frames are deleted after each clip.
 
     python research/plate-detection/run_phase_a2.py --repo-root <main checkout> \
@@ -61,12 +61,20 @@ SEEDS = {
 
 def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: Path) -> dict[str, Any]:
     import detectors
+    from importlib import metadata
+    # Installed distribution versions, read without importing the libraries (same keys as Phase A).
+    distributions = {"torch": "torch", "torchvision": "torchvision", "transformers": "transformers", "timm": "timm",
+                     "numpy": "numpy", "cv2": ("opencv-python-headless", "opencv-python"), "PIL": "pillow",
+                     "huggingface_hub": "huggingface_hub"}
     packages = {}
-    for name in ("torch", "transformers", "numpy", "cv2", "PIL", "huggingface_hub"):
-        try:
-            packages[name] = getattr(__import__(name), "__version__", "unknown")
-        except ImportError:
-            packages[name] = None
+    for name, dists in distributions.items():
+        packages[name] = None
+        for dist in (dists,) if isinstance(dists, str) else dists:
+            try:
+                packages[name] = metadata.version(dist)
+                break
+            except metadata.PackageNotFoundError:
+                continue
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True,
                            text=True).stdout.strip()

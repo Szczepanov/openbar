@@ -14,6 +14,8 @@ import score_phase_a  # noqa: E402
 import selection  # noqa: E402
 import track  # noqa: E402
 import truth  # noqa: E402
+import run_phase_a  # noqa: E402
+import run_phase_a2  # noqa: E402
 from selection import Candidate  # noqa: E402
 
 
@@ -118,6 +120,33 @@ class TrackerChoiceTests(unittest.TestCase):
         self.assertEqual(track.method_name("edgetam", "gdino_sam2"), "track_edgetam")
         with self.assertRaises(ValueError):
             track.method_name("csrt", "sam3")
+        with self.assertRaises(ValueError):
+            track.method_name("edgetam", "hough")
+        self.assertEqual(tuple(sorted(run_phase_a2.SEEDS)), track.SEED_NAMES)
+
+    def test_provenance_hashes_the_pinned_tracker_and_records_the_rules(self) -> None:
+        calls = []
+
+        class Stub:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def config(self) -> dict:
+                return {"stub": self.name}
+
+        original = run_phase_a.checkpoint_files
+        run_phase_a.checkpoint_files = lambda repo, revision=None: calls.append((repo, revision)) or {"repo_id": repo}
+        try:
+            record = run_phase_a2.provenance("sam3", Stub("sam3"), Stub("edgetam"), 2, Path("openbar"))
+        finally:
+            run_phase_a.checkpoint_files = original
+        import detectors
+        self.assertEqual(sorted(calls), sorted([(detectors.SAM3_CHECKPOINT, None),
+                                                (track.EDGETAM_VIDEO_CHECKPOINT, track.TRACKERS["edgetam"]["revision"])]))
+        method = record["methods"]["track_edgetam_sam3seed"]
+        self.assertEqual((method["seed_rule"]["rule"], method["refusal"]["rule"], method["track_stride"]),
+                         (track.SAM3_SEED_RULE, selection.MARGIN_RULE, 2))
+        self.assertIn("timm", record["packages"])
 
     def test_trackers_are_pinned_transformers_video_models(self) -> None:
         self.assertEqual(sorted(track.TRACKERS), ["edgetam", "sam2"])
