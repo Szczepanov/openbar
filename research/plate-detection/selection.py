@@ -39,6 +39,55 @@ MIN_OTHER_FRAMES = 4
 REFUSAL_RULE = "close-score-v1"
 REFUSAL_SCORE_RATIO = 0.9  # refuse when the runner-up scores at least this share of the best
 
+# SAM 3 seed (owner chose SAM 3 as the lead candidate on 2026-10-17). A development estimate, not a
+# held-out test. What was known when these rules were fixed:
+# - in-frame-v1 comes straight from a known A.2 failure: on self-other-side-0215-27 the seed was a
+#   plate centred off the left edge (x about -23 px), and the A.2 results suggest this check.
+# - close-score-v1 would refuse 11 of 27 SAM 3 frame-0 decisions, and on self-back-squat-side-1015-06
+#   the plate on the bar scores 0.95 against 0.87 for a stored plate (gap 0.08). MARGIN_SCORE = 0.05
+#   sits below that one known gap, so that known-correct choice stays accepted.
+# - The Phase A SAM 3 run already holds frame-0 candidates, so this rule's frame-0 outcome could have
+#   been computed from existing data; nobody looked at that margin distribution before fixing it.
+#   The one-clip smoke run of the first version showed a margin of 0.21 on one vbt clip.
+# SAM 3 scores saturate near 1 for clear plates, so a ratio says little; an absolute margin does.
+# A runner-up centred on the best candidate (within SAME_SPOT_CENTRE_FRACTION of its radius, any
+# radius) is a rim, hub, duplicate mask or another plate on the same bar end: choosing it would give
+# the same centre path, so it is not a rival. This protects identity, not scale: if an inner rim or hub
+# outscores the outer rim, it becomes the seed unchallenged and its smaller radius is what gets tracked.
+# Margins are rounded to the 5 decimals scores are stored with before comparing, so the boundary does
+# not depend on float error.
+IN_FRAME_RULE = "in-frame-v1"
+MARGIN_RULE = "sam3-margin-v2"
+MARGIN_SCORE = 0.05  # refuse when a plate centred elsewhere scores less than this below the best
+SCORE_DECIMALS = 5
+
+
+def in_frame(candidates: Sequence[Candidate], width_px: int, height_px: int) -> list[Candidate]:
+    """Candidates whose centre lies in the frame (pixel centres, 0 <= x < width). A plate centred
+    off the edge cannot be the measured plate: its rim, and so the scale, is mostly unseen."""
+    return [c for c in candidates if 0 <= c.center_x_px < width_px and 0 <= c.center_y_px < height_px]
+
+
+def concentric(best: Candidate, other: Candidate) -> bool:
+    """Centred on ``best`` within ``SAME_SPOT_CENTRE_FRACTION`` of its radius, whatever the radius."""
+    return (math.hypot(best.center_x_px - other.center_x_px, best.center_y_px - other.center_y_px)
+            <= SAME_SPOT_CENTRE_FRACTION * best.radius_px)
+
+
+def margin_refusal(candidates: Sequence[Candidate]) -> dict:
+    """``sam3-margin-v2`` on already-filtered candidates: refuse when a candidate not concentric with
+    the best scores less than ``MARGIN_SCORE`` below it. Same reporting shape as ``refusal``."""
+    ordered = _order(candidates)
+    if not ordered:
+        return {"rule": MARGIN_RULE, "refused": False, "reason": "no_candidate", "margin": None}
+    rivals = [c for c in ordered[1:] if not concentric(ordered[0], c)]
+    if not rivals:
+        return {"rule": MARGIN_RULE, "refused": False, "reason": None, "margin": None}
+    margin = round(ordered[0].score - rivals[0].score, SCORE_DECIMALS)
+    refused = margin < MARGIN_SCORE
+    return {"rule": MARGIN_RULE, "refused": refused, "reason": "close_scores" if refused else None,
+            "margin": margin}
+
 
 @dataclass(frozen=True)
 class Candidate:

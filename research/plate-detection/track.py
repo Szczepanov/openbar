@@ -7,6 +7,10 @@ most one candidate, the tracked plate; an empty mask is a lost frame with no can
 coordinate is invented). The tracked candidate's score is the sigmoid of SAM 2.1's object-score
 logit, which is specific to this tracker and not a calibrated probability.
 
+The tracker is either SAM 2.1 (``sam2``) or EdgeTAM (``edgetam``, #57), Meta's on-device SAM 2
+variant (Apache-2.0), loaded from the transformers-format conversion pinned in ``TRACKERS``. Both
+use ``Sam2VideoProcessor`` and the same streaming loop, so only the checkpoint differs.
+
 ``choose_seed`` and ``tracked_row`` are pure (numpy only, via ``geometry``) and unit tested; the
 model wrapper imports torch lazily.
 """
@@ -21,8 +25,28 @@ import geometry
 import selection
 
 METHOD = "track_sam2"
+SAM3_METHOD = "track_sam2_sam3seed"
+SAM3_SEED_RULE = "sam3-seed-v2"
 SAM2_VIDEO_CHECKPOINT = "facebook/sam2.1-hiera-base-plus"
+EDGETAM_VIDEO_CHECKPOINT = "yonigozlan/EdgeTAM-hf"  # transformers conversion of facebook/EdgeTAM, Apache-2.0
+# Video trackers: checkpoint, transformers model class and pinned revision (None: whatever is cached,
+# as Phase A.2 ran; the revision actually used is recorded in run.json either way).
+TRACKERS = {
+    "sam2": {"checkpoint": SAM2_VIDEO_CHECKPOINT, "model_class": "Sam2VideoModel", "revision": None},
+    "edgetam": {"checkpoint": EDGETAM_VIDEO_CHECKPOINT, "model_class": "EdgeTamVideoModel",
+                "revision": "c266ce53b3fc00f0f495b583f6a116c4e57f53bb"},
+}
 OBJECT_ID = 1
+SEED_NAMES = ("gdino_sam2", "sam3")
+
+
+def method_name(tracker: str, seed: str) -> str:
+    """Output method for a tracker and seed; the two Phase A.2 names are kept unchanged."""
+    if tracker not in TRACKERS:
+        raise ValueError(f"unknown tracker {tracker!r}")
+    if seed not in SEED_NAMES:
+        raise ValueError(f"unknown seed {seed!r}; a new seed needs its own method suffix")
+    return f"track_{tracker}" + ("_sam3seed" if seed == "sam3" else "")
 
 
 def choose_seed(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -> dict[str, Any]:
@@ -35,6 +59,21 @@ def choose_seed(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -
     selected = None if top is None else next(i for i in plausible_indices if candidates[i] == top)
     return {"selected_index": selected, "plausible_indices": plausible_indices,
             "refusal": selection.refusal(kept)}
+
+
+def choose_seed_sam3(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -> dict[str, Any]:
+    """``sam3-seed-v2``: like ``choose_seed``, but candidates must also be centred in the frame
+    (``in-frame-v1``) and have a mask the tracker can start from (not a box-only fit), and the
+    refusal is ``sam3-margin-v2``. ``close-score-v1`` is recorded beside it for comparison only.
+    No labels."""
+    candidates = [selection.Candidate.from_dict(row) for row in rows]
+    window = selection.in_frame(selection.plausible(candidates, width_px, height_px), width_px, height_px)
+    plausible_indices = [i for i, c in enumerate(candidates) if c in window and rows[i].get("fit") != "box"]
+    kept = [candidates[i] for i in plausible_indices]
+    top = selection.select_top1(kept)
+    selected = None if top is None else next(i for i in plausible_indices if candidates[i] == top)
+    return {"rule": SAM3_SEED_RULE, "selected_index": selected, "plausible_indices": plausible_indices,
+            "refusal": selection.margin_refusal(kept), "close_score_refusal": selection.refusal(kept)}
 
 
 def tracked_row(circle: geometry.Circle | None, object_score_logit: float) -> dict[str, Any] | None:
@@ -52,7 +91,7 @@ def tracked_row(circle: geometry.Circle | None, object_score_logit: float) -> di
 
 
 class Sam2VideoTracker:
-    """One SAM 2.1 video session per clip, fed frame by frame (streaming).
+    """One SAM 2.1 or EdgeTAM video session per clip, fed frame by frame (streaming).
 
     Session state older than the model's memory window is dropped after each frame: the model reads
     only the last ``num_maskmem`` non-conditioning outputs and ``max_object_pointers_in_encoder``
@@ -60,20 +99,24 @@ class Sam2VideoTracker:
     unchanged while memory stays bounded on long clips.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = "sam2") -> None:
         import torch
-        from transformers import Sam2VideoModel, Sam2VideoProcessor
+        import transformers
+        spec = TRACKERS[name]
+        self.name, self.spec = name, spec
         self.torch = torch
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.processor = Sam2VideoProcessor.from_pretrained(SAM2_VIDEO_CHECKPOINT)
-        self.model = Sam2VideoModel.from_pretrained(SAM2_VIDEO_CHECKPOINT).to(self.device).eval()
+        model_class = getattr(transformers, spec["model_class"])
+        self.processor = transformers.Sam2VideoProcessor.from_pretrained(spec["checkpoint"], revision=spec["revision"])
+        self.model = model_class.from_pretrained(spec["checkpoint"], revision=spec["revision"]).to(self.device).eval()
         config = self.model.config
         self.window = max(config.num_maskmem, config.max_object_pointers_in_encoder) + 1
         self.session = None
         self.position = 0
 
     def config(self) -> dict[str, Any]:
-        return {"checkpoint": SAM2_VIDEO_CHECKPOINT, "mode": "streaming", "prompt": "seed_mask",
+        return {"tracker": self.name, "checkpoint": self.spec["checkpoint"], "model_class": self.spec["model_class"],
+                "mode": "streaming", "prompt": "seed_mask",
                 "dtype": "float32", "video_storage_device": "cpu", "state_window_frames": self.window}
 
     def start(self, seed_mask: np.ndarray) -> None:

@@ -14,8 +14,10 @@ Per method and clip:
   the clips that were not refused;
 - clips where every labelled frame is on target, and lost frames (no candidate at all).
 
-Phase A.2 ``track_sam2`` records hold at most the tracked circle; their frame 0 also carries the
-detector's ``seed`` candidates, which the refusal reads instead.
+Phase A.2 track records hold at most the tracked circle; their frame 0 also carries the seed
+detector's candidates and the run's recorded seed decision (``selected_index`` and ``refusal``),
+which frame-0 identity and the refusal read instead, so each seed rule is scored as it ran
+(``close-score-v1`` for ``track_sam2``, ``sam3-margin-v2`` for ``track_sam2_sam3seed``).
 
 No pass/fail verdict, no thresholds tuned here. Development clips only, so nothing generalises.
 """
@@ -76,6 +78,8 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
         "sampled_frames": len(records), "labelled_frames": len(pairs),
         "lost_frames": sum(not r["candidates"] for r in records),
         "frame0_refusal": frame0_refusal(records[0]) if records else None,
+        **({"frame0_close_score_refusal": records[0]["seed"]["close_score_refusal"]}
+           if records and "close_score_refusal" in records[0].get("seed", {}) else {}),
         "latency_s": [r["latency_s"] for r in records],
         "candidates_per_frame": [len(r["candidates"]) for r in records],
     }
@@ -101,8 +105,8 @@ def score_clip(records: Sequence[dict[str, Any]], points: Sequence[truth.TruthPo
     if first_point is not None:
         frame0_rules, _ = clip_rules(first, records[1:])
         frame0 = {name: is_target(chosen, first_point) for name, chosen in frame0_rules.items()}
-        if "seed" in first:  # the track's frame-0 choice is the seed detector's plausible top-1
-            frame0[RULE_PLAUSIBLE_TOP1] = is_target(selection.select_top1(_plausible_seed(first)), first_point)
+        if "seed" in first:  # the track's frame-0 choice is the seed the run recorded
+            frame0[RULE_PLAUSIBLE_TOP1] = is_target(seed_choice(first), first_point)
     return {**out, "scored": True, "frame_recall": recall, "frame_top1": top1,
             "frame_plausible_top1": plausible_top1, "decision_time_s": decision["time_s"],
             "decision_from_label": decision["frame_index"] != first["frame_index"],
@@ -120,9 +124,21 @@ def _plausible_seed(record: dict[str, Any]) -> list[selection.Candidate]:
     return selection.plausible(seed, record["width_px"], record["height_px"])
 
 
+def seed_choice(record: dict[str, Any]) -> selection.Candidate | None:
+    """The seed the run recorded on frame 0; records without one fall back to the plausible top-1."""
+    seed = record["seed"]
+    if "selected_index" not in seed:
+        return selection.select_top1(_plausible_seed(record))
+    index = seed["selected_index"]
+    return None if index is None else selection.Candidate.from_dict(seed["candidates"][index])
+
+
 def frame0_refusal(record: dict[str, Any]) -> dict[str, Any]:
-    """``close-score-v1`` over the plausible candidates a detector saw on frame 0 (label-free)."""
-    return selection.refusal(_plausible_seed(record) if "seed" in record else _plausible(record))
+    """The refusal a track run recorded on frame 0, else ``close-score-v1`` over the plausible
+    candidates the detector saw on frame 0 (label-free)."""
+    if "seed" in record:
+        return record["seed"].get("refusal") or selection.refusal(_plausible_seed(record))
+    return selection.refusal(_plausible(record))
 
 
 def clip_rules(decision: dict[str, Any], others: Sequence[dict[str, Any]]
@@ -144,7 +160,7 @@ def _quantile(values: Sequence[float], q: float) -> float | None:
     return ordered[min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))]
 
 
-def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def aggregate(per_clip: dict[str, dict[str, Any]], recorded_refusal: dict[str, Any] | None = None) -> dict[str, Any]:
     scored = [c for c in per_clip.values() if c["scored"]]
     frames = sum(c["labelled_frames"] for c in scored)
     centre = [v for c in scored for v in c["centre_error_rel"]]
@@ -167,7 +183,7 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "lost_frames": sum(c["lost_frames"] for c in per_clip.values()),
         "sampled_frames": sum(c["sampled_frames"] for c in per_clip.values()),
         "refusal": {
-            "rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            **refusal_rule(per_clip, recorded_refusal),
             "refused_clips": sorted(k for k, c in per_clip.items() if c["scored"] and c["frame0_refusal"]["refused"]),
             "frame0_accepted": sum(not c["frame0_refusal"]["refused"] for c in with0),
             "frame0_accepted_correct": sum(c["clip_frame0"][RULE_PLAUSIBLE_TOP1] for c in with0
@@ -186,13 +202,46 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+REFUSAL_CONSTANTS = {selection.REFUSAL_RULE: {"score_ratio": selection.REFUSAL_SCORE_RATIO},
+                     selection.MARGIN_RULE: {"margin_score": selection.MARGIN_SCORE,
+                                             "concentric_centre_fraction": selection.SAME_SPOT_CENTRE_FRACTION,
+                                             "score_decimals": selection.SCORE_DECIMALS}}
+
+
+def refusal_rule(per_clip: dict[str, dict[str, Any]], recorded: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The one refusal rule behind these clips' frame-0 decisions, with the constants the run recorded in
+    ``run.json`` (the current code's constants only for runs that recorded none), plus how the
+    ``close-score-v1`` comparison the run recorded beside it would have refused."""
+    rules = {c["frame0_refusal"]["rule"] for c in per_clip.values() if c.get("frame0_refusal")}
+    if not rules and recorded:
+        rules = {recorded["rule"]}
+    if len(rules) != 1:
+        raise SystemExit(f"cannot name one refusal rule for this method: {sorted(rules)}")
+    rule = rules.pop()
+    if recorded is not None and recorded["rule"] != rule:
+        raise SystemExit(f"run.json records refusal rule {recorded['rule']!r}, the records say {rule!r}")
+    result = ({k: v for k, v in recorded.items() if k != "also_recorded"} if recorded
+              else {"rule": rule, **REFUSAL_CONSTANTS[rule]})
+    scored = {k: c for k, c in per_clip.items() if c["scored"]}
+    compared = {k: c for k, c in scored.items() if "frame0_close_score_refusal" in c}
+    if compared:
+        result["close_score_comparison"] = {
+            "rule": selection.REFUSAL_RULE, "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            "refused_clips": sorted(k for k, c in compared.items() if c["frame0_close_score_refusal"]["refused"])}
+    return result
+
+
 def load_records(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def score_run(run_dir: Path, private_root: Path, roles: dict[str, str]) -> dict[str, Any]:
     result: dict[str, Any] = {"match_rule": selection.MATCH_RULE, "motion_rule": selection.MOTION_RULE, "methods": {}}
+    record_path = run_dir / "run.json"  # main() always has one; unit tests may score a bare directory
+    recorded_methods = (json.loads(record_path.read_text(encoding="utf-8")).get("methods", {})
+                        if record_path.is_file() else {})
     for method_dir in sorted(p for p in (run_dir / "candidates").iterdir() if p.is_dir()):
+        recorded = recorded_methods.get(method_dir.name, {}).get("refusal")
         per_clip = {}
         for path in sorted(method_dir.glob("*.jsonl")):
             fixture_id = path.name.removesuffix(".jsonl")
@@ -200,9 +249,10 @@ def score_run(run_dir: Path, private_root: Path, roles: dict[str, str]) -> dict[
                 raise SystemExit(f"{path} is not listed in run.json; refusing to score an unrecorded clip")
             per_clip[fixture_id] = {"role": roles[fixture_id],
                                     **score_clip(load_records(path), truth.load_truth(fixture_id, private_root))}
-        by_role = {role: aggregate({k: v for k, v in per_clip.items() if v["role"] == role})
+        by_role = {role: aggregate({k: v for k, v in per_clip.items() if v["role"] == role}, recorded)
                    for role in sorted({v["role"] for v in per_clip.values()})}
-        result["methods"][method_dir.name] = {"all": aggregate(per_clip), "by_role": by_role, "per_clip": per_clip}
+        result["methods"][method_dir.name] = {"all": aggregate(per_clip, recorded), "by_role": by_role,
+                                              "per_clip": per_clip}
     return result
 
 

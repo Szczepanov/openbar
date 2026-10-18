@@ -14,6 +14,8 @@ import score_phase_a  # noqa: E402
 import selection  # noqa: E402
 import track  # noqa: E402
 import truth  # noqa: E402
+import run_phase_a  # noqa: E402
+import run_phase_a2  # noqa: E402
 from selection import Candidate  # noqa: E402
 
 
@@ -49,6 +51,127 @@ class RefusalTests(unittest.TestCase):
     def test_order_does_not_matter(self) -> None:
         a, b, c = Candidate(0, 0, 10, 0.2), Candidate(1, 0, 10, 0.9), Candidate(2, 0, 10, 0.85)
         self.assertEqual(selection.refusal([a, b, c]), selection.refusal([c, a, b]))
+
+
+class Sam3RuleTests(unittest.TestCase):
+    def test_in_frame_keeps_pixel_centre_window(self) -> None:
+        inside = [Candidate(0, 0, 10, 0.9), Candidate(99.9, 49.9, 10, 0.9)]
+        outside = [Candidate(-0.1, 10, 10, 0.9), Candidate(100, 10, 10, 0.9), Candidate(10, 50, 10, 0.9)]
+        self.assertEqual(selection.in_frame(inside + outside, 100, 50), inside)
+
+    def test_margin_refuses_a_close_different_plate(self) -> None:
+        close = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(500, 0, 100, 0.91)])
+        self.assertEqual((close["rule"], close["refused"], close["reason"], close["margin"]),
+                         (selection.MARGIN_RULE, True, "close_scores", 0.04))
+        clear = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(500, 0, 100, 0.87)])
+        self.assertEqual((clear["refused"], clear["margin"]), (False, 0.08))
+
+    def test_margin_boundary_is_not_refused_whatever_the_float_error(self) -> None:
+        for best, second in [(1.0, 0.95), (0.15, 0.10), (0.92, 0.87), (0.06, 0.01), (0.09, 0.04)]:
+            with self.subTest(best=best):
+                at = selection.margin_refusal([Candidate(0, 0, 100, best), Candidate(500, 0, 100, second)])
+                self.assertEqual((at["refused"], at["margin"]), (False, 0.05))
+        below = selection.margin_refusal([Candidate(0, 0, 100, 1.0), Candidate(500, 0, 100, 0.95001)])
+        self.assertEqual((below["refused"], below["margin"]), (True, 0.04999))
+
+    def test_concentric_runner_up_is_not_a_rival(self) -> None:
+        inner_rim = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(5, 0, 90, 0.94)])
+        self.assertEqual((inner_rim["refused"], inner_rim["margin"]), (False, None))
+        hub = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(20, 10, 60, 0.94)])
+        self.assertEqual((hub["refused"], hub["margin"]), (False, None))
+        off_centre = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(26, 0, 60, 0.94)])
+        self.assertTrue(off_centre["refused"])
+        third = selection.margin_refusal([Candidate(0, 0, 100, 0.95), Candidate(5, 0, 90, 0.94),
+                                          Candidate(500, 0, 100, 0.93)])
+        self.assertEqual((third["refused"], third["margin"]), (True, 0.02))
+
+    def test_margin_empty_and_order(self) -> None:
+        self.assertEqual(selection.margin_refusal([])["reason"], "no_candidate")
+        a, b, c = Candidate(0, 0, 100, 0.2), Candidate(300, 0, 100, 0.9), Candidate(600, 0, 100, 0.88)
+        self.assertEqual(selection.margin_refusal([a, b, c]), selection.margin_refusal([c, a, b]))
+
+    def test_sam3_seed_drops_off_frame_and_implausible_candidates(self) -> None:
+        rows = [row(-23.0, 900.0, 200.0, 0.97), row(500.0, 900.0, 700.0, 0.99), row(600.0, 1200.0, 180.0, 0.90),
+                row(200.0, 1500.0, 150.0, 0.70)]
+        seed = track.choose_seed_sam3(rows, 1080, 1920)
+        self.assertEqual((seed["rule"], seed["selected_index"], seed["plausible_indices"]),
+                         (track.SAM3_SEED_RULE, 2, [2, 3]))
+        self.assertEqual((seed["refusal"]["rule"], seed["refusal"]["refused"], seed["refusal"]["margin"]),
+                         (selection.MARGIN_RULE, False, 0.2))
+        self.assertEqual(seed["close_score_refusal"]["rule"], selection.REFUSAL_RULE)
+
+    def test_sam3_seed_skips_box_only_candidates(self) -> None:
+        rows = [{**row(500.0, 900.0, 200.0, 0.99), "fit": "box"}, {**row(600.0, 1200.0, 180.0, 0.90), "fit": "mask_contour"}]
+        seed = track.choose_seed_sam3(rows, 1080, 1920)
+        self.assertEqual((seed["selected_index"], seed["plausible_indices"]), (1, [1]))
+        only_box = track.choose_seed_sam3(rows[:1], 1080, 1920)
+        self.assertEqual((only_box["selected_index"], only_box["refusal"]["reason"]), (None, "no_candidate"))
+
+    def test_sam3_seed_with_nothing_selectable(self) -> None:
+        seed = track.choose_seed_sam3([row(-5.0, 900.0, 200.0, 0.9)], 1080, 1920)
+        self.assertEqual((seed["selected_index"], seed["refusal"]["reason"]), (None, "no_candidate"))
+
+
+class TrackerChoiceTests(unittest.TestCase):
+    def test_method_names_keep_phase_a2_names(self) -> None:
+        self.assertEqual(track.method_name("sam2", "gdino_sam2"), track.METHOD)
+        self.assertEqual(track.method_name("sam2", "sam3"), track.SAM3_METHOD)
+        self.assertEqual(track.method_name("edgetam", "sam3"), "track_edgetam_sam3seed")
+        self.assertEqual(track.method_name("edgetam", "gdino_sam2"), "track_edgetam")
+        with self.assertRaises(ValueError):
+            track.method_name("csrt", "sam3")
+        with self.assertRaises(ValueError):
+            track.method_name("edgetam", "hough")
+        self.assertEqual(tuple(sorted(run_phase_a2.SEEDS)), track.SEED_NAMES)
+
+    def test_provenance_hashes_the_pinned_tracker_and_records_the_rules(self) -> None:
+        calls = []
+
+        class Stub:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def config(self) -> dict:
+                return {"stub": self.name}
+
+        original = run_phase_a.checkpoint_files
+        run_phase_a.checkpoint_files = lambda repo, revision=None: calls.append((repo, revision)) or {"repo_id": repo}
+        try:
+            record = run_phase_a2.provenance("sam3", Stub("sam3"), Stub("edgetam"), 2, Path("openbar"))
+        finally:
+            run_phase_a.checkpoint_files = original
+        import detectors
+        self.assertEqual(sorted(calls), sorted([(detectors.SAM3_CHECKPOINT, None),
+                                                (track.EDGETAM_VIDEO_CHECKPOINT, track.TRACKERS["edgetam"]["revision"])]))
+        method = record["methods"]["track_edgetam_sam3seed"]
+        self.assertEqual((method["seed_rule"]["rule"], method["refusal"]["rule"], method["track_stride"]),
+                         (track.SAM3_SEED_RULE, selection.MARGIN_RULE, 2))
+        import importlib.util
+        for key, version in record["packages"].items():
+            if importlib.util.find_spec(key) is not None:
+                self.assertIsNotNone(version, f"{key} is importable but its distribution version was not found")
+
+    def test_trackers_are_pinned_transformers_video_models(self) -> None:
+        self.assertEqual(sorted(track.TRACKERS), ["edgetam", "sam2"])
+        self.assertEqual(track.TRACKERS["edgetam"]["model_class"], "EdgeTamVideoModel")
+        self.assertRegex(track.TRACKERS["edgetam"]["revision"], r"^[0-9a-f]{40}$")
+        self.assertEqual(track.TRACKERS["sam2"]["checkpoint"], track.SAM2_VIDEO_CHECKPOINT)
+
+
+class RefusalRuleTests(unittest.TestCase):
+    CLIP = {"scored": False, "frame0_refusal": {"rule": selection.MARGIN_RULE, "refused": True}}
+
+    def test_uses_the_constants_the_run_recorded(self) -> None:
+        recorded = {"rule": selection.MARGIN_RULE, "margin_score": 0.07, "also_recorded": {"rule": "x"}}
+        self.assertEqual(score_phase_a.refusal_rule({"c": self.CLIP}, recorded),
+                         {"rule": selection.MARGIN_RULE, "margin_score": 0.07})
+
+    def test_unscored_clips_name_the_rule_and_nothing_is_never_defaulted(self) -> None:
+        self.assertEqual(score_phase_a.refusal_rule({"c": self.CLIP})["rule"], selection.MARGIN_RULE)
+        with self.assertRaises(SystemExit):
+            score_phase_a.refusal_rule({})
+        with self.assertRaises(SystemExit):
+            score_phase_a.refusal_rule({"c": self.CLIP}, {"rule": selection.REFUSAL_RULE, "score_ratio": 0.9})
 
 
 class SeedTests(unittest.TestCase):
@@ -110,6 +233,28 @@ class ScoreTrackTests(unittest.TestCase):
         refusal = score_phase_a.aggregate({"c": result})["refusal"]
         self.assertEqual((refusal["frame0_accepted_correct"], refusal["accepted_frame_plausible_top1"],
                           refusal["accepted_labelled_frames"]), (1, 3, 3))
+
+    def test_recorded_seed_decision_is_scored_as_it_ran(self) -> None:
+        # The run picked index 1 and recorded a margin refusal; the scorer must not recompute either.
+        seed_rows = [row(-20.0, 600.0, 100.0, 0.99), row(300.0, 600.0, 100.0, 0.90)]
+        refusal = {"rule": selection.MARGIN_RULE, "refused": False, "reason": None, "margin": None}
+        records = [record(0, 0.0, [self.PLATE], seed={"candidates": seed_rows, "selected_index": 1,
+                                                      "refusal": refusal})]
+        records += [record(30, 0.5, [self.PLATE]), record(60, 1.0, [self.PLATE])]
+        result = score_phase_a.score_clip(records, self.POINTS)
+        self.assertTrue(result["clip_frame0"]["plausible_top1"])
+        self.assertEqual(result["frame0_refusal"], refusal)
+        close = {"rule": selection.REFUSAL_RULE, "refused": True, "reason": "close_scores", "ratio": 0.95}
+        records[0]["seed"]["close_score_refusal"] = close
+        compared = score_phase_a.score_clip(records, self.POINTS)
+        self.assertEqual(score_phase_a.aggregate({"c": compared})["refusal"]["rule"], selection.MARGIN_RULE)
+        self.assertEqual(score_phase_a.aggregate({"c": compared})["refusal"]["margin_score"], selection.MARGIN_SCORE)
+        self.assertEqual(score_phase_a.aggregate({"c": compared})["refusal"]["close_score_comparison"]["refused_clips"], ["c"])
+        mixed = {"a": compared, "b": score_phase_a.score_clip(self.track_records([row(300.0, 600.0, 100.0, 0.5)]), self.POINTS)}
+        with self.assertRaises(SystemExit):
+            score_phase_a.aggregate(mixed)
+        nothing = [record(0, 0.0, [], seed={"candidates": seed_rows[:1], "selected_index": None, "refusal": refusal})]
+        self.assertFalse(score_phase_a.score_clip(nothing, self.POINTS[:1])["clip_frame0"]["plausible_top1"])
 
     def test_wrong_seed_is_a_frame0_miss(self) -> None:
         stored = row(800.0, 600.0, 90.0, 0.60)

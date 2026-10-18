@@ -176,6 +176,11 @@ class Sam3Proposer(_Torch):
                 "duplicate_iou": DUPLICATE_IOU, "max_candidates": MAX_CANDIDATES}
 
     def propose(self, image: np.ndarray) -> list[dict[str, Any]]:
+        return self.propose_with_masks(image)[0]
+
+    def propose_with_masks(self, image: np.ndarray) -> tuple[list[dict[str, Any]], list[np.ndarray | None]]:
+        """Candidate rows and, aligned with them, the SAM 3 mask each circle was fitted to (None for
+        box-only circles). The SAM 3 seed in Phase A.2 propagates the selected mask with SAM 2.1."""
         from PIL import Image
         pil = Image.fromarray(image[:, :, ::-1].copy())
         boxes, scores, labels, masks = [], [], [], []
@@ -193,11 +198,12 @@ class Sam3Proposer(_Torch):
                 scores.append(score)
                 labels.append(prompt)
                 masks.append(mask.cpu().numpy().astype(bool))
-        rows = []
+        rows, used = [], []
         for i in dedupe(boxes, scores):
             circle = geometry.circle_from_mask(masks[i]) or geometry.circle_from_box(*boxes[i])
             rows.append(_row(circle, scores[i], prompt=labels[i], box_xyxy=[round(v, 2) for v in boxes[i]]))
-        return rows
+            used.append(masks[i] if circle.fit != "box" else None)
+        return rows, used
 
 
 def build(name: str) -> Any:
