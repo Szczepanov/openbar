@@ -158,6 +158,11 @@ python -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 The completed re-detection score can be reproduced with the existing `score_phase_a.py`, using
 `--run-dir <saved-redetect-run> --repo-root <data-checkout> --output <new-score-path>` **only after**
 checking completion and current development roles as above. The scorer itself does not enforce
-the manifest gate; the motion tool does. That remains a mechanical enforcement gap for direct
-scorer invocation. The saved restart audit uses the scorer's `labelled_frames`, `is_target` and
-`identity-loose-v1`, grouping labels from each `guard.status == redetected` to the next restart.
+the completion check. Its CLI now enforces the current-manifest development-role gate before
+opening candidates or labels, closing the original direct-invocation gap. Like the inference
+harness, it defaults to both private manifests under `--repo-root`; repeat `--manifest` to supply
+alternate manifests. The pure `score_run` function remains a scoring primitive for already-gated
+inputs and synthetic tests. Score output must use a new path; existing paths are refused to
+protect inputs and previous reports. The saved restart audit uses the scorer's `labelled_frames`,
+`is_target` and `identity-loose-v1`, grouping labels from each `guard.status == redetected` to
+the next restart. See [the same-environment follow-up](PLATE_REDETECTION_COMPARISON.md).

@@ -20,6 +20,7 @@ which frame-0 identity and the refusal read instead, so each seed rule is scored
 (``close-score-v1`` for ``track_sam2``, ``sam3-margin-v2`` for ``track_sam2_sam3seed``).
 
 No pass/fail verdict, no thresholds tuned here. Development clips only, so nothing generalises.
+The CLI checks every recorded role against current manifests before opening candidates or labels.
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ from typing import Any, Sequence
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import clips  # noqa: E402
 import selection  # noqa: E402
 import truth  # noqa: E402
 
@@ -307,13 +309,23 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--run-dir", type=Path, required=True)
     p.add_argument("--repo-root", type=Path, required=True, help="checkout holding validation/private labels")
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--manifest", type=Path, action="append",
+                   help="defaults to validation/private/manifest.json and validation/private/vbt/manifest.json")
+    p.add_argument("--output", type=Path, required=True, help="new score file; existing paths are refused")
     p.add_argument("--compare", type=Path, action="append", default=[],
                    help="another run's score.json; its methods join the printed per-clip table only")
     args = p.parse_args(argv)
     roles = json.loads((args.run_dir / "run.json").read_text(encoding="utf-8"))["clips"]
+    manifests = args.manifest or [args.repo_root / "validation/private/manifest.json",
+                                  args.repo_root / "validation/private/vbt/manifest.json"]
+    fixtures = clips.load_fixtures(manifests)
+    for name, role in roles.items():
+        if name not in fixtures or clips.development_role(fixtures[name]) != role:
+            raise clips.ClipRefused(f"{name}: missing fixture or development-role mismatch")
     result = score_run(args.run_dir, args.repo_root / "validation" / "private", roles)
-    args.output.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    encoded = json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    with args.output.open("x", encoding="utf-8") as handle:
+        handle.write(encoded)
     print(table(result))
     methods: dict[str, Any] = {}
     for path in args.compare:
