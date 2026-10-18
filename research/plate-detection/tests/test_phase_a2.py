@@ -309,6 +309,21 @@ class SeedTests(unittest.TestCase):
         self.assertIsNone(seed["selected_index"])
         self.assertEqual(seed["refusal"]["reason"], "no_candidate")
 
+    def test_choose_seed_student_accepts_synthetic_disc_from_box(self) -> None:
+        student_row = {
+            **row(300, 600, 100, 0.92, fit="box"),
+            "mask_source": "synthetic_disc_from_box",
+        }
+        plain_box_row = row(500, 600, 100, 0.99, fit="box")
+        seed = track.choose_seed_student([plain_box_row, student_row], 1080, 1920)
+        self.assertEqual(seed["rule"], track.STUDENT_SEED_RULE)
+        self.assertEqual(seed["selected_index"], 1)
+        self.assertEqual(seed["plausible_indices"], [1])
+        self.assertEqual(
+            track.method_name("edgetam", "dfine_s_student", redetect=True),
+            "track_edgetam_dfinestudentseed_redetect",
+        )
+
     def test_tracked_row(self) -> None:
         mask = np.zeros((60, 60), dtype=bool)
         yy, xx = np.mgrid[:60, :60]

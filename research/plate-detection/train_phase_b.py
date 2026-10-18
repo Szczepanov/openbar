@@ -215,10 +215,10 @@ def evaluate_box_predictions(
                 ious.append(detectors.box_iou([float(v) for v in best_row["box_xyxy"]], gt_xyxy))
             else:
                 pred_xyxy = [
-                    best_cand.center_x_px - best_cand.radius_px,
-                    best_cand.center_y_px - best_cand.radius_px,
-                    best_cand.center_x_px + best_cand.radius_px,
-                    best_cand.center_y_px + best_cand.radius_px,
+                    best_cand.center_x_px + 0.5 - best_cand.radius_px,
+                    best_cand.center_y_px + 0.5 - best_cand.radius_px,
+                    best_cand.center_x_px + 0.5 + best_cand.radius_px,
+                    best_cand.center_y_px + 0.5 + best_cand.radius_px,
                 ]
                 ious.append(detectors.box_iou(pred_xyxy, gt_xyxy))
 
@@ -315,7 +315,10 @@ def train_dfine_student(
         return processor(images=images, annotations=annotations, return_tensors="pt")
 
     train_ds = _CocoDataset(train_coco, dataset_dir.resolve())
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=_collate)
+    loader_gen = torch.Generator().manual_seed(seed)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True, generator=loader_gen, collate_fn=_collate
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -330,7 +333,10 @@ def train_dfine_student(
         steps = 0
         for batch in train_loader:
             pixel_values = batch["pixel_values"].to(device)
-            labels = [{k: v.to(device) for k, v in t.items()} for t in batch["labels"]]
+            labels = [
+                {k: (v.to(device) if hasattr(v, "to") else v) for k, v in t.items()}
+                for t in batch["labels"]
+            ]
             optimizer.zero_grad()
             outputs = model(pixel_values=pixel_values, labels=labels)
             loss = outputs.loss
@@ -381,6 +387,9 @@ def train_dfine_student(
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=False
     ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True, text=True, check=False
+    ).stdout.strip()
     checkpoint_hashes = {
         p.name: sha256_file(p)
         for p in sorted(best_checkpoint_dir.glob("*"))
@@ -390,6 +399,8 @@ def train_dfine_student(
         "harness": HARNESS_ID,
         "origin": "machine",
         "code_commit": commit,
+        "dirty": bool(dirty),
+        "source_sha256": {p.name: sha256_file(p) for p in sorted(HERE.glob("*.py"))},
         "python": platform.python_version(),
         "student_architecture": {
             "base_checkpoint": base_checkpoint,

@@ -66,6 +66,25 @@ SEEDS = {
                          "score_decimals": selection.SCORE_DECIMALS,
                          "also_recorded": {"rule": selection.REFUSAL_RULE,
                                            "score_ratio": selection.REFUSAL_SCORE_RATIO}}},
+    "dfine_s_student": {
+        "choose": track.choose_seed_student,
+        "seed_rule": {
+            "rule": track.STUDENT_SEED_RULE,
+            "in_frame_rule": selection.IN_FRAME_RULE,
+            "size_window_fraction": [selection.MIN_RADIUS_FRACTION, selection.MAX_RADIUS_FRACTION],
+            "mask_source": "synthetic_disc_from_box",
+        },
+        "refusal": {
+            "rule": selection.MARGIN_RULE,
+            "margin_score": selection.MARGIN_SCORE,
+            "concentric_centre_fraction": selection.SAME_SPOT_CENTRE_FRACTION,
+            "score_decimals": selection.SCORE_DECIMALS,
+            "also_recorded": {
+                "rule": selection.REFUSAL_RULE,
+                "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            },
+        },
+    },
 }
 
 
@@ -105,8 +124,12 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
                  if redetect else {}),
               "tracker": tracker.config(), "track_stride": stride,
               "circle_fit": "geometry.circle_from_mask (seed rows may fall back to geometry.circle_from_box)"}
-    seed_repos = ({detectors.SAM3_CHECKPOINT} if seed == "sam3"
-                  else {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT})
+    if seed == "sam3":
+        seed_repos = {detectors.SAM3_CHECKPOINT}
+    elif seed == "dfine_s_student":
+        seed_repos = {getattr(detector, "checkpoint", detectors.DFINE_CHECKPOINT)}
+    else:
+        seed_repos = {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT}
     pinned = {track.TRACKERS[tracker.name]["checkpoint"]: track.TRACKERS[tracker.name]["revision"]}
     repos = sorted(seed_repos | set(pinned))
     return {"harness": HARNESS_ID, "origin": "machine", "code_commit": commit, "dirty": bool(dirty),
@@ -182,20 +205,23 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
                             "pre_restart_guard_status": pre_restart_status,
                             "pre_restart_tracker_candidates": pre_restart_candidates,
                         }
-                        if found["selected_index"] is not None:
+                        if found["selected_index"] is not None and masks[found["selected_index"]] is not None:
                             tracker.start(masks[found["selected_index"]])
                             mask, logit = tracker.step(image)
                             row = track.tracked_row(geometry.circle_from_mask(mask), logit)
                             post_restart_candidates = [] if row is None else [row]
                             redetect_info["post_restart_tracker_candidates"] = post_restart_candidates
+                            extra["post_restart_tracker_candidates"] = post_restart_candidates
                             if row is not None:
                                 new_session = state.resume(time_s, row)
                                 redetect_info["post_restart_session_index"] = new_session
+                                extra["post_restart_session_index"] = new_session
                                 status = "redetected"
                                 summary["redetected"] += 1
                                 active_candidates = post_restart_candidates
-                                extra["post_restart_tracker_candidates"] = post_restart_candidates
-                                extra["post_restart_session_index"] = new_session
+                            else:
+                                redetect_info["post_restart_session_index"] = None
+                                extra["post_restart_session_index"] = None
                         extra["redetect"] = redetect_info
                     extra["guard"] = {
                         "rule": guard.RULE,
@@ -225,8 +251,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--stride", type=int, default=clips.TRACK_STRIDE)
     p.add_argument("--seed", choices=sorted(SEEDS), default="gdino_sam2", help="seed detector and rule")
+    p.add_argument("--student-checkpoint", default=None, help="student checkpoint path or HF repo id for dfine_s_student")
     p.add_argument("--tracker", choices=sorted(track.TRACKERS), default="sam2", help="video tracker (#57)")
-    p.add_argument("--redetect", action="store_true", help="online guard plus SAM 3 re-detection (SAM 3 seed only)")
+    p.add_argument("--redetect", action="store_true", help="online guard plus re-detection (SAM 3 or student seed)")
     p.add_argument("--clip", action="append", help="restrict to these clip ids (still guarded)")
     p.add_argument("--force", action="store_true", help="rerun clips that already have output")
     return p
@@ -234,6 +261,7 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    track.method_name(args.tracker, args.seed, args.redetect)  # fail closed before loading GPU models
     repo_root = args.repo_root.resolve()
     output_dir = args.output_dir.resolve()
     if not output_dir.is_relative_to(label_package.PRIVATE_ROOT.resolve()):
@@ -251,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     import detectors
     import torch
     torch.manual_seed(0)
-    detector = detectors.build(args.seed)
+    detector = detectors.build(args.seed, checkpoint=args.student_checkpoint)
     tracker = track.Sam2VideoTracker(args.tracker)
     output_dir.mkdir(parents=True, exist_ok=True)
     run_phase_a.write_record(output_dir / "run.json", provenance(args.seed, detector, tracker, args.stride, repo_root, args.redetect), allowed)

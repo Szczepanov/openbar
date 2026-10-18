@@ -134,7 +134,30 @@ class DistillDatasetTests(unittest.TestCase):
         self.assertEqual(curated_nested["reason"], "seed_refused")
         self.assertEqual(curated_nested["accepted_frames"], 0)
 
+        # Mid-clip drift on a later truth point -> vetoed as track_off_target_vs_truth
+        drift_records = [
+            _sample_record("self-other-side-0215-27", 0, 0.0, cx=500.0, cy=400.0, r=100.0),
+            _sample_record("self-other-side-0215-27", 1, 0.033, cx=510.0, cy=400.0, r=100.0),
+        ]
+        drift_truth = [
+            truth.TruthPoint(0.0, 500.0, 400.0, 100.0, "test"),
+            truth.TruthPoint(0.033, 800.0, 400.0, 100.0, "test"),
+        ]
+        curated_drift = distill_dataset.curate_clip_records(fixture, drift_records, drift_truth)
+        self.assertEqual(curated_drift["status"], "excluded")
+        self.assertEqual(curated_drift["reason"], "track_off_target_vs_truth")
+
+        # Truth points present but none align within tolerance -> fails closed
+        unaligned_truth = [truth.TruthPoint(5.0, 500.0, 400.0, 100.0, "test")]
+        curated_unaligned = distill_dataset.curate_clip_records(
+            fixture, [_sample_record("self-other-side-0215-27", 0, 0.0)], unaligned_truth
+        )
+        self.assertEqual(curated_unaligned["status"], "excluded")
+        self.assertEqual(curated_unaligned["reason"], "no_aligned_truth_frame")
+
     def test_curate_clip_applies_guard_and_builds_coco_split(self) -> None:
+        import geometry
+
         fixture = {
             "id": "self-back-squat-side-1015-06",
             "purpose": "development",
@@ -158,7 +181,24 @@ class DistillDatasetTests(unittest.TestCase):
         coco = distill_dataset.build_coco_split([curated], "train")
         self.assertEqual(len(coco["images"]), 2)
         self.assertEqual(len(coco["annotations"]), 2)
-        self.assertEqual(coco["annotations"][0]["bbox"], [400.0, 300.0, 200.0, 200.0])
+        bbox = coco["annotations"][0]["bbox"]
+        self.assertEqual(bbox, [400.5, 300.5, 200.0, 200.0])
+        roundtrip = geometry.circle_from_box(bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])
+        self.assertEqual((roundtrip.center_x_px, roundtrip.center_y_px, roundtrip.radius_px), (500.0, 400.0, 100.0))
+
+        # Post-redetection session_index >= 1 frames must not leak into distillation
+        redetect_records = [
+            {
+                **_sample_record("self-back-squat-side-1015-06", 0, 0.0, cx=500.0, cy=400.0, r=100.0),
+                "guard": {"rule": "track-guard-v2", "status": "tracked", "session_index": 0},
+            },
+            {
+                **_sample_record("self-back-squat-side-1015-06", 30, 1.0, cx=500.0, cy=400.0, r=100.0),
+                "guard": {"rule": "track-guard-v2", "status": "tracked", "session_index": 1},
+            },
+        ]
+        curated_redetect = distill_dataset.curate_clip_records(fixture, redetect_records, truth_pts)
+        self.assertEqual(curated_redetect["accepted_frames"], 1)
 
     def test_export_distillation_dataset_writes_manifest_and_coco_files(self) -> None:
         import json

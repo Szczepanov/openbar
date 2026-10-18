@@ -93,15 +93,18 @@ def circle_to_coco_bbox(
     width_px: int,
     height_px: int,
 ) -> list[float] | None:
-    """Convert a circle (cx, cy, r) to a clamped COCO [x_min, y_min, width, height] box."""
+    """Convert an ADR-0007 pixel-centre circle (cx, cy, r) to a clamped pixel-edge COCO
+    [x_min, y_min, width, height] box (exact inverse of ``geometry.circle_from_box`` when unclipped)."""
     if not all(math.isfinite(v) for v in (center_x_px, center_y_px, radius_px)):
         return None
     if radius_px <= 0.0 or width_px <= 0 or height_px <= 0:
         return None
-    x0 = max(0.0, min(float(width_px), center_x_px - radius_px))
-    y0 = max(0.0, min(float(height_px), center_y_px - radius_px))
-    x1 = max(0.0, min(float(width_px), center_x_px + radius_px))
-    y1 = max(0.0, min(float(height_px), center_y_px + radius_px))
+    edge_cx = center_x_px + 0.5
+    edge_cy = center_y_px + 0.5
+    x0 = max(0.0, min(float(width_px), edge_cx - radius_px))
+    y0 = max(0.0, min(float(height_px), edge_cy - radius_px))
+    x1 = max(0.0, min(float(width_px), edge_cx + radius_px))
+    y1 = max(0.0, min(float(height_px), edge_cy + radius_px))
     box_w = round(x1 - x0, 4)
     box_h = round(y1 - y0, 4)
     if box_w <= 0.0 or box_h <= 0.0:
@@ -128,20 +131,29 @@ def seed_matches_truth(
     if not truth_points:
         return True, "accepted_unlabelled_exploration"
 
-    # Check the earliest record that aligns with a human truth label.
+    # Check the earliest aligned truth label for seed acquisition and every subsequent aligned truth
+    # label where the guarded track still reports a candidate so mid-clip drift is vetoed.
+    verified_first = False
     for point in sorted(truth_points, key=lambda p: p.timestamp_s):
         nearest = min(records, key=lambda r: abs(float(r["time_s"]) - point.timestamp_s))
         if abs(float(nearest["time_s"]) - point.timestamp_s) > TRUTH_MATCH_TOLERANCE_S:
             continue
         candidates = nearest.get("candidates") or []
-        if not candidates:
-            return False, "seed_lost_at_first_truth"
-        cand = selection.Candidate.from_dict(candidates[0])
-        if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
-            return False, "seed_off_target_vs_truth"
-        return True, "accepted_verified_vs_truth"
+        if not verified_first:
+            if not candidates:
+                return False, "seed_lost_at_first_truth"
+            cand = selection.Candidate.from_dict(candidates[0])
+            if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
+                return False, "seed_off_target_vs_truth"
+            verified_first = True
+        elif candidates:
+            cand = selection.Candidate.from_dict(candidates[0])
+            if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
+                return False, "track_off_target_vs_truth"
 
-    return True, "accepted_no_aligned_truth"
+    if not verified_first:
+        return False, "no_aligned_truth_frame"
+    return True, "accepted_verified_vs_truth"
 
 
 def curate_clip_records(
@@ -157,7 +169,8 @@ def curate_clip_records(
     role = clips.development_role(fixture)
     fixture_id = fixture["id"]
 
-    guarded = records if (records and "guard" in records[0]) else guard.guard_track(records)
+    ordered = sorted(records, key=lambda r: float(r["time_s"]))
+    guarded = ordered if (ordered and "guard" in ordered[0]) else guard.guard_track(ordered)
     accepted_seed, reason = seed_matches_truth(guarded, truth_points)
     if not accepted_seed:
         return {
@@ -173,8 +186,8 @@ def curate_clip_records(
 
     frames: list[dict[str, Any]] = []
     for rec in guarded:
-        guard_info = rec.get("guard") or {"status": "tracked"}
-        if guard_info.get("status") != "tracked":
+        guard_info = rec.get("guard") or {"status": "tracked", "session_index": 0}
+        if guard_info.get("status") != "tracked" or int(guard_info.get("session_index", 0)) != 0:
             continue
         candidates = rec.get("candidates") or []
         if not candidates:
@@ -405,10 +418,15 @@ def export_distillation_dataset(
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=False
     ).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True, text=True, check=False
+    ).stdout.strip()
     manifest_doc = {
         "harness": HARNESS_ID,
         "origin": "machine",
         "code_commit": commit,
+        "dirty": bool(dirty),
+        "source_sha256": {p.name: sha256_file(p) for p in sorted(HERE.glob("*.py"))},
         "frame_stride": frame_stride,
         "frames_extracted": extract_frames,
         "extracted_frame_count": extracted_frames,

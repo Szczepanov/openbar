@@ -32,6 +32,7 @@ class GuardTests(unittest.TestCase):
         self.assertEqual([r["guard"]["status"] for r in out], ["tracked", "lost", "stopped_gap", "after_stop",
                                                                "after_stop"])
         self.assertEqual([len(r["candidates"]) for r in out], [1, 0, 0, 0, 0])
+        self.assertEqual([len(r["tracker_candidates"]) for r in out], [1, 0, 0, 1, 1])
 
     def test_a_glitch_frame_is_rejected_and_the_track_goes_on(self) -> None:
         # 18 radii/s at dt = 1/30 s allows 0.6 + 0.25 = 0.85 radii = 85 px.

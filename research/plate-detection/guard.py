@@ -76,16 +76,22 @@ def guard_track(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """Guarded copies of a clip's track records in time order. Each copy carries ``guard`` with the
     rule and a status: ``tracked``, ``lost`` (the tracker reported none), ``rejected_step`` (a single
     implausible frame), ``stopped_gap`` (the frame that ended the track) or ``after_stop``. Only
-    ``tracked`` frames carry a candidate."""
+    ``tracked`` frames carry a candidate in ``candidates``; the raw tracker observation is always
+    preserved in ``tracker_candidates``."""
     if any(len(r["candidates"]) > 1 for r in records):
         raise ValueError("the guard expects at most one tracked candidate per frame")
     state = GuardState()
     out: list[dict[str, Any]] = []
     for record in sorted(records, key=lambda r: r["time_s"]):
-        candidate = record["candidates"][0] if record["candidates"] else None
+        raw_candidates = list(record.get("tracker_candidates", record["candidates"]))
+        candidate = raw_candidates[0] if raw_candidates else None
         status = state.observe(record["time_s"], candidate)
-        out.append({**record, "candidates": [candidate] if status == "tracked" else [],
-                    "guard": {"rule": RULE, "status": status}})
+        out.append({
+            **record,
+            "tracker_candidates": raw_candidates,
+            "candidates": [candidate] if status == "tracked" else [],
+            "guard": {"rule": RULE, "status": status, "session_index": state.session_index},
+        })
     return out
 
 
