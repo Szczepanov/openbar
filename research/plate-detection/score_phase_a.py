@@ -160,7 +160,7 @@ def _quantile(values: Sequence[float], q: float) -> float | None:
     return ordered[min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))]
 
 
-def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def aggregate(per_clip: dict[str, dict[str, Any]], recorded_refusal: dict[str, Any] | None = None) -> dict[str, Any]:
     scored = [c for c in per_clip.values() if c["scored"]]
     frames = sum(c["labelled_frames"] for c in scored)
     centre = [v for c in scored for v in c["centre_error_rel"]]
@@ -183,7 +183,7 @@ def aggregate(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "lost_frames": sum(c["lost_frames"] for c in per_clip.values()),
         "sampled_frames": sum(c["sampled_frames"] for c in per_clip.values()),
         "refusal": {
-            **refusal_rule(per_clip),
+            **refusal_rule(per_clip, recorded_refusal),
             "refused_clips": sorted(k for k, c in per_clip.items() if c["scored"] and c["frame0_refusal"]["refused"]),
             "frame0_accepted": sum(not c["frame0_refusal"]["refused"] for c in with0),
             "frame0_accepted_correct": sum(c["clip_frame0"][RULE_PLAUSIBLE_TOP1] for c in with0
@@ -208,15 +208,21 @@ REFUSAL_CONSTANTS = {selection.REFUSAL_RULE: {"score_ratio": selection.REFUSAL_S
                                              "score_decimals": selection.SCORE_DECIMALS}}
 
 
-def refusal_rule(per_clip: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """The one refusal rule behind these clips' frame-0 decisions, with its constant, plus how the
+def refusal_rule(per_clip: dict[str, dict[str, Any]], recorded: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The one refusal rule behind these clips' frame-0 decisions, with the constants the run recorded in
+    ``run.json`` (the current code's constants only for runs that recorded none), plus how the
     ``close-score-v1`` comparison the run recorded beside it would have refused."""
-    scored = {k: c for k, c in per_clip.items() if c["scored"]}
-    rules = {c["frame0_refusal"]["rule"] for c in scored.values()} or {selection.REFUSAL_RULE}
+    rules = {c["frame0_refusal"]["rule"] for c in per_clip.values() if c.get("frame0_refusal")}
+    if not rules and recorded:
+        rules = {recorded["rule"]}
     if len(rules) != 1:
-        raise SystemExit(f"one method mixes refusal rules: {sorted(rules)}")
+        raise SystemExit(f"cannot name one refusal rule for this method: {sorted(rules)}")
     rule = rules.pop()
-    result = {"rule": rule, **REFUSAL_CONSTANTS[rule]}
+    if recorded is not None and recorded["rule"] != rule:
+        raise SystemExit(f"run.json records refusal rule {recorded['rule']!r}, the records say {rule!r}")
+    result = ({k: v for k, v in recorded.items() if k != "also_recorded"} if recorded
+              else {"rule": rule, **REFUSAL_CONSTANTS[rule]})
+    scored = {k: c for k, c in per_clip.items() if c["scored"]}
     compared = {k: c for k, c in scored.items() if "frame0_close_score_refusal" in c}
     if compared:
         result["close_score_comparison"] = {
@@ -231,7 +237,11 @@ def load_records(path: Path) -> list[dict[str, Any]]:
 
 def score_run(run_dir: Path, private_root: Path, roles: dict[str, str]) -> dict[str, Any]:
     result: dict[str, Any] = {"match_rule": selection.MATCH_RULE, "motion_rule": selection.MOTION_RULE, "methods": {}}
+    record_path = run_dir / "run.json"  # main() always has one; unit tests may score a bare directory
+    recorded_methods = (json.loads(record_path.read_text(encoding="utf-8")).get("methods", {})
+                        if record_path.is_file() else {})
     for method_dir in sorted(p for p in (run_dir / "candidates").iterdir() if p.is_dir()):
+        recorded = recorded_methods.get(method_dir.name, {}).get("refusal")
         per_clip = {}
         for path in sorted(method_dir.glob("*.jsonl")):
             fixture_id = path.name.removesuffix(".jsonl")
@@ -239,9 +249,10 @@ def score_run(run_dir: Path, private_root: Path, roles: dict[str, str]) -> dict[
                 raise SystemExit(f"{path} is not listed in run.json; refusing to score an unrecorded clip")
             per_clip[fixture_id] = {"role": roles[fixture_id],
                                     **score_clip(load_records(path), truth.load_truth(fixture_id, private_root))}
-        by_role = {role: aggregate({k: v for k, v in per_clip.items() if v["role"] == role})
+        by_role = {role: aggregate({k: v for k, v in per_clip.items() if v["role"] == role}, recorded)
                    for role in sorted({v["role"] for v in per_clip.values()})}
-        result["methods"][method_dir.name] = {"all": aggregate(per_clip), "by_role": by_role, "per_clip": per_clip}
+        result["methods"][method_dir.name] = {"all": aggregate(per_clip, recorded), "by_role": by_role,
+                                              "per_clip": per_clip}
     return result
 
 

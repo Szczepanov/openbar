@@ -101,7 +101,7 @@ class Sam3RuleTests(unittest.TestCase):
         self.assertEqual(seed["close_score_refusal"]["rule"], selection.REFUSAL_RULE)
 
     def test_sam3_seed_skips_box_only_candidates(self) -> None:
-        rows = [{**row(500.0, 900.0, 200.0, 0.99), "fit": "box"}, {**row(600.0, 1200.0, 180.0, 0.90), "fit": "mask_ransac"}]
+        rows = [{**row(500.0, 900.0, 200.0, 0.99), "fit": "box"}, {**row(600.0, 1200.0, 180.0, 0.90), "fit": "mask_contour"}]
         seed = track.choose_seed_sam3(rows, 1080, 1920)
         self.assertEqual((seed["selected_index"], seed["plausible_indices"]), (1, [1]))
         only_box = track.choose_seed_sam3(rows[:1], 1080, 1920)
@@ -146,13 +146,32 @@ class TrackerChoiceTests(unittest.TestCase):
         method = record["methods"]["track_edgetam_sam3seed"]
         self.assertEqual((method["seed_rule"]["rule"], method["refusal"]["rule"], method["track_stride"]),
                          (track.SAM3_SEED_RULE, selection.MARGIN_RULE, 2))
-        self.assertIn("timm", record["packages"])
+        import importlib.util
+        for key, version in record["packages"].items():
+            if importlib.util.find_spec(key) is not None:
+                self.assertIsNotNone(version, f"{key} is importable but its distribution version was not found")
 
     def test_trackers_are_pinned_transformers_video_models(self) -> None:
         self.assertEqual(sorted(track.TRACKERS), ["edgetam", "sam2"])
         self.assertEqual(track.TRACKERS["edgetam"]["model_class"], "EdgeTamVideoModel")
         self.assertRegex(track.TRACKERS["edgetam"]["revision"], r"^[0-9a-f]{40}$")
         self.assertEqual(track.TRACKERS["sam2"]["checkpoint"], track.SAM2_VIDEO_CHECKPOINT)
+
+
+class RefusalRuleTests(unittest.TestCase):
+    CLIP = {"scored": False, "frame0_refusal": {"rule": selection.MARGIN_RULE, "refused": True}}
+
+    def test_uses_the_constants_the_run_recorded(self) -> None:
+        recorded = {"rule": selection.MARGIN_RULE, "margin_score": 0.07, "also_recorded": {"rule": "x"}}
+        self.assertEqual(score_phase_a.refusal_rule({"c": self.CLIP}, recorded),
+                         {"rule": selection.MARGIN_RULE, "margin_score": 0.07})
+
+    def test_unscored_clips_name_the_rule_and_nothing_is_never_defaulted(self) -> None:
+        self.assertEqual(score_phase_a.refusal_rule({"c": self.CLIP})["rule"], selection.MARGIN_RULE)
+        with self.assertRaises(SystemExit):
+            score_phase_a.refusal_rule({})
+        with self.assertRaises(SystemExit):
+            score_phase_a.refusal_rule({"c": self.CLIP}, {"rule": selection.REFUSAL_RULE, "score_ratio": 0.9})
 
 
 class SeedTests(unittest.TestCase):

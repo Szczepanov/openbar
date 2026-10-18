@@ -52,8 +52,10 @@ REFUSAL_SCORE_RATIO = 0.9  # refuse when the runner-up scores at least this shar
 # SAM 3 scores saturate near 1 for clear plates, so a ratio says little; an absolute margin does.
 # A runner-up centred on the best candidate (within SAME_SPOT_CENTRE_FRACTION of its radius, any
 # radius) is a rim, hub, duplicate mask or another plate on the same bar end: choosing it would give
-# the same centre path, so it is not a rival. Margins are rounded to the 5 decimals scores are
-# stored with before comparing, so the boundary does not depend on float error.
+# the same centre path, so it is not a rival. This protects identity, not scale: if an inner rim or hub
+# outscores the outer rim, it becomes the seed unchallenged and its smaller radius is what gets tracked.
+# Margins are rounded to the 5 decimals scores are stored with before comparing, so the boundary does
+# not depend on float error.
 IN_FRAME_RULE = "in-frame-v1"
 MARGIN_RULE = "sam3-margin-v2"
 MARGIN_SCORE = 0.05  # refuse when a plate centred elsewhere scores less than this below the best

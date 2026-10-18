@@ -62,7 +62,9 @@ SEEDS = {
 def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: Path) -> dict[str, Any]:
     import detectors
     from importlib import metadata
-    # Installed distribution versions, read without importing the libraries (same keys as Phase A).
+    # Installed distribution versions, read without importing the libraries. Keys follow Phase A plus
+    # torchvision and timm; values are distribution versions (cv2 reads 4.12.0.88 where Phase A's
+    # cv2.__version__ read 4.12.0).
     distributions = {"torch": "torch", "torchvision": "torchvision", "transformers": "transformers", "timm": "timm",
                      "numpy": "numpy", "cv2": ("opencv-python-headless", "opencv-python"), "PIL": "pillow",
                      "huggingface_hub": "huggingface_hub"}
@@ -75,6 +77,9 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
                 break
             except metadata.PackageNotFoundError:
                 continue
+    torch = sys.modules.get("torch")  # imported by the tracker; never imported here just to describe it
+    runtime = ({"cuda": torch.version.cuda, "device": torch.cuda.get_device_name(0) if torch.cuda.is_available()
+                else "cpu"} if torch is not None else None)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True,
                            text=True).stdout.strip()
@@ -90,7 +95,7 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
     repos = sorted(seed_repos | set(pinned))
     return {"harness": HARNESS_ID, "origin": "machine", "code_commit": commit, "dirty": bool(dirty),
             "source_sha256": {p.name: run_phase_a.sha256_file(p) for p in sorted(HERE.glob("*.py"))},
-            "python": platform.python_version(), "packages": packages, "methods": {name: method},
+            "python": platform.python_version(), "packages": packages, "runtime": runtime, "methods": {name: method},
             "checkpoints": {name: [run_phase_a.checkpoint_files(repo, pinned.get(repo)) for repo in repos]},
             "repo_root": repo_root.name}
 
