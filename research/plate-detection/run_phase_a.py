@@ -46,8 +46,16 @@ def sha256_file(path: Path) -> str:
 
 
 def checkpoint_files(repo_id: str, revision: str | None = None) -> dict[str, Any]:
-    """Revision and weight-file hashes of a locally cached Hugging Face checkpoint (the cached default
-    revision, or a pinned one)."""
+    """Revision and weight-file hashes of a locally cached Hugging Face checkpoint or local directory."""
+    local_dir = Path(repo_id)
+    if local_dir.is_dir():
+        snapshot = local_dir.resolve()
+        weights = sorted(p for p in snapshot.rglob("*") if p.suffix in (".safetensors", ".bin", ".pt"))
+        return {
+            "repo_id": snapshot.name,
+            "revision": "local",
+            "files": {p.relative_to(snapshot).as_posix(): sha256_file(p) for p in weights},
+        }
     from huggingface_hub import snapshot_download
     snapshot = Path(snapshot_download(repo_id, revision=revision, local_files_only=True))
     weights = sorted(p for p in snapshot.rglob("*") if p.suffix in (".safetensors", ".bin", ".pt"))
