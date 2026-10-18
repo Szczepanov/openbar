@@ -36,6 +36,9 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   A [SAM 3 seed](../analysis/PLATE_DETECTION_SAM3_SEED_RESULTS.md) raises that to 316/388 labelled frames (24/25
   clips on target on every labelled frame) with SAM 2.1. EdgeTAM, a SAM 2 variant built for phones, run here on desktop only, matched SAM 2.1
   on 24 of 25 clips but re-locked onto a wrong object after a loss on the other (23/25 overall).
+  [Phase B distillation plan](PLATE_DETECTION_PHASE_B_PLAN.md) covers session-grouped teacher dataset curation
+  (`research/plate-detection/distill_dataset.py`) and Apache-2.0 student detector training (`D-FINE-S` / `RF-DETR-Nano`)
+  for the Xiaomi 14T Pro reference phone.
 
 ## Recommended plan structure
 
