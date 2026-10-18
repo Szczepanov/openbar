@@ -28,6 +28,7 @@ def load(name: str):
 
 label_package = load("label_package")
 annotations = load("annotations")
+scene_inventory = load("scene_inventory")
 
 
 def private_fixture() -> dict:
@@ -340,6 +341,92 @@ class PageContractTests(unittest.TestCase):
         self.assertEqual(states, ["labelled", "unlabelable", "not_annotated", "not_annotated"])
         self.assertEqual(document["samples"][0]["center_px"], {"x_px": 100.26, "y_px": 189.74})
         self.assertEqual(document["samples"][0]["notes"], "rim  edge   blurred")
+
+
+class InventoryPageTests(unittest.TestCase):
+    """The page's scene-inventory export is the format ``scene_inventory.py validate`` accepts."""
+
+    FRAMES = [{"file": f"frames/{i}.png", "frame_index": i * 10, "timestamp_s": t}
+              for i, t in enumerate([0.0, 0.5, 1.0])]
+
+    def run_inventory(self, expression: str):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        functions = re.search(r"// BEGIN inventory.*?\n(.*?)// END inventory", page, re.S).group(1)
+        script = functions + f"process.stdout.write(JSON.stringify({expression}));"
+        return json.loads(subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout)
+
+    def test_page_classes_match_the_validator(self):
+        page = label_package.PAGE_TEMPLATE.read_text(encoding="utf-8")
+        classes = json.loads(re.search(r"const INVENTORY_CLASSES = (\[.*?\]);", page, re.S).group(1))
+
+        self.assertEqual(tuple(classes), scene_inventory.CLASSES)
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_inventory_rows_validate_against_the_package(self):
+        config = label_package.page_config("clip", "pass-a", (320, 240), self.FRAMES)
+        expression = (
+            "(() => { let a = addObject(EMPTY_INVENTORY, {x: 10.004, y: 20.5}, 'stored_plate', '');"
+            "a = sizeLastObject(a, {x: 13.004, y: 24.5});"
+            "a = addObject(a, {x: 300, y: 5}, 'other', 'lamp, \"round\"'); a = sizeLastObject(a, {x: 300, y: 9});"
+            "a = addObject(a, {x: 1, y: 1}, 'rack_equipment', ''); a = removeLastObject(a);"
+            "const inv = {'0': toggleDone(a), '0.5': toggleDone(EMPTY_INVENTORY)};"
+            f"return inventoryRows({json.dumps(self.FRAMES)}, inv, {json.dumps(config['package_id'])}); }})()"
+        )
+        csv_text = self.run_inventory(expression)
+        frames = scene_inventory.parse(csv_text, config)
+
+        self.assertEqual(frames, [
+            {"timestamp_s": 0.0, "frame_index": 0, "inventory_state": "done", "objects": [
+                {"object_class": "stored_plate", "x_px": 10.0, "y_px": 20.5, "radius_px": 5.0, "notes": ""},
+                {"object_class": "other", "x_px": 300.0, "y_px": 5.0, "radius_px": 4.0, "notes": "lamp   round"},
+            ]},
+            {"timestamp_s": 0.5, "frame_index": 10, "inventory_state": "done", "objects": []},
+            {"timestamp_s": 1.0, "frame_index": 20, "inventory_state": "not_done", "objects": []},
+        ])
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_editing_keeps_radius_and_completeness_explicit(self):
+        result = self.run_inventory(
+            "(() => { const one = addObject(EMPTY_INVENTORY, {x: 5, y: 5}, 'stored_plate', '');"
+            "return [sizeLastObject(EMPTY_INVENTORY, {x: 1, y: 1}), sizeLastObject(one, {x: 5.05, y: 5}).objects[0].r,"
+            "removeLastObject(toggleDone(one)).state, removeLastObject(EMPTY_INVENTORY),"
+            "sanitizeInventory({'0': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 2, r: null, note: ''}]},"
+            "'0.5': {state: 'done'}, '1': {state: 'weird', objects: []},"
+            "'2': {state: 'done', objects: [{cls: 'x', x: 1, y: 1, r: null, note: ''}]},"
+            "'3': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 1, r: '5', note: ''}]},"
+            "'4': {state: 'done', objects: [{cls: 'stored_plate', x: 1, y: 1, r: 5, note: 7}]},"
+            "'5': {state: 'done', objects: [{cls: 'stored_plate', x: -50, y: 1, r: 5, note: ''}]},"
+            "'6': {state: 'done', objects: [{cls: 'stored_plate', x: 99.5, y: 1, r: 5, note: ''}]}}, 100, 50)]; })()"
+        )
+
+        self.assertEqual(result, [
+            {"state": "not_done", "objects": []},
+            None,
+            "not_done",
+            {"state": "not_done", "objects": []},
+            {"0": {"state": "done", "objects": [{"cls": "stored_plate", "x": 1, "y": 2, "r": None, "note": ""}]}},
+        ])
+
+    @unittest.skipUnless(shutil.which("node"), "SKIPPED: node not on PATH")
+    def test_page_blocks_inventory_export_that_would_lose_or_hide_objects(self):
+        frames = json.dumps(self.FRAMES)
+        sized = "sizeLastObject(addObject(EMPTY_INVENTORY, {x: 50, y: 50}, '%s', '%s'), {x: 50, y: 60})"
+        plate = "{'0': {state: 'labelled', x: 50.5, y: 50, r: 10.5}}"
+        cases = {
+            "unchecked frame with objects": (f"{{'0': {sized % ('stored_plate', '')}}}", "{}"),
+            "no radius": ("{'0': toggleDone(addObject(EMPTY_INVENTORY, {x: 1, y: 1}, 'stored_plate', ''))}", "{}"),
+            "other without description": (f"{{'0': toggleDone({sized % ('other', ' ')})}}", "{}"),
+            "re-marks the labelled plate": (f"{{'0': toggleDone({sized % ('stored_plate', '')})}}", plate),
+            "nothing done": ("{}", "{}"),
+        }
+        for name, (inventory, labels) in cases.items():
+            with self.subTest(name):
+                self.assertIsNotNone(self.run_inventory(f"inventoryProblem({frames}, {inventory}, {labels})"))
+        for inventory, labels in [
+            ("{'0.5': toggleDone(EMPTY_INVENTORY)}", "{}"),
+            (f"{{'0': toggleDone({sized % ('unknown', '')})}}", "{'0': {state: 'labelled', x: 200, y: 50, r: 10}}"),
+        ]:
+            self.assertIsNone(self.run_inventory(f"inventoryProblem({frames}, {inventory}, {labels})"))
 
 
 class OutputSafetyTests(unittest.TestCase):

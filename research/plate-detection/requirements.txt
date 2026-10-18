@@ -3,8 +3,10 @@
 # Exact installed versions are also written to each run's run.json.
 # PyTorch with CUDA 12.6 (torch >= 2.7 is required by transformers 5.x)
 --extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.12.1+cu126
-torchvision==0.23.0
+# torch >= 2.13.0 fixes GHSA for torch.jit.script memory corruption (Dependabot alert 3);
+# torchvision 0.29 is the release paired with torch 2.14.
+torch==2.14.1+cu126
+torchvision==0.29.1+cu126
 transformers==5.10.4  # Apache-2.0; GroundingDINO, SAM 2.1 and SAM 3 model classes
 accelerate==1.15.0
 huggingface_hub==1.33.0
