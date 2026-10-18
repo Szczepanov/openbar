@@ -22,7 +22,7 @@ no schema change is needed. Tag meanings:
 
 | Tag | Role | Who may look at the clip | Count today |
 | --- | --- | --- | ---: |
-| `split-exploration` | Development / exploration: agents may inspect, tune and debug against these | agents and owner | 13 |
+| `split-exploration` | Development / exploration: agents may inspect, tune and debug against these | agents and owner | 14 |
 | `split-reserved-57` | Reserved #57 held-out tracker/filter evidence. **Excluded** from plate-selection collection, inspection and tuning ([plan](../plans/AUTOMATIC_PLATE_SELECTION_PLAN.md#development-input-roles-and-independent-truth)) | nobody, for this work | 6 |
 | `split-frozen-eval` | Frozen development evaluation: unseen independent recording sessions, scored once per frozen candidate | owner labels; agents see only after the freeze record | 0 (to collect) |
 
@@ -35,6 +35,7 @@ Current assignments:
 | self-back-squat-side-002 | `private/manifest.json` | development | `split-exploration` |
 | self-clean-jerk-side-002 | `private/manifest.json` | development | `split-exploration` |
 | self-snatch-side-002 | `private/manifest.json` | development | `split-exploration` |
+| self-snatch-unknown-0219-28 | `private/manifest.json` | ood | `split-exploration` |
 | vbt-* (8 clips, one session) | `private/vbt/manifest.json` | development | `split-exploration` |
 | self-back-squat-side-001 | `private/manifest.json` | validation | `split-reserved-57` |
 | self-clean-jerk-side-001 | `private/manifest.json` | validation | `split-reserved-57` |

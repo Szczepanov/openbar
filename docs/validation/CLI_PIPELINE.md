@@ -258,13 +258,15 @@ contract, not subject to the determinism rule, and must not be compared byte-for
 measurement output.
 
 There is deliberately **no default observation source or production filter**. The caller must
-choose either an internal tracker family with `--tracker` or a validated external prediction with
-`--observations`, and must also choose the filter. Filtering evidence from #10 explicitly deferred
-a production winner; the CLI therefore cannot silently promote a candidate. Filter-specific
-parameters are required where applicable and irrelevant parameters are rejected. Internal tracker
-family defaults may be used after the family itself is selected, and the complete effective
-tracker configuration is persisted in analysis provenance. Tracker-specific CLI options are
-rejected when `--observations` is selected because the imported stream already owns its tracker
+choose either an internal tracker family with `--tracker <template|contrast|csrt-gray>` or a
+validated external prediction with `--observations`, and must also choose the filter. Filtering
+evidence from #10 explicitly deferred a production winner; the CLI therefore cannot silently
+promote a candidate. Filter-specific parameters are required where applicable and irrelevant
+parameters are rejected. Internal tracker family defaults may be used after the family itself is
+selected (`csrt-gray` derives its fixed spatial support window from the seed radius and rejects
+`--tracker-search-radius-px`, template-specific and contrast-specific flags), and the complete
+effective tracker configuration is persisted in analysis provenance. Tracker-specific CLI options
+are rejected when `--observations` is selected because the imported stream already owns its tracker
 configuration.
 
 The kinematics continuity threshold and minimum-confidence threshold are also required explicitly.

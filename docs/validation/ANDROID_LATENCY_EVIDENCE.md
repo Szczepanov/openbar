@@ -1,13 +1,12 @@
 # Android import-to-results latency evidence
 
-Issue: #179 (child of #80). **Status: Proposed contract; no numeric target is approved and no
-qualifying measurement exists.**
+Issue: #179 (child of #80). **Status: Accepted target parameters (owner decision 2026-10-18); no
+qualifying measurement exists yet.**
 
 This document defines what "results within seconds" has to mean before anyone measures it: which
 phone, which clips, which clock start and stop, which statistics, and which evidence is allowed to
 produce a pass or fail. It does not choose the numbers. Every value that needs a product decision is
-listed in [Owner decisions](#owner-decisions-required) and stays **PENDING** until the owner records
-it here.
+listed in [Owner decisions](#owner-decisions-required) and recorded by the owner here.
 
 It extends, and does not replace, the [phone runtime benchmark](PHONE_RUNTIME_BENCHMARK.md)
 and [ADR-0009](../adr/0009-m0-phone-runtime-benchmark-boundary.md).
@@ -19,8 +18,8 @@ Two questions are measured from the same runs and reported separately:
 | | M0 gate (ADR-0009, unchanged) | Product latency target (this document) |
 | --- | --- | --- |
 | Question | Is offline analysis faster than the video is long? | Does the user see results within the approved seconds budget? |
-| Quantity | `median(analyze wall / selected media span) < 1.0` | Time-to-first-results and time-to-complete in seconds (thresholds PENDING) |
-| Status today | NOT MEASURABLE YET | Not defined numerically; not measurable |
+| Quantity | `median(analyze wall / selected media span) < 1.0` | Time-to-first-results and time-to-complete in seconds (median < 5.0 s, max < 8.0 s) |
+| Status today | NOT MEASURABLE YET | Target declared (2026-10-18); NOT MEASURABLE YET |
 | Owner | ADR-0008 / ADR-0009 | Owner decision recorded below |
 
 Passing one says nothing about the other. A 40 s clip analysed in 30 s passes the M0 ratio and may
@@ -31,19 +30,20 @@ meet one. The harness never derives one status from the other and never revises 
 
 These values are product decisions, not engineering defaults. Nothing below may be filled in from
 desktop timings, from the synthetic benchmark, or from "what the harness happens to achieve".
+Recorded by the owner on 2026-10-18:
 
-| Parameter | Value | What the decision must settle |
+| Parameter | Value | What the decision settles |
 | --- | --- | --- |
-| Target phone(s) | Reference: Xiaomi 14T Pro (decided, ADR-0009 Amendment 1). Product reference and any lower-tier phone: PENDING | Whether the 14T Pro is also the product reference, and whether a lower-tier phone is added. It is a high-end phone, so a pass on it supports no minimum-spec claim. |
-| Clip duration(s) | PENDING | The selected lift duration the budget applies to (for example a single set versus a trimmed rep window). |
-| Resolution / frame rate / codec | PENDING | Per-case values (for example 1080p 30 fps H.264 and HEVC; 4K only if supported). Variable-frame-rate sources are in scope per ADR-0006. |
-| Display rotation | PENDING | Which rotation metadata values are in the workload; rotated phone footage is the common case. |
-| Cold / warm definition | PENDING | See [Cold and warm](#cold-and-warm). The app-level definition needs a product decision. |
-| Repeat count | PENDING | Number of repeats per case per condition. The statistic that can be reported depends on it (see [Statistics](#statistics)). |
-| Time-to-first-results threshold | PENDING | Numeric seconds, and whether it applies to the median, the p95, or both. |
-| Time-to-complete threshold | PENDING | Numeric seconds, same question. |
-| Sustained-use condition | PENDING | Whether back-to-back runs (thermal soak) are part of the target and how many. |
-| Memory limit | PENDING | A peak process-tree RSS ceiling, or "record only". |
+| Target phone(s) | Xiaomi 14T Pro (`rothko`, model `2407FPN8EG`, Android 16 arm64-v8a) for both M0 reference and initial product reference (decided 2026-10-18). Lower-tier phone: deferred | The 14T Pro is a high-end phone, so a pass on it supports a reference-phone claim only and no minimum-spec claim. |
+| Clip duration(s) | 5–20 s single-set clips (decided 2026-10-18) | The selected lift duration the budget applies to. |
+| Resolution / frame rate / codec | 1080p, 30 fps and 60 fps, H.264 and HEVC, CFR and VFR per ADR-0006 (decided 2026-10-18) | Per-case workload values; 4K is outside the initial latency budget. |
+| Display rotation | 0°, 90°, 180°, 270° display-matrix rotation (decided 2026-10-18) | Rotated portrait and landscape phone footage are both in the workload. |
+| Cold / warm definition | Termux harness: first `analyze` repeat vs repeats 2..N (with cache limitation stated); app-level cold start deferred to M1 app path | See [Cold and warm](#cold-and-warm). |
+| Repeat count | 5 repeats per case (decided 2026-10-18) | With `n = 5`, `small_n` is flagged (`n < 20`) and the tail threshold is expressed on the maximum rather than p95. |
+| Time-to-first-results threshold | Median < 5.0 s and maximum < 8.0 s across 5 repeats (decided 2026-10-18) | Applies to both median and maximum over the 5 repeats. |
+| Time-to-complete threshold | Median < 5.0 s and maximum < 8.0 s across 5 repeats (decided 2026-10-18) | Identical to time-to-first-results while whole-clip analysis is used. |
+| Sustained-use condition | Record `warm_slowdown_ratio` across the 5 repeats; separate thermal-soak gate deferred (decided 2026-10-18) | Reported for review without an automatic thermal-soak pass/fail threshold. |
+| Memory limit | Record peak process-tree RSS (must be enumerable); no fixed MiB ceiling yet (decided 2026-10-18) | Any incomplete RSS enumeration keeps the run NOT MEASURABLE YET. |
 
 A threshold must be declared **before** the measurement it judges, together with the clip set and the
 frozen candidate. A threshold chosen after seeing results is a revision, not a target, and is
