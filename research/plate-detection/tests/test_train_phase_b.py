@@ -207,6 +207,22 @@ class TrainPhaseBTests(unittest.TestCase):
         self.assertAlmostEqual(fitted.center_y_px, 40.0, delta=0.5)
         self.assertAlmostEqual(fitted.radius_px, 12.0, delta=1.0)
 
+    def test_linear_sum_assignment_solves_rectangular_and_square_matrices(self) -> None:
+        # 4 queries x 1 target (typical single-plate DETR matching)
+        r, c = train_phase_b._linear_sum_assignment([[5.0], [1.2], [0.3], [4.0]])
+        self.assertEqual(r.tolist(), [2])
+        self.assertEqual(c.tolist(), [0])
+
+        # 3 x 3 assignment where greedy row-by-row would be suboptimal
+        cost = [
+            [4.0, 1.0, 3.0],
+            [2.0, 0.0, 5.0],
+            [3.0, 2.0, 2.0],
+        ]
+        r3, c3 = train_phase_b._linear_sum_assignment(cost)
+        self.assertEqual(r3.tolist(), [0, 1, 2])
+        self.assertEqual(c3.tolist(), [1, 0, 2])
+
 
 if __name__ == "__main__":
     unittest.main()

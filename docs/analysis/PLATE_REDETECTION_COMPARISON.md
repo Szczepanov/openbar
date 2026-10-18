@@ -191,7 +191,40 @@ restarted session's output separately in `post_restart_tracker_candidates` with
 `test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes` in
 `research/plate-detection/tests/test_phase_a2.py`). Then define how identity ambiguity and
 insufficient coverage cause refusal, with owner acceptance limits, before an independent-session
-freeze. The existing next-round plan still needs blind pilot labels, owner-confirmed refusal
+freeze.
+
+### Post-track and post-redetect refusal diagnostics (`post-track-diagnostics-v1`, #250)
+
+`research/plate-detection/post_track_refusal.py` (`post-track-diagnostics-v1`, unit-tested in
+`research/plate-detection/tests/test_post_track_refusal.py`) partitions a completed track at
+`redetected` boundaries into disjoint identity epochs so motion (`motion_observation.observe`) and
+supported time coverage are computed strictly within each epoch without bridging across a restart.
+Without reading human truth labels, it evaluates four descriptive flags:
+
+1. `seed_refused` — frame-0 seed was refused (`sam3-margin-v2`) or untracked;
+2. `insufficient_coverage` — sum of within-epoch supported time intervals divided by clip duration
+   is `< 0.50`;
+3. `ambiguous_restart` — any restart epoch exceeds the physical jump-speed bound (`jump_radii / gap_s > 18.0 radii/s`)
+   or has `observation != "motion_present"` after an uncontested (`margin = null`) or large (`> 1.5 radii`)
+   spatial jump;
+4. `no_motion_evidence` — no epoch in the clip reaches `motion_present` (`>= 1.5 radii` p02–p98 travel).
+
+Descriptive results across the 27-clip development runs:
+
+| Run / method | `seed_refused` | `insufficient_coverage` (`< 0.50`) | `ambiguous_restart` | `no_motion_evidence` | Total flagged clips | Unflagged clips on target |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| `run-2-guard-v2` (`track_sam2_sam3seed_guard`) | `001`, `0219-28`, `vbt-45854c` (3) | `0215-27` (0.268), `0206-19` (0.475) | none (0) | `0215-27` (1) | 5 / 27 | 22 / 22 (20 / 20 labelled) |
+| `run-edgetam-1-guard-v2` (`track_edgetam_sam3seed_guard`) | `001`, `0219-28`, `vbt-45854c` (3) | `0203-17` (0.211), `1015-04` (0.139) | none (0) | `0203-17`, `0215-27`, `1015-04` (3) | 6 / 27 | 21 / 21 (19 / 19 labelled) |
+| `run-edgetam-redetect-1` (`track_edgetam_sam3seed_redetect`) | `001`, `0219-28`, `vbt-45854c` (3) | none (0) | `0215-27` epoch 1 (`margin=null`, travel `0.030 radii`) | `0215-27` (1) | 4 / 27 | 23 / 23 (21 / 21 labelled) |
+
+On `run-edgetam-redetect-1`, the two true-recovery clips (`0203-17`: `coverage = 0.9751`, epoch-1 travel
+`4.67 radii`; `1015-04`: `coverage = 0.8848`, epoch-1/2 jump speeds `8.36` and `1.48 radii/s`, travel
+`7.06` and `6.29 radii`) pass without flags, while the wrong-plate clip (`0215-27`) is flagged by both
+`ambiguous_restart` and `no_motion_evidence`. Because these thresholds were evaluated on the same
+27-clip development pool, they remain descriptive diagnostics until the owner sets acceptance limits
+for the next independent-session freeze.
+
+The existing next-round plan still needs blind pilot labels, owner-confirmed refusal
 policies and selectable side-view recordings from at least two new sessions. Existing exposed clips
 cannot fill that gap; reserved clips remain untouched.
 

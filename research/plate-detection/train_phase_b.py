@@ -245,6 +245,81 @@ def evaluate_box_predictions(
     }
 
 
+def _linear_sum_assignment(cost_matrix: Any) -> tuple[Any, Any]:
+    """Exact minimum-weight bipartite assignment (Hungarian algorithm) for m x n cost matrices.
+
+    Used when ``scipy.optimize.linear_sum_assignment`` is not installed in the environment.
+    """
+    import numpy as np
+
+    cost = np.asarray(cost_matrix, dtype=np.float64)
+    if cost.ndim != 2:
+        raise ValueError(f"expected 2D cost matrix, got shape {cost.shape}")
+    nrows, ncols = cost.shape
+    if nrows == 0 or ncols == 0:
+        empty = np.empty(0, dtype=np.int64)
+        return empty, empty
+
+    transposed = False
+    if nrows > ncols:
+        cost = cost.T
+        nrows, ncols = ncols, nrows
+        transposed = True
+
+    # Classic O(nrows^2 * ncols) Dijkstra/Hungarian shortest augmenting path (1-indexed).
+    u = np.zeros(nrows + 1, dtype=np.float64)
+    v = np.zeros(ncols + 1, dtype=np.float64)
+    p = np.zeros(ncols + 1, dtype=np.int64)
+    way = np.zeros(ncols + 1, dtype=np.int64)
+
+    for i in range(1, nrows + 1):
+        p[0] = i
+        j0 = 0
+        minv = np.full(ncols + 1, np.inf, dtype=np.float64)
+        used = np.zeros(ncols + 1, dtype=bool)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            row = cost[i0 - 1]
+            delta = np.inf
+            j1 = 0
+            for j in range(1, ncols + 1):
+                if not used[j]:
+                    cur = float(row[j - 1]) - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j] = cur
+                        way[j] = j0
+                    if minv[j] < delta:
+                        delta = minv[j]
+                        j1 = j
+            for j in range(ncols + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while True:
+            j1 = int(way[j0])
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+
+    row_ind = np.arange(nrows, dtype=np.int64)
+    col_ind = np.zeros(nrows, dtype=np.int64)
+    for j in range(1, ncols + 1):
+        if p[j] > 0:
+            col_ind[p[j] - 1] = j - 1
+
+    if transposed:
+        order = np.argsort(col_ind)
+        return col_ind[order], row_ind[order]
+    return row_ind, col_ind
+
+
 def train_dfine_student(
     *,
     dataset_dir: Path,
@@ -273,6 +348,11 @@ def train_dfine_student(
     from PIL import Image
     from torch.utils.data import DataLoader, Dataset
     from transformers import AutoImageProcessor, DFineForObjectDetection
+    from transformers.loss import loss_rt_detr
+
+    if not hasattr(loss_rt_detr, "linear_sum_assignment"):
+        loss_rt_detr.linear_sum_assignment = _linear_sum_assignment
+        loss_rt_detr.requires_backends = lambda *args, **kwargs: None
 
     torch.manual_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -345,8 +425,11 @@ def train_dfine_student(
             total_loss += float(loss.detach().cpu().item())
             steps += 1
 
+        import rim_refine
+
         model.eval()
         preds_by_id: dict[int, list[dict[str, Any]]] = {}
+        refined_preds_by_id: dict[int, list[dict[str, Any]]] = {}
         for img_entry in val_coco.get("images") or []:
             img_path = dataset_dir.resolve() / img_entry["file_name"]
             bgr = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
@@ -362,19 +445,27 @@ def train_dfine_student(
             boxes = res["boxes"].float().tolist()
             scores = res["scores"].float().tolist()
             rows = []
+            refined_rows = []
             for i in detectors.dedupe(boxes, scores):
                 circle = geometry.circle_from_box(*boxes[i])
                 rows.append(
                     detectors._row(circle, scores[i], box_xyxy=[round(v, 2) for v in boxes[i]])
                 )
+                ref = rim_refine.refine_circle(bgr, circle)
+                refined_rows.append(
+                    detectors._row(ref.refined, scores[i], box_xyxy=[round(v, 2) for v in boxes[i]])
+                )
             preds_by_id[int(img_entry["id"])] = rows
+            refined_preds_by_id[int(img_entry["id"])] = refined_rows
 
         val_metrics = evaluate_box_predictions(preds_by_id, val_coco)
+        val_refined_metrics = evaluate_box_predictions(refined_preds_by_id, val_coco)
         epoch_record = {
             "epoch": epoch,
             "train_loss_mean": round(total_loss / max(1, steps), 5),
             "elapsed_s": round(time.perf_counter() - started, 2),
             "val": val_metrics,
+            "val_rim_refined": val_refined_metrics,
         }
         history.append(epoch_record)
         cur_score = float(val_metrics.get("frame_plausible_top1_rate") or 0.0)

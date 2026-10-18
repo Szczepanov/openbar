@@ -19,8 +19,8 @@ import run_phase_a2  # noqa: E402
 from selection import Candidate  # noqa: E402
 
 
-def row(x: float, y: float, r: float, s: float) -> dict:
-    return {"center_x_px": x, "center_y_px": y, "radius_px": r, "score": s}
+def row(x: float, y: float, r: float, s: float, **extra) -> dict:
+    return {"center_x_px": x, "center_y_px": y, "radius_px": r, "score": s, **extra}
 
 
 class TrackPlanTests(unittest.TestCase):

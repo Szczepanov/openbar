@@ -102,28 +102,51 @@ However:
   refusal, mid-clip truth drift (`track_off_target_vs_truth`), unaligned truth refusal (`no_aligned_truth_frame`),
   post-redetection session exclusion (`session_index == 0`), `frame_stride`, and ADR-0007 COCO box round-trip.
 
-### WP2 — Student training & validation harness (`D-FINE-S`, implemented)
+### WP2 — Student training & validation results (`D-FINE-S`, completed on `dataset-stride15-v1`)
 
 - **Modules:** `research/plate-detection/train_phase_b.py` and `DFineStudentProposer` (`dfine_s_student`) in
   `research/plate-detection/detectors.py`.
 - Validates the curated dataset directory (`validate_dataset_dir`) against current manifests and session-fold
   isolation before opening any images or annotations.
-- Fine-tunes `D-FINE-S` (`ustc-community/dfine-small-coco`, Apache-2.0, `DFineForObjectDetection`) on the `train`
-  fold with fixed seed `0` (including a seeded `DataLoader` generator), evaluating box IoU, `identity-loose-v1`
-  recall/top-1, `sam3-margin-v2` refusal, and relative centre/radius errors (`evaluate_box_predictions`) on the
-  session-disjoint `val` fold after each epoch.
-- Writes `<output_dir>/best_checkpoint/` and `<output_dir>/student_run.json` with dataset, source, and checkpoint
-  SHA-256 provenance.
+- Fine-tunes `D-FINE-S` (`ustc-community/dfine-small-coco`, Apache-2.0, `DFineForObjectDetection`, 10.2M parameters,
+  zero SAM 3 weights) on the `train` fold with fixed seed `0` (including a seeded `DataLoader` generator), evaluating
+  both raw box circles (`val`) and `rim-subpixel-v1` refined circles (`val_rim_refined`) on the session-disjoint
+  `val` fold after each epoch.
+- **Extracted stride-15 dataset (`validation/private/plate-detection-phase-b/dataset-stride15-v1/`):**
+  - `dataset_manifest.json` SHA-256: `6ea0fbcefc9dacf01353b1a65e2e1fe728eaefb54bbff3515c2a16f48154f9ca`
+  - `annotations/train.coco.json` SHA-256: `92d04e4c9f4b02488af5f65848779f06ec503325ea7d55ea1bc8ee9a31d7f2b8` (**479** extracted PNG frames across **17** clips)
+  - `annotations/val.coco.json` SHA-256: `54a79553cc29aa03632bbbfeb48d4b9c0947ed8aefcbe91be65088a518a5229a` (**160** extracted PNG frames across **6** session-disjoint clips)
+- **Measured training run (`validation/private/plate-detection-phase-b/student-dfine-s-v1/student_run.json`, 5 epochs, batch size 4, lr `1e-4`):**
+  - Best checkpoint (`best_checkpoint/`, Epoch 4):
+    - `model.safetensors` SHA-256: `44c357b29da41af8fdeb0fc7f6a2f974b981aecc29c6ee21033d3527087dd7a7`
+    - `config.json` SHA-256: `de4079b8459c0d33198c13a489d6923d2a0c1bd5570798ba48696f2eeb8e8f26`
+    - `preprocessor_config.json` SHA-256: `621a5f398d1f19e1d2df0df41c300d0af273fc479fc468fe3c064b467ed1219a`
+
+| Epoch | Train loss | Val recall (`160` frames) | Val plausible top-1 | `sam3-margin-v2` accepted correct / accepted | Box IoU (median / p90) | Raw centre / radius error median | `rim-subpixel-v1` centre / radius error median (p90 radius) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 84.63 | 125 / 160 (`78.12%`) | 108 / 160 (`67.50%`) | 101 / 139 (`72.66%`, 21 refused) | 0.9482 / 0.9842 | `3.46%` / `1.63%` | `1.30%` / `0.95%` (`5.59%`) |
+| 2 | 19.26 | 151 / 160 (`94.37%`) | 139 / 160 (`86.88%`) | 132 / 149 (`88.59%`, 11 refused) | 0.9577 / 0.9802 | `2.41%` / `0.95%` | `1.38%` / `0.93%` (`2.83%`) |
+| 3 | 12.13 | 135 / 160 (`84.38%`) | 132 / 160 (`82.50%`) | 131 / 157 (`83.44%`, 3 refused) | 0.9630 / 0.9827 | `2.11%` / `1.25%` | `1.20%` / `0.89%` (`3.68%`) |
+| **4 (best)** | **10.56** | **156 / 160 (`97.50%`)** | **155 / 160 (`96.88%`)** | **154 / 159 (`96.86%`, 1 refused)** | **0.9592 / 0.9847** | **`2.40%` / `1.09%`** | **`1.18%` / `0.80%` (`3.62%`)** |
+| 5 | 10.09 | 154 / 160 (`96.25%`) | 150 / 160 (`93.75%`) | 148 / 153 (`96.73%`, 7 refused) | 0.9681 / 0.9866 | `1.96%` / `0.95%` | `1.17%` / `0.83%` (`3.27%`) |
+
 - **Tests:** `research/plate-detection/tests/test_train_phase_b.py`.
 
-### WP3 — Development evaluation & `track-guard-v2` re-acquisition (`dfine-student-seed-v1` & `redetect-v1`, implemented)
+### WP3 — Development evaluation & `track-guard-v2` re-acquisition (`dfine-student-seed-v1` & `redetect-v1`, completed)
 
 - **Modules:** `GuardState` and `guard_track` in `research/plate-detection/guard.py`, `choose_seed_student`
   (`dfine-student-seed-v1`) and `choose_redetect` (`redetect-v1`) in `research/plate-detection/track.py`, and
   `run_phase_a2.py --seed dfine_s_student [--student-checkpoint <dir>] [--redetect]`.
-- When `track-guard-v2` stops a track after `0.5 s` of rejected/lost frames, `run_phase_a2.py --redetect`
-  re-queries the detector at most every `0.5 s` and resumes tracking only if a candidate passes `in-frame-v1`,
-  the seed radius consistency check (`|r - r_seed| / r_seed <= 0.15`), and `sam3-margin-v2`.
+- **First-labelled-frame seed evaluation across all 27 development clips (`student-dfine-s-v1/frame0_seed_eval.json`):**
+  - **Session-disjoint `val` fold (6 unseen clips, 6 scored):** **6 / 6 (`100.0%`)** plausible top-1 hits on both
+    frame 0 (`val_frame0`, box IoU median `0.9693`, raw radius error median `0.68%`) and the first human-labelled
+    truth frame (`raw_radius_err_median = 0.94%`, `refined_radius_err_median = 1.07%`).
+  - **All 25 scored development clips:** **24 / 25 (`96.0%`)** plausible top-1 hits at the first human-labelled truth
+    frame — matching the 850M-parameter SAM 3 teacher's `24 / 25` (`sam3-seed-v2`) at ~82x fewer parameters
+    (10.2M vs 850M). On `vbt-45854c8cdf352a6f` (which was excluded from teacher training because SAM 3 refused it on
+    frame 0), the distilled student hits the foreground plate with `0.69%` refined radius error (`2.12%` raw box
+    radius error). Only `self-other-side-0215-27` misses (`1 / 25`), for the same stationary rack-plate ambiguity
+    diagnosed by `post-track-diagnostics-v1` (#250).
 - **Raw-observation preservation:** both offline `guard.guard_track` (`apply_guard.py`) and online
   `run_phase_a2.py --redetect` preserve raw `tracker_candidates` on every frame where `candidates` is blanked;
   on restart frames, `tracker_candidates` (and `tracker_session_index`) preserves the pre-restart tracker
@@ -135,10 +158,11 @@ However:
   plus `test_long_loss_stops_the_track` and `test_resume_restarts_a_stopped_state_and_increments_session_index`
   in `research/plate-detection/tests/test_guard.py`.
 
-### WP4 — ONNX / LiteRT export & Xiaomi 14T Pro latency benchmark (#179)
+### WP4 — ONNX / LiteRT export & Xiaomi 14T Pro latency benchmark (#179, #251)
 
-- Export the trained student detector to static-shape ONNX / LiteRT (`fp16` and `int8` calibrated on the `train` fold).
-- Benchmark frame-0 seed detection latency on the **Xiaomi 14T Pro** (`2407FPN8EG`, Dimensity 9300+) via
+- Export the trained student detector (`student-dfine-s-v1/best_checkpoint`) and `EdgeTAM` to static-shape ONNX /
+  LiteRT (`fp16` and `int8` calibrated on the `train` fold).
+- Benchmark frame-0 seed detection and tracking latency on the **Xiaomi 14T Pro** (`2407FPN8EG`, Dimensity 9300+) via
   LiteRT `benchmark_model` or ONNX Runtime Mobile, recording results in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
 
 ### WP5 — Frozen evaluation on new independent sessions
@@ -151,6 +175,8 @@ However:
 
 ```bash
 python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --output-dir validation/private/plate-detection-phase-b/dataset-v1
+python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --frame-stride 15 --extract-frames --output-dir validation/private/plate-detection-phase-b/dataset-stride15-v1
+research/plate-detection/.venv/Scripts/python.exe research/plate-detection/train_phase_b.py --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --repo-root . --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v1 --epochs 5 --batch-size 4 --learning-rate 1e-4
 python -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py
@@ -159,7 +185,8 @@ python validation/tools/schema_check.py
 ## 6. Stop conditions
 
 - Stop if every Apache-2.0 student candidate falls below 85% top-1 recall on the session-disjoint development
-  validation fold or exceeds `250 ms` per-frame latency on the Xiaomi 14T Pro (leaving manual tap seeding in
-  `research/phone-ui/` as the primary phone seed path).
+  validation fold (`student-dfine-s-v1` achieved **96.88% plausible top-1** and **97.50% recall** on the 160-frame
+  session-disjoint `val` fold, clearing the 85% development gate) or exceeds `250 ms` per-frame latency on the
+  Xiaomi 14T Pro (leaving manual tap seeding in `research/phone-ui/` as the primary phone seed path).
 - Never promote a student model into canonical `Analysis` or production `vbt_suggest.py` without a frozen
   evaluation on new `split-frozen-eval` sessions and an explicit owner decision.

@@ -38,7 +38,7 @@ TRACKERS = {
                 "revision": "c266ce53b3fc00f0f495b583f6a116c4e57f53bb"},
 }
 OBJECT_ID = 1
-SEED_NAMES = ("gdino_sam2", "sam3", "dfine_s_student")
+SEED_NAMES = ("dfine_s_student", "gdino_sam2", "sam3")
 SEED_SUFFIXES = {
     "gdino_sam2": "",
     "sam3": "_sam3seed",
@@ -68,7 +68,10 @@ def method_name(tracker: str, seed: str, redetect: bool = False) -> str:
 
 
 def _has_trackable_mask(row: dict[str, Any]) -> bool:
-    return row.get("fit") != "box" or row.get("mask_source") == "synthetic_disc_from_box"
+    return (
+        row.get("fit") not in ("box", "rim_subpixel")
+        or row.get("mask_source") == "synthetic_disc_from_box"
+    )
 
 
 def choose_redetect(rows: Sequence[dict[str, Any]], width_px: int, height_px: int,

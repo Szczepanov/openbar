@@ -220,15 +220,22 @@ class DFineStudentProposer(_Torch):
     """Phase B distilled single-class plate detector (D-FINE-S, Apache-2.0, zero SAM 3 weights)."""
     name = "dfine_s_student"
 
-    def __init__(self, checkpoint: str | Path = DFINE_CHECKPOINT, score_threshold: float = DFINE_SCORE_THRESHOLD) -> None:
+    def __init__(
+        self,
+        checkpoint: str | Path = DFINE_CHECKPOINT,
+        score_threshold: float = DFINE_SCORE_THRESHOLD,
+        refine_rim: bool = True,
+    ) -> None:
         super().__init__()
         from transformers import AutoImageProcessor, DFineForObjectDetection
         self.checkpoint = str(checkpoint)
         self.score_threshold = float(score_threshold)
+        self.refine_rim = bool(refine_rim)
         self.processor = AutoImageProcessor.from_pretrained(self.checkpoint)
         self.model = DFineForObjectDetection.from_pretrained(self.checkpoint).to(self.device).eval()
 
     def config(self) -> dict[str, Any]:
+        import rim_refine
         return {
             "checkpoint": self.checkpoint,
             "architecture": "DFineForObjectDetection",
@@ -236,12 +243,14 @@ class DFineStudentProposer(_Torch):
             "score_threshold": self.score_threshold,
             "duplicate_iou": DUPLICATE_IOU,
             "max_candidates": MAX_CANDIDATES,
+            "rim_refinement_rule": rim_refine.RULE if self.refine_rim else None,
         }
 
     def propose(self, image: np.ndarray) -> list[dict[str, Any]]:
         return self.propose_with_masks(image)[0]
 
     def propose_with_masks(self, image: np.ndarray) -> tuple[list[dict[str, Any]], list[np.ndarray | None]]:
+        import rim_refine
         from PIL import Image
         pil = Image.fromarray(image[:, :, ::-1].copy())
         inputs = self.processor(images=pil, return_tensors="pt").to(self.device)
@@ -256,13 +265,33 @@ class DFineStudentProposer(_Torch):
         masks: list[np.ndarray | None] = []
         height_px, width_px = image.shape[:2]
         for i in dedupe(boxes, scores):
-            circle = geometry.circle_from_box(*boxes[i])
+            raw_circle = geometry.circle_from_box(*boxes[i])
+            raw_box_meta = {
+                "center_x_px": round(raw_circle.center_x_px, 3),
+                "center_y_px": round(raw_circle.center_y_px, 3),
+                "radius_px": round(raw_circle.radius_px, 3),
+                "fit": raw_circle.fit,
+            }
+            if self.refine_rim:
+                ref = rim_refine.refine_circle(image, raw_circle)
+                circle = ref.refined
+                ref_meta: dict[str, Any] | None = {
+                    "rule": rim_refine.RULE,
+                    "used_refined": ref.used_refined,
+                    "reason": ref.reason,
+                    "inlier_count": ref.inlier_count,
+                }
+            else:
+                circle = raw_circle
+                ref_meta = None
             rows.append(
                 _row(
                     circle,
                     scores[i],
                     box_xyxy=[round(v, 2) for v in boxes[i]],
                     mask_source="synthetic_disc_from_box",
+                    raw_box_circle=raw_box_meta,
+                    rim_refinement=ref_meta,
                 )
             )
             masks.append(synthetic_disc_mask(width_px, height_px, circle))
