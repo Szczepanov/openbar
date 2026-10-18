@@ -158,12 +158,25 @@ However:
   plus `test_long_loss_stops_the_track` and `test_resume_restarts_a_stopped_state_and_increments_session_index`
   in `research/plate-detection/tests/test_guard.py`.
 
-### WP4 — ONNX / LiteRT export & Xiaomi 14T Pro latency benchmark (#179, #251)
+### WP4 — Static-shape mobile graph export, parity verification & Xiaomi 14T Pro latency benchmark (#179, #251)
 
-- Export the trained student detector (`student-dfine-s-v1/best_checkpoint`) and `EdgeTAM` to static-shape ONNX /
-  LiteRT (`fp16` and `int8` calibrated on the `train` fold).
-- Benchmark frame-0 seed detection and tracking latency on the **Xiaomi 14T Pro** (`2407FPN8EG`, Dimensity 9300+) via
-  LiteRT `benchmark_model` or ONNX Runtime Mobile, recording results in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
+- **Desktop static-shape export & numerical parity (`research/plate-detection/export_student.py`, completed):**
+  - Exports `student-dfine-s-v1/best_checkpoint` to a static-shape (`[1, 3, 640, 640]`) PyTorch 2 `ExportedProgram`
+    archive (`dfine_s_student_fp32.pt2`, `52,084,634` bytes, SHA-256
+    `6920f6e4f3cd5606e7c011041cef21c8fdbeff4f969d6a9e0f58b2f43b2a8db9`, for ExecuTorch / LiteRT-Torch / AOTInductor
+    mobile compilation; optional `.onnx` opset 18 via `--onnx`).
+  - **Numerical parity (`validation/private/plate-detection-phase-b/student-dfine-s-v1-export/export_manifest.json`):**
+    - On 4 seeded synthetic tensors and 16 session-disjoint `val` frames: `logit_max_abs_diff = 0.0`,
+      `box_max_abs_diff = 0.0`, `top1_query_match_rate = 1.0`, `top1_box_iou_min = 1.0` (`passed: true`).
+  - **Desktop diagnostic timings (`NON-QUALIFYING DIAGNOSTIC`, never substituted for phone evidence):**
+    - Exported `.pt2` graph on desktop CPU: `139.79 ms` median (`158.48 ms` max) across 16 validation frames.
+    - Desktop GPU (`RTX 3060 Ti`) forward pass: `27.94 ms` median (`43.15 ms` max) — **25.8x faster** than SAM 3
+      (`~720 ms/frame`).
+  - **Tests:** `research/plate-detection/tests/test_export_student.py`.
+- **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, blocked on device connection):**
+  - Benchmark frame-0 seed detection and tracking latency on the **Xiaomi 14T Pro** via LiteRT / ExecuTorch / ONNX
+    Runtime Mobile and `validation/tools/phone_runtime_benchmark.py`, recording results in
+    `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
 
 ### WP5 — Frozen evaluation on new independent sessions
 
@@ -177,6 +190,7 @@ However:
 python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --output-dir validation/private/plate-detection-phase-b/dataset-v1
 python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --frame-stride 15 --extract-frames --output-dir validation/private/plate-detection-phase-b/dataset-stride15-v1
 research/plate-detection/.venv/Scripts/python.exe research/plate-detection/train_phase_b.py --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --repo-root . --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v1 --epochs 5 --batch-size 4 --learning-rate 1e-4
+research/plate-detection/.venv/Scripts/python.exe research/plate-detection/export_student.py --checkpoint-dir validation/private/plate-detection-phase-b/student-dfine-s-v1/best_checkpoint --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v1-export
 python -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py
