@@ -33,6 +33,9 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   [Phase A.2](../analysis/PLATE_DETECTION_PHASE_A2_RESULTS.md), which detects once on frame 0 and then tracks with
   SAM 2.1 video, holds the plate on every labelled frame when the seed is right, but scores 276/388 frames overall
   (per-frame 320/388) because a wrong seed stays wrong.
+  A [SAM 3 seed](../analysis/PLATE_DETECTION_SAM3_SEED_RESULTS.md) raises that to 24/25 clips on target on every
+  labelled frame with SAM 2.1; EdgeTAM (phone-capable) matches it on 23/25 but re-locked onto a wrong object after a
+  loss on one clip.
 
 ## Recommended plan structure
 

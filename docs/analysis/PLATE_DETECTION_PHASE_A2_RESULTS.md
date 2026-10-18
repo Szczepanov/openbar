@@ -127,7 +127,9 @@ Per clip (labelled frames on target; frame-0 outcome `ok` / `miss`, or `-` with 
    periodic re-detection that flags a disagreement between the tracked plate and a fresh detection.
 2. A cheap seed-side check this run points at, still untested: reject plausible candidates whose centre lies
    outside the frame (`self-other-side-0215-27`).
-3. Any rule taken forward is frozen first and scored once on new sessions
+3. Follow-up: a SAM 3 seed and an EdgeTAM tracker on the same clips, in
+   [SAM 3 seed results](PLATE_DETECTION_SAM3_SEED_RESULTS.md).
+4. Any rule taken forward is frozen first and scored once on new sessions
    ([next-round plan](../plans/PLATE_SELECTION_NEXT_ROUND_PLAN.md)); these development numbers do not count.
 
 ## Reproduce
