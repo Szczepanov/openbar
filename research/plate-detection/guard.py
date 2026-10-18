@@ -42,32 +42,56 @@ def step_ok(previous: dict[str, Any], current: dict[str, Any], dt_s: float) -> b
             and abs(current["radius_px"] - r) <= MAX_RADIUS_CHANGE * r)
 
 
+class GuardState:
+    """The guard applied one frame at a time, in time order (also used online by the runner)."""
+
+    def __init__(self) -> None:
+        self.last: dict[str, Any] | None = None
+        self.last_time: float | None = None
+        self.stopped = False
+        self.session_index = 0
+
+    def observe(self, time_s: float, candidate: dict[str, Any] | None) -> str:
+        """Status of this frame; only ``tracked`` frames may carry the candidate."""
+        if self.stopped:
+            return "after_stop"
+        if self.last_time is not None and time_s - self.last_time > MAX_GAP_S:
+            self.stopped = True
+            return "stopped_gap"
+        if candidate is None:
+            return "lost"
+        if self.last is not None and not step_ok(self.last, candidate, time_s - self.last_time):
+            return "rejected_step"
+        self.last, self.last_time = candidate, time_s
+        return "tracked"
+
+    def resume(self, time_s: float, candidate: dict[str, Any]) -> int:
+        """Restart after a re-detection: ``candidate`` becomes the last accepted frame in a new session."""
+        self.session_index += 1
+        self.last, self.last_time, self.stopped = candidate, time_s, False
+        return self.session_index
+
+
 def guard_track(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """Guarded copies of a clip's track records in time order. Each copy carries ``guard`` with the
     rule and a status: ``tracked``, ``lost`` (the tracker reported none), ``rejected_step`` (a single
     implausible frame), ``stopped_gap`` (the frame that ended the track) or ``after_stop``. Only
-    ``tracked`` frames carry a candidate."""
+    ``tracked`` frames carry a candidate in ``candidates``; the raw tracker observation is always
+    preserved in ``tracker_candidates``."""
     if any(len(r["candidates"]) > 1 for r in records):
         raise ValueError("the guard expects at most one tracked candidate per frame")
+    state = GuardState()
     out: list[dict[str, Any]] = []
-    last: dict[str, Any] | None = None
-    last_time: float | None = None
-    stopped = False
     for record in sorted(records, key=lambda r: r["time_s"]):
-        candidate = record["candidates"][0] if record["candidates"] else None
-        if stopped:
-            status = "after_stop"
-        elif last_time is not None and record["time_s"] - last_time > MAX_GAP_S:
-            status, stopped = "stopped_gap", True
-        elif candidate is None:
-            status = "lost"
-        elif last is not None and not step_ok(last, candidate, record["time_s"] - last_time):
-            status = "rejected_step"
-        else:
-            status = "tracked"
-            last, last_time = candidate, record["time_s"]
-        out.append({**record, "candidates": [candidate] if status == "tracked" else [],
-                    "guard": {"rule": RULE, "status": status}})
+        raw_candidates = list(record.get("tracker_candidates", record["candidates"]))
+        candidate = raw_candidates[0] if raw_candidates else None
+        status = state.observe(record["time_s"], candidate)
+        out.append({
+            **record,
+            "tracker_candidates": raw_candidates,
+            "candidates": [candidate] if status == "tracked" else [],
+            "guard": {"rule": RULE, "status": status, "session_index": state.session_index},
+        })
     return out
 
 

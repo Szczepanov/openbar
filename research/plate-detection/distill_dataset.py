@@ -93,15 +93,18 @@ def circle_to_coco_bbox(
     width_px: int,
     height_px: int,
 ) -> list[float] | None:
-    """Convert a circle (cx, cy, r) to a clamped COCO [x_min, y_min, width, height] box."""
+    """Convert an ADR-0007 pixel-centre circle (cx, cy, r) to a clamped pixel-edge COCO
+    [x_min, y_min, width, height] box (exact inverse of ``geometry.circle_from_box`` when unclipped)."""
     if not all(math.isfinite(v) for v in (center_x_px, center_y_px, radius_px)):
         return None
     if radius_px <= 0.0 or width_px <= 0 or height_px <= 0:
         return None
-    x0 = max(0.0, min(float(width_px), center_x_px - radius_px))
-    y0 = max(0.0, min(float(height_px), center_y_px - radius_px))
-    x1 = max(0.0, min(float(width_px), center_x_px + radius_px))
-    y1 = max(0.0, min(float(height_px), center_y_px + radius_px))
+    edge_cx = center_x_px + 0.5
+    edge_cy = center_y_px + 0.5
+    x0 = max(0.0, min(float(width_px), edge_cx - radius_px))
+    y0 = max(0.0, min(float(height_px), edge_cy - radius_px))
+    x1 = max(0.0, min(float(width_px), edge_cx + radius_px))
+    y1 = max(0.0, min(float(height_px), edge_cy + radius_px))
     box_w = round(x1 - x0, 4)
     box_h = round(y1 - y0, 4)
     if box_w <= 0.0 or box_h <= 0.0:
@@ -117,7 +120,10 @@ def seed_matches_truth(
     if not records:
         return False, "empty_records"
     first_seed = records[0].get("seed") or {}
-    if first_seed.get("refused") is True:
+    refusal = first_seed.get("refusal")
+    if first_seed.get("refused") is True or (
+        isinstance(refusal, dict) and refusal.get("refused") is True
+    ):
         return False, "seed_refused"
     if first_seed.get("tracked") is False or not records[0].get("candidates"):
         return False, "seed_untracked"
@@ -125,34 +131,46 @@ def seed_matches_truth(
     if not truth_points:
         return True, "accepted_unlabelled_exploration"
 
-    # Check the earliest record that aligns with a human truth label.
+    # Check the earliest aligned truth label for seed acquisition and every subsequent aligned truth
+    # label where the guarded track still reports a candidate so mid-clip drift is vetoed.
+    verified_first = False
     for point in sorted(truth_points, key=lambda p: p.timestamp_s):
         nearest = min(records, key=lambda r: abs(float(r["time_s"]) - point.timestamp_s))
         if abs(float(nearest["time_s"]) - point.timestamp_s) > TRUTH_MATCH_TOLERANCE_S:
             continue
         candidates = nearest.get("candidates") or []
-        if not candidates:
-            return False, "seed_lost_at_first_truth"
-        cand = selection.Candidate.from_dict(candidates[0])
-        if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
-            return False, "seed_off_target_vs_truth"
-        return True, "accepted_verified_vs_truth"
+        if not verified_first:
+            if not candidates:
+                return False, "seed_lost_at_first_truth"
+            cand = selection.Candidate.from_dict(candidates[0])
+            if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
+                return False, "seed_off_target_vs_truth"
+            verified_first = True
+        elif candidates:
+            cand = selection.Candidate.from_dict(candidates[0])
+            if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
+                return False, "track_off_target_vs_truth"
 
-    return True, "accepted_no_aligned_truth"
+    if not verified_first:
+        return False, "no_aligned_truth_frame"
+    return True, "accepted_verified_vs_truth"
 
 
 def curate_clip_records(
     fixture: dict[str, Any],
     records: list[dict[str, Any]],
     truth_points: list[truth.TruthPoint],
+    *,
+    frame_stride: int = 1,
 ) -> dict[str, Any]:
     """Validate clip split role, apply track-guard-v2 if needed, and extract positive boxes."""
-    if held_out_guard.is_held_out(fixture):
-        raise clips.ClipRefused(f"{fixture.get('id', '<no id>')} is held-out; refused for Phase B distillation")
+    if frame_stride < 1:
+        raise ValueError("frame_stride must be at least 1")
     role = clips.development_role(fixture)
     fixture_id = fixture["id"]
 
-    guarded = records if (records and "guard" in records[0]) else guard.guard_track(records)
+    ordered = sorted(records, key=lambda r: float(r["time_s"]))
+    guarded = ordered if (ordered and "guard" in ordered[0]) else guard.guard_track(ordered)
     accepted_seed, reason = seed_matches_truth(guarded, truth_points)
     if not accepted_seed:
         return {
@@ -168,8 +186,8 @@ def curate_clip_records(
 
     frames: list[dict[str, Any]] = []
     for rec in guarded:
-        guard_info = rec.get("guard") or {"status": "tracked"}
-        if guard_info.get("status") != "tracked":
+        guard_info = rec.get("guard") or {"status": "tracked", "session_index": 0}
+        if guard_info.get("status") != "tracked" or int(guard_info.get("session_index", 0)) != 0:
             continue
         candidates = rec.get("candidates") or []
         if not candidates:
@@ -198,6 +216,9 @@ def curate_clip_records(
                 "teacher_score": round(float(cand.get("score", 1.0)), 5),
             }
         )
+
+    if frame_stride > 1:
+        frames = frames[::frame_stride]
 
     return {
         "fixture_id": fixture_id,
@@ -282,6 +303,38 @@ def build_coco_split(curated_clips: list[dict[str, Any]], fold: str) -> dict[str
     }
 
 
+def extract_curated_frames(
+    *,
+    repo_root: Path,
+    fixtures: dict[str, dict[str, Any]],
+    curated_clips: list[dict[str, Any]],
+    output_dir: Path,
+) -> int:
+    """Extract only the accepted frame indices for included clips into <output_dir>/frames/<fixture_id>/."""
+    extracted_total = 0
+    for clip in sorted(curated_clips, key=lambda c: c["fixture_id"]):
+        if clip.get("status") != "included" or not clip.get("frames"):
+            continue
+        fixture_id = clip["fixture_id"]
+        fixture = fixtures[fixture_id]
+        if clips.development_role(fixture) != clip["role"]:
+            raise clips.ClipRefused(f"{fixture_id}: development role changed before frame extraction")
+        media = repo_root / fixture["media"]["repository_path"]
+        label_package.require_media_hash(fixture, media)
+        probed = label_package.probe(media)
+        label_package.require_fixture_probe_match(fixture, probed)
+        indices = [int(f["frame_index"]) for f in clip["frames"]]
+        expected_pts = [int(f["pts"]) for f in clip["frames"]]
+        if [probed["pts"][idx] for idx in indices] != expected_pts:
+            raise label_package.PackageError(
+                f"{fixture_id}: teacher frame PTS do not match probed media PTS"
+            )
+        frames_dir = output_dir / "frames" / fixture_id
+        written = label_package.extract(media, indices, expected_pts, frames_dir, fixture)
+        extracted_total += len(written)
+    return extracted_total
+
+
 def export_distillation_dataset(
     *,
     repo_root: Path,
@@ -289,8 +342,12 @@ def export_distillation_dataset(
     method: str,
     output_dir: Path,
     manifests: list[Path] | None = None,
+    frame_stride: int = 1,
+    extract_frames: bool = False,
 ) -> dict[str, Any]:
     """Curate and export train/val COCO annotations and dataset_manifest.json."""
+    if frame_stride < 1:
+        raise ValueError("frame_stride must be at least 1")
     repo_root = repo_root.resolve()
     teacher_run_dir = teacher_run_dir.resolve()
     output_dir = output_dir.resolve()
@@ -304,6 +361,13 @@ def export_distillation_dataset(
         repo_root / "validation" / "private" / "vbt" / "manifest.json",
     ]
     fixtures = clips.load_fixtures(manifest_paths)
+    run_json_path = teacher_run_dir / "run.json"
+    if run_json_path.is_file():
+        recorded_roles = json.loads(run_json_path.read_text(encoding="utf-8")).get("clips") or {}
+        for name, role in recorded_roles.items():
+            if name not in fixtures or clips.development_role(fixtures[name]) != role:
+                raise clips.ClipRefused(f"{name}: missing fixture or development-role mismatch")
+
     allowed = clips.development_clips(fixtures)
     folds = assign_session_folds(list(allowed))
 
@@ -326,7 +390,9 @@ def export_distillation_dataset(
             if line.strip()
         ]
         truth_points = truth.load_truth(fixture_id, private_root)
-        curated = curate_clip_records(fixtures[fixture_id], records, truth_points)
+        curated = curate_clip_records(
+            fixtures[fixture_id], records, truth_points, frame_stride=frame_stride
+        )
         curated["fold"] = folds[fixture_id]
         curated_clips.append(curated)
 
@@ -340,14 +406,30 @@ def export_distillation_dataset(
     train_path.write_text(json.dumps(train_coco, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     val_path.write_text(json.dumps(val_coco, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    extracted_frames = 0
+    if extract_frames:
+        extracted_frames = extract_curated_frames(
+            repo_root=repo_root,
+            fixtures=fixtures,
+            curated_clips=curated_clips,
+            output_dir=output_dir,
+        )
+
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=False
     ).stdout.strip()
-    run_json_path = teacher_run_dir / "run.json"
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True, text=True, check=False
+    ).stdout.strip()
     manifest_doc = {
         "harness": HARNESS_ID,
         "origin": "machine",
         "code_commit": commit,
+        "dirty": bool(dirty),
+        "source_sha256": {p.name: sha256_file(p) for p in sorted(HERE.glob("*.py"))},
+        "frame_stride": frame_stride,
+        "frames_extracted": extract_frames,
+        "extracted_frame_count": extracted_frames,
         "teacher_run": {
             "path": teacher_run_dir.name,
             "method": method,
@@ -383,6 +465,8 @@ def parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--output-dir", type=Path, required=True, help="target directory under validation/private")
     p.add_argument("--manifest", type=Path, action="append")
+    p.add_argument("--frame-stride", type=int, default=1, help="keep every Nth accepted frame per clip")
+    p.add_argument("--extract-frames", action="store_true", help="decode accepted PNG frames into <output-dir>/frames/")
     return p
 
 
@@ -394,6 +478,8 @@ def main(argv: list[str] | None = None) -> int:
         method=args.method,
         output_dir=args.output_dir,
         manifests=args.manifest,
+        frame_stride=args.frame_stride,
+        extract_frames=args.extract_frames,
     )
     print(json.dumps(manifest_doc["summary"], sort_keys=True))
     return 0

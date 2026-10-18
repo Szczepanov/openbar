@@ -32,6 +32,7 @@ class GuardTests(unittest.TestCase):
         self.assertEqual([r["guard"]["status"] for r in out], ["tracked", "lost", "stopped_gap", "after_stop",
                                                                "after_stop"])
         self.assertEqual([len(r["candidates"]) for r in out], [1, 0, 0, 0, 0])
+        self.assertEqual([len(r["tracker_candidates"]) for r in out], [1, 0, 0, 1, 1])
 
     def test_a_glitch_frame_is_rejected_and_the_track_goes_on(self) -> None:
         # 18 radii/s at dt = 1/30 s allows 0.6 + 0.25 = 0.85 radii = 85 px.
@@ -56,6 +57,16 @@ class GuardTests(unittest.TestCase):
         two["candidates"] = two["candidates"] * 2
         with self.assertRaises(ValueError):
             guard.guard_track([two])
+
+    def test_resume_restarts_a_stopped_state_and_increments_session_index(self) -> None:
+        state = guard.GuardState()
+        self.assertEqual(state.session_index, 0)
+        self.assertEqual(state.observe(0.0, frame(0.0, 300)["candidates"][0]), "tracked")
+        self.assertEqual(state.observe(0.6, None), "stopped_gap")
+        self.assertEqual(state.observe(0.7, frame(0.7, 300)["candidates"][0]), "after_stop")
+        self.assertEqual(state.resume(0.8, frame(0.8, 700)["candidates"][0]), 1)
+        self.assertEqual(state.session_index, 1)
+        self.assertEqual(state.observe(0.8 + 1 / 30, frame(0.8, 710)["candidates"][0]), "tracked")
 
     def test_leading_loss_then_track(self) -> None:
         self.assertEqual(statuses([frame(0.0), frame(1.0, 300)]), ["lost", "tracked"])

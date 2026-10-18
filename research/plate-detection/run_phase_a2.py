@@ -11,6 +11,15 @@ carries the seed candidates, the selected index and the ``close-score-v1`` refus
 ``--tracker edgetam`` swaps SAM 2.1 video tracking for EdgeTAM (#57) and writes under
 ``candidates/track_edgetam[_sam3seed]/``.
 
+``--redetect`` (with ``--seed sam3``) applies ``track-guard-v2`` online; when the track stops it
+re-detects the plate with SAM 3 (``track.choose_redetect``) and restarts the tracker from it. The
+guarded result goes in ``candidates``; the pre-restart tracker's own output is always kept in
+``tracker_candidates`` (with ``tracker_session_index``), and on restart frames the new session's
+tracker output is recorded separately in ``post_restart_tracker_candidates`` (with
+``post_restart_session_index``) alongside ``redetect.pre_restart_tracker_candidates`` and
+``redetect.post_restart_tracker_candidates`` so neither raw observation is ever overwritten.
+Output goes under ``candidates/track_<tracker>_sam3seed_redetect/``.
+
 ``--seed sam3`` swaps the seed for SAM 3 (``track.choose_seed_sam3``: size window, ``in-frame-v1``,
 ``sam3-margin-v2`` refusal) and writes under ``candidates/track_sam2_sam3seed/``; tracking is unchanged.
 Frames are deleted after each clip.
@@ -36,6 +45,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "validation" / "tools"))
 
 import clips  # noqa: E402
+import guard  # noqa: E402
 import label_package  # noqa: E402
 import run_phase_a  # noqa: E402
 import selection  # noqa: E402
@@ -56,10 +66,30 @@ SEEDS = {
                          "score_decimals": selection.SCORE_DECIMALS,
                          "also_recorded": {"rule": selection.REFUSAL_RULE,
                                            "score_ratio": selection.REFUSAL_SCORE_RATIO}}},
+    "dfine_s_student": {
+        "choose": track.choose_seed_student,
+        "seed_rule": {
+            "rule": track.STUDENT_SEED_RULE,
+            "in_frame_rule": selection.IN_FRAME_RULE,
+            "size_window_fraction": [selection.MIN_RADIUS_FRACTION, selection.MAX_RADIUS_FRACTION],
+            "mask_source": "synthetic_disc_from_box",
+        },
+        "refusal": {
+            "rule": selection.MARGIN_RULE,
+            "margin_score": selection.MARGIN_SCORE,
+            "concentric_centre_fraction": selection.SAME_SPOT_CENTRE_FRACTION,
+            "score_decimals": selection.SCORE_DECIMALS,
+            "also_recorded": {
+                "rule": selection.REFUSAL_RULE,
+                "score_ratio": selection.REFUSAL_SCORE_RATIO,
+            },
+        },
+    },
 }
 
 
-def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: Path) -> dict[str, Any]:
+def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: Path,
+               redetect: bool = False) -> dict[str, Any]:
     import detectors
     from importlib import metadata
     # Installed distribution versions, read without importing the libraries. Keys follow Phase A plus
@@ -84,13 +114,22 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
     dirty = subprocess.run(["git", "status", "--porcelain", "--", str(HERE)], cwd=HERE, capture_output=True,
                            text=True).stdout.strip()
     variant = SEEDS[seed]
-    name = track.method_name(tracker.name, seed)
+    name = track.method_name(tracker.name, seed, redetect)
     method = {"seed_detector": {"method": seed, **detector.config()},
               "seed_frame": "first_decoded_frame", "seed_rule": variant["seed_rule"], "refusal": variant["refusal"],
+              **({"guard": guard.config(), "redetect": {"rule": track.REDETECT_RULE,
+                                                         "interval_s": track.REDETECT_INTERVAL_S,
+                                                         "radius_fraction": track.REDETECT_RADIUS_FRACTION,
+                                                         "preserves_pre_and_post_restart": True}}
+                 if redetect else {}),
               "tracker": tracker.config(), "track_stride": stride,
               "circle_fit": "geometry.circle_from_mask (seed rows may fall back to geometry.circle_from_box)"}
-    seed_repos = ({detectors.SAM3_CHECKPOINT} if seed == "sam3"
-                  else {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT})
+    if seed == "sam3":
+        seed_repos = {detectors.SAM3_CHECKPOINT}
+    elif seed == "dfine_s_student":
+        seed_repos = {getattr(detector, "checkpoint", detectors.DFINE_CHECKPOINT)}
+    else:
+        seed_repos = {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT}
     pinned = {track.TRACKERS[tracker.name]["checkpoint"]: track.TRACKERS[tracker.name]["revision"]}
     repos = sorted(seed_repos | set(pinned))
     return {"harness": HARNESS_ID, "origin": "machine", "code_commit": commit, "dirty": bool(dirty),
@@ -101,9 +140,9 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
 
 
 def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any, tracker: Any,
-             stride: int, output_dir: Path, seed_name: str = "gdino_sam2") -> dict[str, Any]:
+             stride: int, output_dir: Path, seed_name: str = "gdino_sam2", redetect: bool = False) -> dict[str, Any]:
     variant = SEEDS[seed_name]
-    method = track.method_name(tracker.name, seed_name)
+    method = track.method_name(tracker.name, seed_name, redetect)
     import cv2
     import geometry
     media = repo_root / fixture["media"]["repository_path"]
@@ -117,7 +156,9 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
     out_path = output_dir / "candidates" / method / f"{fixture['id']}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     partial = out_path.with_suffix(".jsonl.partial")
-    summary = {"frames": len(indices), "lost": 0}
+    summary: dict[str, Any] = {"frames": len(indices), "lost": 0, **({"redetected": 0} if redetect else {})}
+    state = guard.GuardState()
+    seed_radius = next_attempt = None
     try:
         with partial.open("w", encoding="utf-8") as handle:
             seed_mask = None
@@ -134,6 +175,7 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
                     seed_mask = None if chosen is None else masks[chosen]
                     if seed_mask is not None:
                         tracker.start(seed_mask)
+                        seed_radius = float(rows[chosen]["radius_px"])
                     extra["seed"] = {"candidates": rows, **seed, "tracked": seed_mask is not None}
                     summary["seed"] = {k: v for k, v in extra["seed"].items() if k != "candidates"}
                 candidates = []
@@ -141,6 +183,53 @@ def run_clip(fixture: dict[str, Any], role: str, repo_root: Path, detector: Any,
                     mask, logit = tracker.step(image)
                     row = track.tracked_row(geometry.circle_from_mask(mask), logit)
                     candidates = [] if row is None else [row]
+                if redetect and seed_mask is not None:
+                    pre_restart_session = state.session_index
+                    pre_restart_candidates = list(candidates)
+                    time_s = probed["timestamps_s"][index]
+                    pre_restart_status = state.observe(
+                        time_s, pre_restart_candidates[0] if pre_restart_candidates else None
+                    )
+                    status = pre_restart_status
+                    active_candidates = pre_restart_candidates
+                    extra["tracker_candidates"] = pre_restart_candidates
+                    extra["tracker_session_index"] = pre_restart_session
+                    if state.stopped and (next_attempt is None or time_s >= next_attempt):
+                        next_attempt = time_s + track.REDETECT_INTERVAL_S
+                        rows, masks = detector.propose_with_masks(image)
+                        found = track.choose_redetect(rows, image.shape[1], image.shape[0], seed_radius)
+                        redetect_info: dict[str, Any] = {
+                            "candidates": rows,
+                            **found,
+                            "pre_restart_session_index": pre_restart_session,
+                            "pre_restart_guard_status": pre_restart_status,
+                            "pre_restart_tracker_candidates": pre_restart_candidates,
+                        }
+                        if found["selected_index"] is not None and masks[found["selected_index"]] is not None:
+                            tracker.start(masks[found["selected_index"]])
+                            mask, logit = tracker.step(image)
+                            row = track.tracked_row(geometry.circle_from_mask(mask), logit)
+                            post_restart_candidates = [] if row is None else [row]
+                            redetect_info["post_restart_tracker_candidates"] = post_restart_candidates
+                            extra["post_restart_tracker_candidates"] = post_restart_candidates
+                            if row is not None:
+                                new_session = state.resume(time_s, row)
+                                redetect_info["post_restart_session_index"] = new_session
+                                extra["post_restart_session_index"] = new_session
+                                status = "redetected"
+                                summary["redetected"] += 1
+                                active_candidates = post_restart_candidates
+                            else:
+                                redetect_info["post_restart_session_index"] = None
+                                extra["post_restart_session_index"] = None
+                        extra["redetect"] = redetect_info
+                    extra["guard"] = {
+                        "rule": guard.RULE,
+                        "status": status,
+                        "pre_restart_status": pre_restart_status,
+                        "session_index": state.session_index,
+                    }
+                    candidates = active_candidates if status in ("tracked", "redetected") else []
                 summary["lost"] += not candidates
                 handle.write(json.dumps({
                     "fixture_id": fixture["id"], "role": role, "method": method, "frame_index": index,
@@ -162,7 +251,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--stride", type=int, default=clips.TRACK_STRIDE)
     p.add_argument("--seed", choices=sorted(SEEDS), default="gdino_sam2", help="seed detector and rule")
+    p.add_argument("--student-checkpoint", default=None, help="student checkpoint path or HF repo id for dfine_s_student")
     p.add_argument("--tracker", choices=sorted(track.TRACKERS), default="sam2", help="video tracker (#57)")
+    p.add_argument("--redetect", action="store_true", help="online guard plus re-detection (SAM 3 or student seed)")
     p.add_argument("--clip", action="append", help="restrict to these clip ids (still guarded)")
     p.add_argument("--force", action="store_true", help="rerun clips that already have output")
     return p
@@ -170,6 +261,7 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
+    track.method_name(args.tracker, args.seed, args.redetect)  # fail closed before loading GPU models
     repo_root = args.repo_root.resolve()
     output_dir = args.output_dir.resolve()
     if not output_dir.is_relative_to(label_package.PRIVATE_ROOT.resolve()):
@@ -187,17 +279,17 @@ def main(argv: list[str] | None = None) -> int:
     import detectors
     import torch
     torch.manual_seed(0)
-    detector = detectors.build(args.seed)
+    detector = detectors.build(args.seed, checkpoint=args.student_checkpoint)
     tracker = track.Sam2VideoTracker(args.tracker)
     output_dir.mkdir(parents=True, exist_ok=True)
-    run_phase_a.write_record(output_dir / "run.json", provenance(args.seed, detector, tracker, args.stride, repo_root), allowed)
+    run_phase_a.write_record(output_dir / "run.json", provenance(args.seed, detector, tracker, args.stride, repo_root, args.redetect), allowed)
     for name, role in allowed.items():
-        if (output_dir / "candidates" / track.method_name(args.tracker, args.seed) / f"{name}.jsonl").is_file() \
+        if (output_dir / "candidates" / track.method_name(args.tracker, args.seed, args.redetect) / f"{name}.jsonl").is_file() \
                 and not args.force:
             print(f"skip {name} (done)")
             continue
         started = time.perf_counter()
-        summary = run_clip(fixtures[name], role, repo_root, detector, tracker, args.stride, output_dir, args.seed)
+        summary = run_clip(fixtures[name], role, repo_root, detector, tracker, args.stride, output_dir, args.seed, args.redetect)
         print(f"{name}: {time.perf_counter() - started:.1f} s {json.dumps(summary, sort_keys=True)}", flush=True)
     return 0
 

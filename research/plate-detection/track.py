@@ -27,6 +27,7 @@ import selection
 METHOD = "track_sam2"
 SAM3_METHOD = "track_sam2_sam3seed"
 SAM3_SEED_RULE = "sam3-seed-v2"
+STUDENT_SEED_RULE = "dfine-student-seed-v1"
 SAM2_VIDEO_CHECKPOINT = "facebook/sam2.1-hiera-base-plus"
 EDGETAM_VIDEO_CHECKPOINT = "yonigozlan/EdgeTAM-hf"  # transformers conversion of facebook/EdgeTAM, Apache-2.0
 # Video trackers: checkpoint, transformers model class and pinned revision (None: whatever is cached,
@@ -37,16 +38,58 @@ TRACKERS = {
                 "revision": "c266ce53b3fc00f0f495b583f6a116c4e57f53bb"},
 }
 OBJECT_ID = 1
-SEED_NAMES = ("gdino_sam2", "sam3")
+SEED_NAMES = ("dfine_s_student", "gdino_sam2", "sam3")
+SEED_SUFFIXES = {
+    "gdino_sam2": "",
+    "sam3": "_sam3seed",
+    "dfine_s_student": "_dfinestudentseed",
+}
+
+# Re-detection (#57), fixed before its run. When track-guard-v2 stops a track, SAM 3 runs again at
+# most every REDETECT_INTERVAL_S of media; the sam3-seed-v2 filters apply, the plate must be within
+# REDETECT_RADIUS_FRACTION of the seed's radius (side view: the plate's apparent size barely changes),
+# and sam3-margin-v2 refuses when another plate scores close. Chosen after seeing that the guard stops
+# correct tracks during fast pulls and that EdgeTAM re-locked onto an object of similar radius on
+# self-clean-side-0203-17, which this radius check alone would not reject.
+REDETECT_RULE = "redetect-v1"
+REDETECT_INTERVAL_S = 0.5
+REDETECT_RADIUS_FRACTION = 0.15
 
 
-def method_name(tracker: str, seed: str) -> str:
+def method_name(tracker: str, seed: str, redetect: bool = False) -> str:
     """Output method for a tracker and seed; the two Phase A.2 names are kept unchanged."""
     if tracker not in TRACKERS:
         raise ValueError(f"unknown tracker {tracker!r}")
     if seed not in SEED_NAMES:
         raise ValueError(f"unknown seed {seed!r}; a new seed needs its own method suffix")
-    return f"track_{tracker}" + ("_sam3seed" if seed == "sam3" else "")
+    if redetect and seed not in ("sam3", "dfine_s_student"):
+        raise ValueError("re-detection is defined for SAM 3 or Phase B student seeds only")
+    return f"track_{tracker}{SEED_SUFFIXES[seed]}" + ("_redetect" if redetect else "")
+
+
+def _has_trackable_mask(row: dict[str, Any]) -> bool:
+    return (
+        row.get("fit") not in ("box", "rim_subpixel")
+        or row.get("mask_source") == "synthetic_disc_from_box"
+    )
+
+
+def choose_redetect(rows: Sequence[dict[str, Any]], width_px: int, height_px: int,
+                    seed_radius_px: float) -> dict[str, Any]:
+    """``redetect-v1``: the SAM 3 or Phase B student candidate to resume from after the guard stopped
+    a track, or none. No labels."""
+    candidates = [selection.Candidate.from_dict(row) for row in rows]
+    window = selection.in_frame(selection.plausible(candidates, width_px, height_px), width_px, height_px)
+    plausible_indices = [i for i, c in enumerate(candidates) if c in window and _has_trackable_mask(rows[i])]
+    kept_indices = [i for i in plausible_indices
+                    if abs(float(rows[i]["radius_px"]) - seed_radius_px) <= REDETECT_RADIUS_FRACTION * seed_radius_px]
+    kept = [candidates[i] for i in kept_indices]
+    refusal = selection.margin_refusal(kept)
+    top = selection.select_top1(kept)
+    selected = None
+    if top is not None and not refusal["refused"]:
+        selected = next(i for i in kept_indices if candidates[i] == top)
+    return {"rule": REDETECT_RULE, "selected_index": selected, "matching_indices": kept_indices, "refusal": refusal}
 
 
 def choose_seed(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -> dict[str, Any]:
@@ -73,6 +116,19 @@ def choose_seed_sam3(rows: Sequence[dict[str, Any]], width_px: int, height_px: i
     top = selection.select_top1(kept)
     selected = None if top is None else next(i for i in plausible_indices if candidates[i] == top)
     return {"rule": SAM3_SEED_RULE, "selected_index": selected, "plausible_indices": plausible_indices,
+            "refusal": selection.margin_refusal(kept), "close_score_refusal": selection.refusal(kept)}
+
+
+def choose_seed_student(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -> dict[str, Any]:
+    """``dfine-student-seed-v1``: Phase B student seed rule (size window, ``in-frame-v1``, synthetic
+    disc mask from box, and ``sam3-margin-v2`` refusal). No labels."""
+    candidates = [selection.Candidate.from_dict(row) for row in rows]
+    window = selection.in_frame(selection.plausible(candidates, width_px, height_px), width_px, height_px)
+    plausible_indices = [i for i, c in enumerate(candidates) if c in window and _has_trackable_mask(rows[i])]
+    kept = [candidates[i] for i in plausible_indices]
+    top = selection.select_top1(kept)
+    selected = None if top is None else next(i for i in plausible_indices if candidates[i] == top)
+    return {"rule": STUDENT_SEED_RULE, "selected_index": selected, "plausible_indices": plausible_indices,
             "refusal": selection.margin_refusal(kept), "close_score_refusal": selection.refusal(kept)}
 
 
