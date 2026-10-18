@@ -55,7 +55,11 @@ roles, unseen frozen clips, exploration/validation conflicts and reserved clips 
 It defaults to the same two manifests as inference; repeated `--manifest` arguments override them.
 This changes only CLI admission, not `score_run`, scoring tolerances or measurement semantics.
 Synthetic tests demonstrate refusal before scoring and acceptance of eligible development roles.
-An independent review found no issues; all 93 research tests pass with warnings treated as errors.
+PR review also repaired a pre-existing output-overwrite hazard at this entry point: the score is
+serialized before exclusive output creation, so an existing run record, manifest, candidate,
+label or score cannot be truncated by `--output`. Use a new score filename for a repeat. JSON
+formatting and metric semantics remain unchanged. A preservation regression failed for all five
+existing-file cases before the fix. All 94 research tests pass with warnings treated as errors.
 
 The scorer admission change was made while the baseline inference ran. The runner does not import
 the scorer; its inference source/configuration is unchanged. Its recorded inference-source hashes
@@ -216,14 +220,16 @@ the evidence or verify the scoring safeguard.
 
 ## Verification
 
-- 93 plate-detection tests pass with warnings treated as errors, including refusal-before-I/O
-  checks for the scorer admission change.
+- 94 plate-detection tests pass with warnings treated as errors, including refusal-before-I/O
+  checks for the scorer admission change and existing-file preservation checks.
 - 357 validation tests pass (one skipped); schema checking passes for 15 committed documents.
 - Rust formatting, Clippy with warnings denied, workspace build and workspace tests pass.
 - The gated scoring CLI scores all three completed arms successfully and agrees with the paired
   audit on every arm's matching-label total and all 388 labels.
-- Replaying the retained audit source produces byte-identical output; source records and tracks
-  remain unchanged. The state classifier also passes synthetic match/mismatch/lost self-checks.
+- The initial audit replay at `483f454` produced byte-identical output. Replay after the output
+  safety fix differs only in the scorer implementation hash; all observations and other fields
+  remain unchanged, and the sealed audit is preserved. The state classifier also passes synthetic
+  match/mismatch/lost self-checks.
 - Independent reviews approve both the admission change and the report against retained evidence.
   No media was opened by those reviewers and no independent inference repeat is claimed.
 

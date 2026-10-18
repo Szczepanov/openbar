@@ -53,6 +53,33 @@ class GuardTests(unittest.TestCase):
 
 
 class ScoreEntryPointTests(unittest.TestCase):
+    def test_cli_never_overwrites_existing_inputs_or_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = root / "run"
+            (run / "candidates" / "track").mkdir(parents=True)
+            source = run / "run.json"
+            source.write_text(json.dumps({"clips": {"allowed": "exploration"}, "methods": {}}))
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"fixtures": [fixture("allowed", "development", "split-exploration")]}))
+            candidate = run / "candidates" / "track" / "allowed.jsonl"
+            candidate.write_text('{"time_s": 0, "candidates": []}\n')
+            label = root / "allowed.labels.csv"
+            label.write_text("original labels\n")
+            old_score = root / "score.json"
+            old_score.write_text('{"original": "score"}\n')
+            for output in (source, manifest, candidate, label, old_score):
+                original = output.read_bytes()
+                with self.subTest(output=output.name):
+                    try:
+                        with patch.object(score_phase_a, "score_run", return_value={"methods": {}}), \
+                                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(FileExistsError):
+                            score_phase_a.main(["--run-dir", str(run), "--repo-root", str(root),
+                                                "--manifest", str(manifest), "--output", str(output)])
+                        self.assertEqual(output.read_bytes(), original)
+                    finally:
+                        output.write_bytes(original)
+
     def test_cli_checks_all_current_roles_before_candidates_or_labels(self) -> None:
         refused = [
             (fixture("x", "validation", "split-reserved-57"), "exploration"),

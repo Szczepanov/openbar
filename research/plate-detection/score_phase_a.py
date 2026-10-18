@@ -311,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo-root", type=Path, required=True, help="checkout holding validation/private labels")
     p.add_argument("--manifest", type=Path, action="append",
                    help="defaults to validation/private/manifest.json and validation/private/vbt/manifest.json")
-    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--output", type=Path, required=True, help="new score file; existing paths are refused")
     p.add_argument("--compare", type=Path, action="append", default=[],
                    help="another run's score.json; its methods join the printed per-clip table only")
     args = p.parse_args(argv)
@@ -323,7 +323,9 @@ def main(argv: list[str] | None = None) -> int:
         if name not in fixtures or clips.development_role(fixtures[name]) != role:
             raise clips.ClipRefused(f"{name}: missing fixture or development-role mismatch")
     result = score_run(args.run_dir, args.repo_root / "validation" / "private", roles)
-    args.output.write_text(json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    encoded = json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    with args.output.open("x", encoding="utf-8") as handle:
+        handle.write(encoded)
     print(table(result))
     methods: dict[str, Any] = {}
     for path in args.compare:
