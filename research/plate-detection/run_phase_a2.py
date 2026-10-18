@@ -65,9 +65,9 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
     # Installed distribution versions, read without importing the libraries. Keys follow Phase A plus
     # torchvision and timm; values are distribution versions (cv2 reads 4.12.0.88 where Phase A's
     # cv2.__version__ read 4.12.0).
+    opencv = ("opencv-python-headless", "opencv-python", "opencv-contrib-python-headless", "opencv-contrib-python")
     distributions = {"torch": "torch", "torchvision": "torchvision", "transformers": "transformers", "timm": "timm",
-                     "numpy": "numpy", "cv2": ("opencv-python-headless", "opencv-python"), "PIL": "pillow",
-                     "huggingface_hub": "huggingface_hub"}
+                     "numpy": "numpy", "cv2": opencv, "PIL": "pillow", "huggingface_hub": "huggingface_hub"}
     packages = {}
     for name, dists in distributions.items():
         packages[name] = None
