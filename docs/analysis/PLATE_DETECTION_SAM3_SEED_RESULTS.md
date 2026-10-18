@@ -81,6 +81,40 @@ the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say 
   catch some of these frames, but no rule in this run flags them. SAM 2.1 tracked the whole clip correctly. This breaks "lost means no coordinate" in spirit: a wrong
   position is reported as a tracked one.
 
+## Identity guard after a loss (`track-guard-v2`)
+
+To stop a tracker from reporting a wrong object as the plate, `guard.py` post-processes a track into a separate
+derived method (`apply_guard.py`; the raw track is kept). A frame whose centre moves more than 18 radii/s
+(+0.25 radius) or whose radius changes by more than 15% against the last accepted frame is rejected, with no
+coordinate. When no frame has been accepted for more than 0.5 s, the track stops until a new seed. The guard reads
+only the tracked circles and timestamps, never labels.
+
+Both versions were designed after seeing the EdgeTAM failure above. The first version (`track-guard-v1`) ended the
+track at the first implausible step; on the SAM 2.1 run it stopped 7 correct tracks at single-frame mask glitches
+during fast snatch pulls (fitted circles jumping 20-40 radii/s with 20-130% radius swings), so v2 rejects such
+frames instead. v2 was then chosen after seeing v1's results. Nothing here is evidence of how either behaves on
+new sessions.
+
+Labelled frames, raw against guarded (`identity-loose-v1`):
+
+| Track | On target | On a wrong object | Lost (no coordinate) |
+| --- | --- | --- | --- |
+| SAM 3 seed + SAM 2.1, raw | 316 | 72 | 0 |
+| SAM 3 seed + SAM 2.1, guarded | 301 | 16 | 71 |
+| SAM 3 seed + EdgeTAM, raw | 293 | 85 | 10 |
+| SAM 3 seed + EdgeTAM, guarded | 283 | 66 | 39 |
+
+- **What it fixes:** EdgeTAM's re-lock on `self-clean-side-0203-17` goes from 13 wrong labelled frames to 0; they are
+  lost instead. The guard stops the track 0.5 s after the loss began.
+- **What it does not fix:** a wrong seed. Most wrong frames left (16 and 66) are `self-other-side-0215-27`, where
+  the seed itself is the wrong plate and the track is smooth.
+- **What it costs:** a fast pull where the mask glitches for longer than 0.5 s ends a correct track. SAM 2.1 loses
+  15 labelled frames on `self-snatch-side-0206-19`; EdgeTAM loses 2 there and 8 on `self-snatch-side-1015-04`
+  (stopped at 1.8 s).
+- **Suggests:** stopping is the safe default, but the track should be resumed by re-detecting the plate (SAM 3 on
+  desktop, a distilled detector on the phone) and checking it against the seed, rather than staying lost. A better
+  rim fit would also cut the glitches that trigger the step rule.
+
 ## Limits
 
 - 25 scored clips from few sessions; one or two clips decide each difference. Development estimates only.
@@ -128,6 +162,7 @@ the refusal constants from each run's `run.json`. From a worktree, with private 
 python research/plate-detection/run_phase_a2.py --repo-root <main checkout> --seed sam3 --output-dir validation/private/plate-detection-sam3-seed/run-2
 python research/plate-detection/run_phase_a2.py --repo-root <main checkout> --seed sam3 --tracker edgetam --output-dir validation/private/plate-detection-sam3-seed/run-edgetam-1
 python research/plate-detection/score_phase_a.py --run-dir validation/private/plate-detection-sam3-seed/run-edgetam-1 --repo-root <main checkout> --output validation/private/plate-detection-sam3-seed/run-edgetam-1/score.json --compare validation/private/plate-detection-sam3-seed/run-2/score.json
+python research/plate-detection/apply_guard.py --run-dir validation/private/plate-detection-sam3-seed/run-edgetam-1 --output-dir validation/private/plate-detection-sam3-seed/run-edgetam-1-guard-v2
 ```
 
 Run records (private), SHA-256:
@@ -138,3 +173,7 @@ Run records (private), SHA-256:
 | `run-2/score.json` | `cf229ff215f76d876a67b82cc87f62f5667c4f073e535cedc6ea4fee12a7eed4` | 8899977 |
 | `run-edgetam-1/run.json` | `b7b3bd0eafa2076cf16a774f39cd42e4d5c8c729de1e5c7e3106e7a45f047f8e` | d0caa1b |
 | `run-edgetam-1/score.json` | `3897cf194680df8048590c7a430bc0ec57605dd3ca7ff3cb28f4236c7deed337` | 8899977 |
+| `run-2-guard-v2/run.json` | `7bb164bad25622f461dd656160baf3799b4e244d6d951c5abcb022112c172c94` | 4923a66 |
+| `run-2-guard-v2/score.json` | `2e090a76bb387417e15324dfca191eec8091dcc67792d469eaca79c13cea4614` | 4923a66 |
+| `run-edgetam-1-guard-v2/run.json` | `47e2231db031b7c6bd4606ee0207ccac73f3ad3091d5c6a14f58f5cf83781cc7` | 4923a66 |
+| `run-edgetam-1-guard-v2/score.json` | `975986ef189294396ee4feac24d14fd18a92156b092894f3c869674e4ccca17e` | 4923a66 |
