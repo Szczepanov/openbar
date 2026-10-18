@@ -216,13 +216,19 @@ Descriptive results across the 27-clip development runs:
 | `run-2-guard-v2` (`track_sam2_sam3seed_guard`) | `001`, `0219-28`, `vbt-45854c` (3) | `0215-27` (0.268), `0206-19` (0.475) | none (0) | `0215-27` (1) | 5 / 27 | 22 / 22 (20 / 20 labelled) |
 | `run-edgetam-1-guard-v2` (`track_edgetam_sam3seed_guard`) | `001`, `0219-28`, `vbt-45854c` (3) | `0203-17` (0.211), `1015-04` (0.139) | none (0) | `0203-17`, `0215-27`, `1015-04` (3) | 6 / 27 | 21 / 21 (19 / 19 labelled) |
 | `run-edgetam-redetect-1` (`track_edgetam_sam3seed_redetect`) | `001`, `0219-28`, `vbt-45854c` (3) | none (0) | `0215-27` epoch 1 (`margin=null`, travel `0.030 radii`) | `0215-27` (1) | 4 / 27 | 23 / 23 (21 / 21 labelled) |
+| `run-edgetam-student-redetect-1` (`track_edgetam_dfinestudentseed_redetect`, 6 `val` + 2 stress clips) | none (0) | `0215-27` (`0.3885`) | `0215-27` epochs 1–20 (`jump=2.41 radii`, stationary) | `0215-27` (1) | 1 / 8 | 7 / 7 (all 6 unseen `val` clips `125/127` + `0203-17` epoch-1 recovery `15/29`) |
 
 On `run-edgetam-redetect-1`, the two true-recovery clips (`0203-17`: `coverage = 0.9751`, epoch-1 travel
 `4.67 radii`; `1015-04`: `coverage = 0.8848`, epoch-1/2 jump speeds `8.36` and `1.48 radii/s`, travel
 `7.06` and `6.29 radii`) pass without flags, while the wrong-plate clip (`0215-27`) is flagged by both
-`ambiguous_restart` and `no_motion_evidence`. Because these thresholds were evaluated on the same
-27-clip development pool, they remain descriptive diagnostics until the owner sets acceptance limits
-for the next independent-session freeze.
+`ambiguous_restart` and `no_motion_evidence`. On `run-edgetam-student-redetect-1` (100% Apache-2.0
+`D-FINE-S` student seed + `rim-subpixel-v1` + `EdgeTAM` + `redetect-v1`), all **6 unseen session-disjoint
+`val` clips** track cleanly without guard stops or flags (`125 / 127` labelled frames on target, **98.4%**,
+including `27 / 29` on `0206-19` where the SAM 3 seed stopped at `7 / 29`), `0203-17` re-acquires the
+moving foreground plate in epoch 1 (`2.70 radii` travel, `15 / 29` labelled frames), and `0215-27` is
+flagged by `insufficient_coverage`, `ambiguous_restart`, and `no_motion_evidence`. Because these thresholds
+were evaluated on the same 27-clip development pool, they remain descriptive diagnostics until the owner
+sets acceptance limits for the next independent-session freeze.
 
 The existing next-round plan still needs blind pilot labels, owner-confirmed refusal
 policies and selectable side-view recordings from at least two new sessions. Existing exposed clips

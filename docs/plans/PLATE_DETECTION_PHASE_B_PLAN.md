@@ -147,16 +147,30 @@ However:
     frame 0), the distilled student hits the foreground plate with `0.69%` refined radius error (`2.12%` raw box
     radius error). Only `self-other-side-0215-27` misses (`1 / 25`), for the same stationary rack-plate ambiguity
     diagnosed by `post-track-diagnostics-v1` (#250).
+- **End-to-end 100% Apache-2.0 phone candidate pipeline (`track_edgetam_dfinestudentseed_redetect`, `run-edgetam-student-redetect-1`):**
+  - Evaluated across all **6 unseen session-disjoint `val` clips** plus the 2 recovery/failure stress-test clips
+    (`self-clean-side-0203-17` and `self-other-side-0215-27`) at `0.071 s/frame` median latency (`1.3%` median radius
+    error, `2.4%` median centre error):
+    - **6 / 6 (`100%`) unseen `val` clips** seeded on the foreground plate and stayed on target across **125 / 127
+      (`98.4%`)** labelled frames (`25/25`, `21/21`, `1/1`, `23/23`, `27/29`, `28/28`) with `0` guard stops and `0`
+      diagnostic flags. On `self-snatch-side-0206-19`, the `rim-subpixel-v1`-refined student seed kept EdgeTAM on
+      target for `27 / 29` labelled frames (`lost = 6 / 442`), outperforming the SAM 3 seed (`7 / 29`, `lost = 227 / 442`).
+    - On `self-clean-side-0203-17`, after an initial background rack-plate seed was stopped by `track-guard-v2`,
+      `dfine_s_student` re-acquired the moving foreground plate at `t = 14.33 s` (`15 / 29` labelled frames, `2.70 radii`
+      travel in epoch 1).
+    - On `self-other-side-0215-27`, `post-track-diagnostics-v1` (`post_track_refusal.py`) flagged the stationary
+      rack-plate track (`insufficient_coverage`, `ambiguous_restart`, `no_motion_evidence`) with **0 false flags**
+      across the other 7 clips.
 - **Raw-observation preservation:** both offline `guard.guard_track` (`apply_guard.py`) and online
   `run_phase_a2.py --redetect` preserve raw `tracker_candidates` on every frame where `candidates` is blanked;
   on restart frames, `tracker_candidates` (and `tracker_session_index`) preserves the pre-restart tracker
   observation unmodified, while `post_restart_tracker_candidates` (and `post_restart_session_index`) records the
   new session's tracker observation alongside `redetect.pre_restart_tracker_candidates` and
   `redetect.post_restart_tracker_candidates`.
-- **Tests:** `test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes` and
-  `test_choose_seed_student_accepts_synthetic_disc_from_box` in `research/plate-detection/tests/test_phase_a2.py`,
-  plus `test_long_loss_stops_the_track` and `test_resume_restarts_a_stopped_state_and_increments_session_index`
-  in `research/plate-detection/tests/test_guard.py`.
+- **Tests:** `test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes`,
+  `test_choose_seed_student_accepts_synthetic_disc_from_box`, and `test_checkpoint_files_hashes_local_directory` in
+  `research/plate-detection/tests/test_phase_a2.py`, plus `test_long_loss_stops_the_track` and
+  `test_resume_restarts_a_stopped_state_and_increments_session_index` in `research/plate-detection/tests/test_guard.py`.
 
 ### WP4 — Static-shape mobile graph export, parity verification & Xiaomi 14T Pro latency benchmark (#179, #251)
 

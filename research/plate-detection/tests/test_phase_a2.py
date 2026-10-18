@@ -157,6 +157,19 @@ class TrackerChoiceTests(unittest.TestCase):
         self.assertRegex(track.TRACKERS["edgetam"]["revision"], r"^[0-9a-f]{40}$")
         self.assertEqual(track.TRACKERS["sam2"]["checkpoint"], track.SAM2_VIDEO_CHECKPOINT)
 
+    def test_checkpoint_files_hashes_local_directory(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_str:
+            ckpt_dir = Path(tmp_str) / "best_checkpoint"
+            ckpt_dir.mkdir()
+            (ckpt_dir / "model.safetensors").write_bytes(b"weights")
+            (ckpt_dir / "config.json").write_text("{}", encoding="utf-8")
+            info = run_phase_a.checkpoint_files(str(ckpt_dir))
+            self.assertEqual(info["repo_id"], "best_checkpoint")
+            self.assertEqual(info["revision"], "local")
+            self.assertEqual(list(info["files"].keys()), ["model.safetensors"])
+
 
 class RefusalRuleTests(unittest.TestCase):
     CLIP = {"scored": False, "frame0_refusal": {"rule": selection.MARGIN_RULE, "refused": True}}
