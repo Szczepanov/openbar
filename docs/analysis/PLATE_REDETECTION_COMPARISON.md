@@ -184,10 +184,15 @@ the score margin and radius window do not establish identity. Do not add automat
 the first candidate with sufficient motion or promote this candidate from these development data.
 
 Before another re-detection run, repair raw preservation in its own implementation and test that
-both pre- and post-restart outcomes survive. Then define how identity ambiguity and insufficient
-coverage cause refusal, with owner acceptance limits, before an independent-session freeze.
-The existing next-round plan still needs blind pilot labels, owner-confirmed refusal policies
-and selectable side-view recordings from at least two new sessions. Existing exposed clips
+both pre- and post-restart outcomes survive (**done:** `run_phase_a2.py --redetect` now preserves
+the pre-restart tracker output in `tracker_candidates` with `tracker_session_index` and records the
+restarted session's output separately in `post_restart_tracker_candidates` with
+`post_restart_session_index`, covered by
+`test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes` in
+`research/plate-detection/tests/test_phase_a2.py`). Then define how identity ambiguity and
+insufficient coverage cause refusal, with owner acceptance limits, before an independent-session
+freeze. The existing next-round plan still needs blind pilot labels, owner-confirmed refusal
+policies and selectable side-view recordings from at least two new sessions. Existing exposed clips
 cannot fill that gap; reserved clips remain untouched.
 
 Phone timing remains blocked by the missing connection and by the absence of an EdgeTAM runtime

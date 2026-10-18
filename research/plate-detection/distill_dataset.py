@@ -117,7 +117,10 @@ def seed_matches_truth(
     if not records:
         return False, "empty_records"
     first_seed = records[0].get("seed") or {}
-    if first_seed.get("refused") is True:
+    refusal = first_seed.get("refusal")
+    if first_seed.get("refused") is True or (
+        isinstance(refusal, dict) and refusal.get("refused") is True
+    ):
         return False, "seed_refused"
     if first_seed.get("tracked") is False or not records[0].get("candidates"):
         return False, "seed_untracked"
@@ -145,10 +148,12 @@ def curate_clip_records(
     fixture: dict[str, Any],
     records: list[dict[str, Any]],
     truth_points: list[truth.TruthPoint],
+    *,
+    frame_stride: int = 1,
 ) -> dict[str, Any]:
     """Validate clip split role, apply track-guard-v2 if needed, and extract positive boxes."""
-    if held_out_guard.is_held_out(fixture):
-        raise clips.ClipRefused(f"{fixture.get('id', '<no id>')} is held-out; refused for Phase B distillation")
+    if frame_stride < 1:
+        raise ValueError("frame_stride must be at least 1")
     role = clips.development_role(fixture)
     fixture_id = fixture["id"]
 
@@ -198,6 +203,9 @@ def curate_clip_records(
                 "teacher_score": round(float(cand.get("score", 1.0)), 5),
             }
         )
+
+    if frame_stride > 1:
+        frames = frames[::frame_stride]
 
     return {
         "fixture_id": fixture_id,
@@ -282,6 +290,38 @@ def build_coco_split(curated_clips: list[dict[str, Any]], fold: str) -> dict[str
     }
 
 
+def extract_curated_frames(
+    *,
+    repo_root: Path,
+    fixtures: dict[str, dict[str, Any]],
+    curated_clips: list[dict[str, Any]],
+    output_dir: Path,
+) -> int:
+    """Extract only the accepted frame indices for included clips into <output_dir>/frames/<fixture_id>/."""
+    extracted_total = 0
+    for clip in sorted(curated_clips, key=lambda c: c["fixture_id"]):
+        if clip.get("status") != "included" or not clip.get("frames"):
+            continue
+        fixture_id = clip["fixture_id"]
+        fixture = fixtures[fixture_id]
+        if clips.development_role(fixture) != clip["role"]:
+            raise clips.ClipRefused(f"{fixture_id}: development role changed before frame extraction")
+        media = repo_root / fixture["media"]["repository_path"]
+        label_package.require_media_hash(fixture, media)
+        probed = label_package.probe(media)
+        label_package.require_fixture_probe_match(fixture, probed)
+        indices = [int(f["frame_index"]) for f in clip["frames"]]
+        expected_pts = [int(f["pts"]) for f in clip["frames"]]
+        if [probed["pts"][idx] for idx in indices] != expected_pts:
+            raise label_package.PackageError(
+                f"{fixture_id}: teacher frame PTS do not match probed media PTS"
+            )
+        frames_dir = output_dir / "frames" / fixture_id
+        written = label_package.extract(media, indices, expected_pts, frames_dir, fixture)
+        extracted_total += len(written)
+    return extracted_total
+
+
 def export_distillation_dataset(
     *,
     repo_root: Path,
@@ -289,8 +329,12 @@ def export_distillation_dataset(
     method: str,
     output_dir: Path,
     manifests: list[Path] | None = None,
+    frame_stride: int = 1,
+    extract_frames: bool = False,
 ) -> dict[str, Any]:
     """Curate and export train/val COCO annotations and dataset_manifest.json."""
+    if frame_stride < 1:
+        raise ValueError("frame_stride must be at least 1")
     repo_root = repo_root.resolve()
     teacher_run_dir = teacher_run_dir.resolve()
     output_dir = output_dir.resolve()
@@ -304,6 +348,13 @@ def export_distillation_dataset(
         repo_root / "validation" / "private" / "vbt" / "manifest.json",
     ]
     fixtures = clips.load_fixtures(manifest_paths)
+    run_json_path = teacher_run_dir / "run.json"
+    if run_json_path.is_file():
+        recorded_roles = json.loads(run_json_path.read_text(encoding="utf-8")).get("clips") or {}
+        for name, role in recorded_roles.items():
+            if name not in fixtures or clips.development_role(fixtures[name]) != role:
+                raise clips.ClipRefused(f"{name}: missing fixture or development-role mismatch")
+
     allowed = clips.development_clips(fixtures)
     folds = assign_session_folds(list(allowed))
 
@@ -326,7 +377,9 @@ def export_distillation_dataset(
             if line.strip()
         ]
         truth_points = truth.load_truth(fixture_id, private_root)
-        curated = curate_clip_records(fixtures[fixture_id], records, truth_points)
+        curated = curate_clip_records(
+            fixtures[fixture_id], records, truth_points, frame_stride=frame_stride
+        )
         curated["fold"] = folds[fixture_id]
         curated_clips.append(curated)
 
@@ -340,14 +393,25 @@ def export_distillation_dataset(
     train_path.write_text(json.dumps(train_coco, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     val_path.write_text(json.dumps(val_coco, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    extracted_frames = 0
+    if extract_frames:
+        extracted_frames = extract_curated_frames(
+            repo_root=repo_root,
+            fixtures=fixtures,
+            curated_clips=curated_clips,
+            output_dir=output_dir,
+        )
+
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=False
     ).stdout.strip()
-    run_json_path = teacher_run_dir / "run.json"
     manifest_doc = {
         "harness": HARNESS_ID,
         "origin": "machine",
         "code_commit": commit,
+        "frame_stride": frame_stride,
+        "frames_extracted": extract_frames,
+        "extracted_frame_count": extracted_frames,
         "teacher_run": {
             "path": teacher_run_dir.name,
             "method": method,
@@ -383,6 +447,8 @@ def parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--output-dir", type=Path, required=True, help="target directory under validation/private")
     p.add_argument("--manifest", type=Path, action="append")
+    p.add_argument("--frame-stride", type=int, default=1, help="keep every Nth accepted frame per clip")
+    p.add_argument("--extract-frames", action="store_true", help="decode accepted PNG frames into <output-dir>/frames/")
     return p
 
 
@@ -394,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
         method=args.method,
         output_dir=args.output_dir,
         manifests=args.manifest,
+        frame_stride=args.frame_stride,
+        extract_frames=args.extract_frames,
     )
     print(json.dumps(manifest_doc["summary"], sort_keys=True))
     return 0

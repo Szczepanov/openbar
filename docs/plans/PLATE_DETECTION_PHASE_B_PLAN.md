@@ -67,41 +67,67 @@ However:
 
 ## 4. Ordered work packages
 
-### WP1 — Teacher dataset curation & session-grouped COCO export (implemented)
+### WP1 — Teacher dataset curation & session-grouped COCO export (completed on `run-2-guard-v2`)
 
-- **Module:** `research/plate-detection/distill_dataset.py` (stdlib-only, model-free).
+- **Module:** `research/plate-detection/distill_dataset.py` (stdlib-only, model-free; supports `--frame-stride` and
+  `--extract-frames`).
 - **Inputs:**
   - Development fixtures from `validation/private/manifest.json` and `validation/private/vbt/manifest.json`,
-    filtered strictly through `clips.development_role` and `held_out_guard.is_held_out`.
-  - Guarded teacher track directory (e.g. `validation/private/plate-detection-sam3-seed/run-2-guard-v2/candidates/track_sam2_sam3seed_guard_v2/`).
-  - Optional development truth annotations (`truth.load_truth`) to veto any teacher track whose accepted seed
-    disagrees with human labels (`center_err / r > 0.25` or `radius_err > 0.25`).
-- **Outputs (under `validation/private/plate-detection-phase-b/`):**
-  - `dataset_manifest.json`: provenance, teacher hashes, session fold assignment, accepted/skipped frame counts.
-  - `annotations/train.coco.json` and `annotations/val.coco.json`: deterministic COCO-format single-class
-    (`category_id: 1, name: "barbell_plate"`) bounding-box annotations with circle metadata (`center_x_px`,
-    `center_y_px`, `radius_px`, `teacher_score`, `fixture_id`, `frame_index`, `pts`, `time_s`).
-- **Tests:** `research/plate-detection/tests/test_distill_dataset.py` covering held-out/pilot refusal,
-  session-group fold isolation, refused/off-target seed rejection, lost-frame exclusion, and COCO box geometry.
+    filtered strictly through `clips.development_role` and `teacher_run/run.json` role verification.
+  - Guarded teacher track directory (`validation/private/plate-detection-sam3-seed/run-2-guard-v2/candidates/track_sam2_sam3seed_guard/`,
+    `run.json` SHA-256 `7bb164bad25622f461dd656160baf3799b4e244d6d951c5abcb022112c172c94`).
+  - Development truth annotations (`truth.load_truth`) vetoing any teacher track whose seed was refused or
+    disagreed with human labels (`identity-loose-v1`).
+- **Curated dataset (`validation/private/plate-detection-phase-b/dataset-v1/`):**
+  - **23 / 27** development clips included (all 23 verified against human truth: `accepted_verified_vs_truth`).
+  - **4 / 27** development clips excluded:
+    - `self-other-side-0215-27` (`seed_off_target_vs_truth`, 0/942 frames);
+    - `self-snatch-ohs-side-001` (`seed_refused` by `sam3-margin-v2`, 0/160 frames);
+    - `self-snatch-unknown-0219-28` (`seed_refused` by `sam3-margin-v2`, 0/579 frames);
+    - `vbt-45854c8cdf352a6f` (`seed_refused` by `sam3-margin-v2`, 0/378 frames).
+  - On `self-snatch-side-0206-19`, `track-guard-v2` excludes the 227 post-stop frames (`215 / 442` frames kept).
+  - **Session-disjoint split (`0` overlapping sessions):**
+    - `annotations/train.coco.json` (SHA-256 `dfb7ffac71635fff33ace61da60c546f8afcebfeb4d337ac31035f2b5900fde4`):
+      **7,056** frames across **17** clips (`session-self-2026-10-15`, `session-vbt-2026-10-03`,
+      `session-self-2023-02-03`, `session-self-2023-02-13`).
+    - `annotations/val.coco.json` (SHA-256 `031046cf9c33393845b0f4384368675a8a4731aeaff07d683f4fc1e00059f1de`):
+      **2,372** frames across **6** clips (`session-self-early`, `session-self-2023-02-06`,
+      `session-self-2023-02-12`).
+- **Tests:** `research/plate-detection/tests/test_distill_dataset.py` covering held-out/pilot/unexposed-frozen
+  refusal, retired `SCORED_DEVELOPMENT_ONLY` admission, session-group fold isolation, nested `sam3-margin-v2`
+  refusal and off-target seed rejection, `frame_stride`, and COCO box geometry.
 
-### WP2 — Student training harness (`D-FINE-S` and `RF-DETR-Nano`)
+### WP2 — Student training & validation harness (`D-FINE-S`, implemented)
 
-- Extract only the referenced decoded frames (`label_package.extract`) into the private dataset directory.
-- Fine-tune `D-FINE-S` and `RF-DETR-Nano` on the `train` fold (640×640 letterboxed display-oriented frames,
-  horizontal flip augmentation, cosine schedule, fixed seed `0`), holding out the session-disjoint `val` fold.
-- Record checkpoint SHA-256, package versions, and training config in `run.json`.
+- **Modules:** `research/plate-detection/train_phase_b.py` and `DFineStudentProposer` (`dfine_s_student`) in
+  `research/plate-detection/detectors.py`.
+- Validates the curated dataset directory (`validate_dataset_dir`) against current manifests and session-fold
+  isolation before opening any images or annotations.
+- Fine-tunes `D-FINE-S` (`ustc-community/dfine-small-coco`, Apache-2.0, `DFineForObjectDetection`) on the `train`
+  fold with fixed seed `0`, evaluating box IoU, `identity-loose-v1` recall/top-1, `sam3-margin-v2` refusal, and
+  relative centre/radius errors (`evaluate_box_predictions`) on the session-disjoint `val` fold after each epoch.
+- Writes `<output_dir>/best_checkpoint/` and `<output_dir>/student_run.json` with dataset and checkpoint SHA-256
+  provenance.
+- **Tests:** `research/plate-detection/tests/test_train_phase_b.py`.
 
-### WP3 — Development evaluation & `track-guard-v2` re-acquisition
+### WP3 — Development evaluation & `track-guard-v2` re-acquisition (`redetect-v1`, implemented)
 
-- Score student proposals on the held-out development `val` fold using `score_phase_a.py` (`identity-loose-v1`
-  and `pilot-tctr`).
-- Integrate optional student re-detection into `guard.py`: when `track-guard-v2` stops a track after `0.5 s`
-  of rejected/lost frames, query the student detector and resume tracking only if the candidate passes the
-  seed radius consistency check (`|r - r_seed| / r_seed <= 0.15`).
+- **Modules:** `GuardState` in `research/plate-detection/guard.py`, `choose_redetect` (`redetect-v1`) in
+  `research/plate-detection/track.py`, and `run_phase_a2.py --redetect`.
+- When `track-guard-v2` stops a track after `0.5 s` of rejected/lost frames, `run_phase_a2.py --redetect`
+  re-queries the detector at most every `0.5 s` and resumes tracking only if a candidate passes `in-frame-v1`,
+  the seed radius consistency check (`|r - r_seed| / r_seed <= 0.15`), and `sam3-margin-v2`.
+- **Raw-observation preservation:** on every restart frame, `tracker_candidates` (and `tracker_session_index`)
+  preserves the pre-restart tracker observation unmodified, while `post_restart_tracker_candidates` (and
+  `post_restart_session_index`) records the new session's tracker observation alongside
+  `redetect.pre_restart_tracker_candidates` and `redetect.post_restart_tracker_candidates`.
+- **Tests:** `test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes` in
+  `research/plate-detection/tests/test_phase_a2.py` and `test_resume_restarts_a_stopped_state_and_increments_session_index`
+  in `research/plate-detection/tests/test_guard.py`.
 
 ### WP4 — ONNX / LiteRT export & Xiaomi 14T Pro latency benchmark (#179)
 
-- Export the student detector to static-shape ONNX / LiteRT (`fp16` and `int8` calibrated on the `train` fold).
+- Export the trained student detector to static-shape ONNX / LiteRT (`fp16` and `int8` calibrated on the `train` fold).
 - Benchmark frame-0 seed detection latency on the **Xiaomi 14T Pro** (`2407FPN8EG`, Dimensity 9300+) via
   LiteRT `benchmark_model` or ONNX Runtime Mobile, recording results in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
 
@@ -114,6 +140,7 @@ However:
 ## 5. Verification commands
 
 ```bash
+python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --output-dir validation/private/plate-detection-phase-b/dataset-v1
 python -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py

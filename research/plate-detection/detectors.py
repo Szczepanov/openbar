@@ -206,11 +206,76 @@ class Sam3Proposer(_Torch):
         return rows, used
 
 
-def build(name: str) -> Any:
+DFINE_CHECKPOINT = "ustc-community/dfine-small-coco"  # Apache-2.0, ~10M parameters (#233 Phase B)
+DFINE_SCORE_THRESHOLD = 0.25
+
+
+def synthetic_disc_mask(width_px: int, height_px: int, circle: geometry.Circle) -> np.ndarray:
+    """Filled boolean disc mask from a fitted circle, for seeding a mask tracker from a box student."""
+    yy, xx = np.mgrid[:height_px, :width_px]
+    return (xx - circle.center_x_px) ** 2 + (yy - circle.center_y_px) ** 2 <= circle.radius_px ** 2
+
+
+class DFineStudentProposer(_Torch):
+    """Phase B distilled single-class plate detector (D-FINE-S, Apache-2.0, zero SAM 3 weights)."""
+    name = "dfine_s_student"
+
+    def __init__(self, checkpoint: str | Path = DFINE_CHECKPOINT, score_threshold: float = DFINE_SCORE_THRESHOLD) -> None:
+        super().__init__()
+        from transformers import AutoImageProcessor, DFineForObjectDetection
+        self.checkpoint = str(checkpoint)
+        self.score_threshold = float(score_threshold)
+        self.processor = AutoImageProcessor.from_pretrained(self.checkpoint)
+        self.model = DFineForObjectDetection.from_pretrained(self.checkpoint).to(self.device).eval()
+
+    def config(self) -> dict[str, Any]:
+        return {
+            "checkpoint": self.checkpoint,
+            "architecture": "DFineForObjectDetection",
+            "license": "Apache-2.0",
+            "score_threshold": self.score_threshold,
+            "duplicate_iou": DUPLICATE_IOU,
+            "max_candidates": MAX_CANDIDATES,
+        }
+
+    def propose(self, image: np.ndarray) -> list[dict[str, Any]]:
+        return self.propose_with_masks(image)[0]
+
+    def propose_with_masks(self, image: np.ndarray) -> tuple[list[dict[str, Any]], list[np.ndarray | None]]:
+        from PIL import Image
+        pil = Image.fromarray(image[:, :, ::-1].copy())
+        inputs = self.processor(images=pil, return_tensors="pt").to(self.device)
+        with self.torch.no_grad():
+            outputs = self.model(**inputs)
+        result = self.processor.post_process_object_detection(
+            outputs, threshold=self.score_threshold, target_sizes=[(pil.size[1], pil.size[0])]
+        )[0]
+        boxes = result["boxes"].float().tolist()
+        scores = result["scores"].float().tolist()
+        rows: list[dict[str, Any]] = []
+        masks: list[np.ndarray | None] = []
+        height_px, width_px = image.shape[:2]
+        for i in dedupe(boxes, scores):
+            circle = geometry.circle_from_box(*boxes[i])
+            rows.append(
+                _row(
+                    circle,
+                    scores[i],
+                    box_xyxy=[round(v, 2) for v in boxes[i]],
+                    mask_source="synthetic_disc_from_box",
+                )
+            )
+            masks.append(synthetic_disc_mask(width_px, height_px, circle))
+        return rows, masks
+
+
+def build(name: str, checkpoint: str | Path | None = None) -> Any:
     if name == "hough":
         return HoughProposer()
     if name in ("gdino_box", "gdino_sam2"):
         return GroundingDinoProposer(with_sam2=name == "gdino_sam2")
     if name == "sam3":
         return Sam3Proposer()
+    if name == "dfine_s_student":
+        return DFineStudentProposer(checkpoint=checkpoint or DFINE_CHECKPOINT)
     raise ValueError(f"unknown method {name!r}")

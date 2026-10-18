@@ -39,14 +39,42 @@ TRACKERS = {
 OBJECT_ID = 1
 SEED_NAMES = ("gdino_sam2", "sam3")
 
+# Re-detection (#57), fixed before its run. When track-guard-v2 stops a track, SAM 3 runs again at
+# most every REDETECT_INTERVAL_S of media; the sam3-seed-v2 filters apply, the plate must be within
+# REDETECT_RADIUS_FRACTION of the seed's radius (side view: the plate's apparent size barely changes),
+# and sam3-margin-v2 refuses when another plate scores close. Chosen after seeing that the guard stops
+# correct tracks during fast pulls and that EdgeTAM re-locked onto an object of similar radius on
+# self-clean-side-0203-17, which this radius check alone would not reject.
+REDETECT_RULE = "redetect-v1"
+REDETECT_INTERVAL_S = 0.5
+REDETECT_RADIUS_FRACTION = 0.15
 
-def method_name(tracker: str, seed: str) -> str:
+
+def method_name(tracker: str, seed: str, redetect: bool = False) -> str:
     """Output method for a tracker and seed; the two Phase A.2 names are kept unchanged."""
     if tracker not in TRACKERS:
         raise ValueError(f"unknown tracker {tracker!r}")
     if seed not in SEED_NAMES:
         raise ValueError(f"unknown seed {seed!r}; a new seed needs its own method suffix")
-    return f"track_{tracker}" + ("_sam3seed" if seed == "sam3" else "")
+    if redetect and seed != "sam3":
+        raise ValueError("re-detection is defined for the SAM 3 seed only")
+    return f"track_{tracker}" + ("_sam3seed" if seed == "sam3" else "") + ("_redetect" if redetect else "")
+
+
+def choose_redetect(rows: Sequence[dict[str, Any]], width_px: int, height_px: int,
+                    seed_radius_px: float) -> dict[str, Any]:
+    """``redetect-v1``: the SAM 3 candidate to resume from after the guard stopped a track, or none.
+    No labels."""
+    seed = choose_seed_sam3(rows, width_px, height_px)
+    kept_indices = [i for i in seed["plausible_indices"]
+                    if abs(float(rows[i]["radius_px"]) - seed_radius_px) <= REDETECT_RADIUS_FRACTION * seed_radius_px]
+    kept = [selection.Candidate.from_dict(rows[i]) for i in kept_indices]
+    refusal = selection.margin_refusal(kept)
+    top = selection.select_top1(kept)
+    selected = None
+    if top is not None and not refusal["refused"]:
+        selected = next(i for i in kept_indices if selection.Candidate.from_dict(rows[i]) == top)
+    return {"rule": REDETECT_RULE, "selected_index": selected, "matching_indices": kept_indices, "refusal": refusal}
 
 
 def choose_seed(rows: Sequence[dict[str, Any]], width_px: int, height_px: int) -> dict[str, Any]:

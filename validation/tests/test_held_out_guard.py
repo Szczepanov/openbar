@@ -86,19 +86,36 @@ class NoUnguardedEntryPointTests(unittest.TestCase):
 
 
 class PrivateManifestConsistencyTests(unittest.TestCase):
-    def test_reserved_tag_matches_validation_purpose(self) -> None:
+    def test_reserved_tag_and_validation_purpose_agree_with_split_rules(self) -> None:
         present = [p for p in PRIVATE_MANIFESTS if p.is_file()]
         if not present:
             self.skipTest("private manifests are not available in this checkout")
         for path in present:
             for item in json.loads(path.read_text(encoding="utf-8"))["fixtures"]:
                 tags = item["conditions"].get("challenge_tags", [])
+                has_reserved = held_out_guard.RESERVED_TAG in tags
+                has_frozen_eval = "split-frozen-eval" in tags
                 with self.subTest(manifest=path.name, fixture=item["id"]):
-                    self.assertEqual(
-                        item["purpose"] == "validation",
-                        held_out_guard.RESERVED_TAG in tags,
-                        "validation purpose and split-reserved-57 must agree",
-                    )
+                    if has_reserved:
+                        self.assertEqual(
+                            item["purpose"],
+                            "validation",
+                            "split-reserved-57 fixtures must have validation purpose",
+                        )
+                        self.assertFalse(
+                            has_frozen_eval,
+                            "split-reserved-57 fixtures must never be tagged split-frozen-eval",
+                        )
+                    if item["purpose"] == "validation":
+                        self.assertTrue(
+                            has_reserved or has_frozen_eval,
+                            "validation purpose fixtures must carry split-reserved-57 or split-frozen-eval",
+                        )
+                        self.assertNotIn(
+                            "split-exploration",
+                            tags,
+                            "validation purpose fixtures must never be tagged split-exploration",
+                        )
 
 
 if __name__ == "__main__":

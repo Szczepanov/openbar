@@ -174,6 +174,129 @@ class RefusalRuleTests(unittest.TestCase):
             score_phase_a.refusal_rule({"c": self.CLIP}, {"rule": selection.REFUSAL_RULE, "score_ratio": 0.9})
 
 
+class RedetectTests(unittest.TestCase):
+    def rows(self, *spec):
+        return [{**row(x, y, r, sc), "fit": "mask_contour"} for x, y, r, sc in spec]
+
+    def test_picks_the_plate_matching_the_seed_radius(self) -> None:
+        rows = self.rows((500, 900, 130, 0.97), (600, 1200, 200, 0.99), (200, 1500, 125, 0.80))
+        found = track.choose_redetect(rows, 1080, 1920, seed_radius_px=128.0)
+        self.assertEqual((found["rule"], found["selected_index"], found["matching_indices"]),
+                         (track.REDETECT_RULE, 0, [0, 2]))
+
+    def test_refuses_two_close_plates_of_the_seed_size(self) -> None:
+        rows = self.rows((500, 900, 130, 0.95), (200, 1500, 125, 0.93))
+        found = track.choose_redetect(rows, 1080, 1920, seed_radius_px=128.0)
+        self.assertEqual((found["selected_index"], found["refusal"]["refused"]), (None, True))
+
+    def test_nothing_of_the_seed_size(self) -> None:
+        rows = self.rows((500, 900, 200, 0.99), (-5, 900, 128, 0.99))
+        found = track.choose_redetect(rows, 1080, 1920, seed_radius_px=128.0)
+        self.assertEqual((found["selected_index"], found["matching_indices"]), (None, []))
+
+    def test_method_name_for_redetect(self) -> None:
+        self.assertEqual(track.method_name("edgetam", "sam3", redetect=True), "track_edgetam_sam3seed_redetect")
+        with self.assertRaises(ValueError):
+            track.method_name("sam2", "gdino_sam2", redetect=True)
+
+    def test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes(self) -> None:
+        import json
+        import tempfile
+        from unittest.mock import patch
+
+        yy, xx = np.mgrid[:1920, :1080]
+        mask_plate = (xx - 300) ** 2 + (yy - 600) ** 2 <= 100 ** 2
+        mask_wrong = (xx - 850) ** 2 + (yy - 600) ** 2 <= 100 ** 2
+
+        class FakeDetector:
+            def propose_with_masks(self, _image: np.ndarray):
+                return ([{**row(300.0, 600.0, 100.0, 0.96), "fit": "mask_contour"}], [mask_plate])
+
+        class FakeTracker:
+            name = "edgetam"
+
+            def __init__(self) -> None:
+                self.starts = 0
+                self.step_calls = 0
+
+            def start(self, _seed_mask: np.ndarray) -> None:
+                self.starts += 1
+
+            def step(self, _image: np.ndarray):
+                self.step_calls += 1
+                # Call 1 (frame 0, t=0.0): session 0 tracks plate at cx=300
+                # Call 2 (frame 2, t=0.6): session 0 outputs wrong/stale object at cx=850 after gap -> triggers stopped_gap
+                # Call 3 (frame 2, t=0.6): after restart, session 1 tracks plate at cx=300
+                if self.step_calls == 2:
+                    return mask_wrong, 1.5
+                return mask_plate, 2.5
+
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            fake_frame = tmp / "f.png"
+            fake_frame.write_bytes(b"fake")
+            fixture = {
+                "id": "self-clean-side-0203-17",
+                "media": {"repository_path": "dummy.mp4", "sha256": "00"},
+                "video": {"width_px": 1080, "height_px": 1920, "rotation_deg": 0},
+            }
+            probed = {
+                "pts": [0, 300, 600],
+                "timestamps_s": [0.0, 0.3, 0.6],
+                "width_px": 1080,
+                "height_px": 1920,
+                "rotation_deg": 0,
+            }
+            dummy_img = np.zeros((1920, 1080, 3), dtype=np.uint8)
+            with patch.object(run_phase_a2.label_package, "require_media_hash"), \
+                    patch.object(run_phase_a2.label_package, "probe", return_value=probed), \
+                    patch.object(run_phase_a2.label_package, "require_fixture_probe_match"), \
+                    patch.object(run_phase_a2.label_package, "extract", return_value=[fake_frame, fake_frame]), \
+                    patch.object(run_phase_a2.truth, "load_truth", return_value=[]), \
+                    patch("cv2.imread", return_value=dummy_img):
+                summary = run_phase_a2.run_clip(
+                    fixture,
+                    "scored-development-only",
+                    tmp,
+                    FakeDetector(),
+                    FakeTracker(),
+                    stride=2,
+                    output_dir=tmp / "out",
+                    seed_name="sam3",
+                    redetect=True,
+                )
+
+            self.assertEqual(summary["redetected"], 1)
+            out_jsonl = tmp / "out" / "candidates" / "track_edgetam_sam3seed_redetect" / "self-clean-side-0203-17.jsonl"
+            records = [json.loads(line) for line in out_jsonl.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(records), 2)
+            restart_rec = records[1]
+
+            # Pre-restart raw observation (cx ~ 850, session 0) must NOT be overwritten
+            self.assertEqual(restart_rec["tracker_session_index"], 0)
+            self.assertEqual( len(restart_rec["tracker_candidates"]), 1)
+            self.assertAlmostEqual(restart_rec["tracker_candidates"][0]["center_x_px"], 850.0, delta=1.0)
+
+            # Post-restart raw observation (cx ~ 300, session 1) must also be preserved
+            self.assertEqual(restart_rec["post_restart_session_index"], 1)
+            self.assertEqual(len(restart_rec["post_restart_tracker_candidates"]), 1)
+            self.assertAlmostEqual(restart_rec["post_restart_tracker_candidates"][0]["center_x_px"], 300.0, delta=1.0)
+
+            # Both pre- and post-restart candidates and provenance exist inside redetect
+            self.assertEqual(restart_rec["redetect"]["pre_restart_session_index"], 0)
+            self.assertEqual(restart_rec["redetect"]["pre_restart_guard_status"], "stopped_gap")
+            self.assertEqual(restart_rec["redetect"]["pre_restart_tracker_candidates"], restart_rec["tracker_candidates"])
+            self.assertEqual(restart_rec["redetect"]["post_restart_session_index"], 1)
+            self.assertEqual(
+                restart_rec["redetect"]["post_restart_tracker_candidates"],
+                restart_rec["post_restart_tracker_candidates"],
+            )
+            self.assertEqual(restart_rec["guard"]["pre_restart_status"], "stopped_gap")
+            self.assertEqual(restart_rec["guard"]["status"], "redetected")
+            self.assertEqual(restart_rec["guard"]["session_index"], 1)
+            self.assertEqual(restart_rec["candidates"], restart_rec["post_restart_tracker_candidates"])
+
+
 class SeedTests(unittest.TestCase):
     def test_plausible_top1_index(self) -> None:
         rows = [row(500, 900, 700, 0.9), row(300, 600, 100, 0.4), row(800, 600, 90, 0.5)]
