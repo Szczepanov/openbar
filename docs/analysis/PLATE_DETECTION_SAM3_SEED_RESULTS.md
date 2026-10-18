@@ -38,13 +38,13 @@ EdgeTAM was added afterwards as a tracker option only (d4c8ae8, d0caa1b): same s
 checkpoint (`yonigozlan/EdgeTAM-hf` revision c266ce53, a transformers conversion of `facebook/EdgeTAM`, 13.9M
 parameters). Its RepViT backbone is built by `timm` 1.0.20 (Apache-2.0), added to the research requirements for
 this owner-approved model. `timm` read only a backbone config file (`timm/repvit_m1.dist_in1k/config.json`) from
-the Hub cache; all weights come from the hashed EdgeTAM checkpoint. That config file is not pinned or hashed, and
-the EdgeTAM run's `run.json` predates recording the `timm` version (now recorded).
+the Hub cache; all weights come from the hashed EdgeTAM checkpoint. That config file is not pinned or hashed.
+Neither run's `run.json` records the `timm` or torchvision version or the GPU; later records do.
 
 ## Results
 
 Same 27 development clips (25 scored), 388 labelled frames, 11,719 tracked frames, owner labels, `identity-loose-v1`.
-Both runs used torch 2.8.0+cu126 on an RTX 3060 Ti. A.2 is the earlier GroundingDINO seed with SAM 2.1 tracking.
+Both runs used torch 2.8.0+cu126 (recorded) on the owner's desktop GPU, an RTX 3060 Ti (not recorded in these runs). A.2 is the earlier GroundingDINO seed with SAM 2.1 tracking.
 
 | | Clips on target on every labelled frame | Labelled frames on target | Frame-0 refused (would be correct) | Accepted frame-0 correct | Lost frames | Centre err / r, median (p90) | Radius err, median (p90) | Median s/frame |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -87,8 +87,12 @@ the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say 
 - The refusal rule was chosen knowing the facts listed above; its one catch and one false refusal are not evidence
   of how it behaves on new sessions.
 - SAM 3 ran in bfloat16, so its scores come in steps of 1/256 (about 0.004). The 0.05 margin falls between 12 and 13
-  steps: `vbt-45854c8cdf352a6f` (12 steps) and `self-other-side-0215-27` (15 steps) are one to three steps from the
-  other outcome, which a different GPU or library version could change.
+  steps: `vbt-45854c8cdf352a6f` (12 steps, refused), `vbt-bb101cea545505fc` (14 steps, accepted with a correct
+  seed) and `self-other-side-0215-27` (15 steps, accepted with a wrong seed) are one to three steps from the other
+  outcome, which a different GPU or library version could change.
+- A candidate centred on the best one is never a rival, which protects the plate's identity but not its scale: if
+  an inner rim or hub ever outscored the outer rim, it would become the seed unchallenged and its smaller radius
+  would be tracked. No clip here shows that.
 - Nine of the 25 scored clips (eight `vbt-*` clips and `self-hang-snatch-side-002`) have a single labelled frame,
   so for them "on target on every labelled frame" only checks the seed.
 - Labelled frames are 1 s apart in the long clips, so a short wrong segment between labels can be missed. The
@@ -116,8 +120,9 @@ the SAM 3 seed on frame 0 and the rim fit; they are desktop GPU timings and say 
 ## Reproduce
 
 Same venv and checkpoint cache as Phase A, with `HF_HUB_CACHE` pointing to `validation/private/models/hf` and
-`HF_HUB_OFFLINE=1`. Both runs used torch 2.8.0+cu126 and torchvision 0.23.0; the requirements now pin torch 2.14.1
-(#241), so a rerun from the current pins is a different environment. From a worktree, with private data in the main checkout:
+`HF_HUB_OFFLINE=1`. Both runs used torch 2.8.0+cu126; the requirements now pin torch 2.14.1 (#241), so a rerun from
+the current pins is a different environment. The score files were produced by the scorer at 8899977, which takes
+the refusal constants from each run's `run.json`. From a worktree, with private data in the main checkout:
 
 ```bash
 python research/plate-detection/run_phase_a2.py --repo-root <main checkout> --seed sam3 --output-dir validation/private/plate-detection-sam3-seed/run-2
@@ -130,6 +135,6 @@ Run records (private), SHA-256:
 | File | SHA-256 | Code |
 | --- | --- | --- |
 | `run-2/run.json` | `088aa7ba6aec408d5b72aa147cf0cc77b42312095c76b82719fcb82c6e35742b` | 4c2d531 |
-| `run-2/score.json` | `e886be672261e6089e61ae72fc79afc5c62b6020a983ed78d4ffcefb5eb3ebba` | |
+| `run-2/score.json` | `cf229ff215f76d876a67b82cc87f62f5667c4f073e535cedc6ea4fee12a7eed4` | 8899977 |
 | `run-edgetam-1/run.json` | `b7b3bd0eafa2076cf16a774f39cd42e4d5c8c729de1e5c7e3106e7a45f047f8e` | d0caa1b |
-| `run-edgetam-1/score.json` | `cc1c54314b414c028c80c9de54895819101d2864393708aaea74e46bf34ee45f` | |
+| `run-edgetam-1/score.json` | `3897cf194680df8048590c7a430bc0ec57605dd3ca7ff3cb28f4236c7deed337` | 8899977 |
