@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import contextlib
+import io
 import re
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import clips  # noqa: E402
@@ -47,6 +50,58 @@ class GuardTests(unittest.TestCase):
         fixtures = {f["id"]: f for f in [fixture("b", "development", "split-exploration"),
                                          fixture("a", "validation", "split-reserved-57")]}
         self.assertEqual(clips.development_clips(fixtures), {"b": "exploration"})
+
+
+class ScoreEntryPointTests(unittest.TestCase):
+    def test_cli_checks_all_current_roles_before_candidates_or_labels(self) -> None:
+        refused = [
+            (fixture("x", "validation", "split-reserved-57"), "exploration"),
+            (fixture("x", "validation", "split-exploration"), "exploration"),
+            (fixture("x", "development", "split-exploration"), "scored-development-only"),
+            (fixture("x", "development", "split-frozen-eval"), "exploration"),
+            (fixture("other", "development", "split-exploration"), "exploration"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = root / "run"
+            run.mkdir()
+            private = root / "validation" / "private"
+            (private / "vbt").mkdir(parents=True)
+            (private / "vbt" / "manifest.json").write_text('{"fixtures": []}')
+            output = root / "score.json"
+            for current, recorded_role in refused:
+                with self.subTest(current=current, recorded_role=recorded_role):
+                    (private / "manifest.json").write_text(json.dumps({"fixtures": [
+                        fixture("allowed", "development", "split-exploration"), current]}))
+                    (run / "run.json").write_text(json.dumps({"clips": {
+                        "allowed": "exploration", "x": recorded_role}, "methods": {}}))
+                    with patch.object(score_phase_a, "score_run", side_effect=AssertionError("opened inputs")):
+                        with self.assertRaises(clips.ClipRefused):
+                            score_phase_a.main(["--run-dir", str(run), "--repo-root", str(root),
+                                                "--output", str(output)])
+                    self.assertFalse(output.exists())
+
+    def test_cli_scores_allowed_development_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = root / "run"
+            run.mkdir()
+            private = root / "validation" / "private"
+            private.mkdir(parents=True)
+            manifest = root / "current-manifest.json"
+            manifest.write_text(json.dumps({"fixtures": [
+                fixture("allowed", "development", "split-exploration"),
+                fixture("self-other-side-0215-27", "validation", "split-frozen-eval")]}))
+            roles = {"allowed": "exploration", "self-other-side-0215-27": "scored-development-only"}
+            (run / "run.json").write_text(json.dumps({"clips": roles, "methods": {}}))
+            output = root / "score.json"
+            with patch.object(score_phase_a, "score_run", return_value={"methods": {}}) as score, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(score_phase_a.main(["--run-dir", str(run), "--repo-root", str(root),
+                                                    "--manifest", str(manifest),
+                                                    "--output", str(output)]), 0)
+            score.assert_called_once_with(run, private, roles)
+            self.assertEqual(json.loads(output.read_text()), {"methods": {}})
 
 
 class FramePlanTests(unittest.TestCase):
