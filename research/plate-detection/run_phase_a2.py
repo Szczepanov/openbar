@@ -78,11 +78,12 @@ def provenance(seed: str, detector: Any, tracker: Any, stride: int, repo_root: P
               "circle_fit": "geometry.circle_from_mask (seed rows may fall back to geometry.circle_from_box)"}
     seed_repos = ({detectors.SAM3_CHECKPOINT} if seed == "sam3"
                   else {detectors.GDINO_CHECKPOINT, detectors.SAM2_CHECKPOINT})
-    repos = sorted(seed_repos | {track.TRACKERS[tracker.name]["checkpoint"]})
+    pinned = {track.TRACKERS[tracker.name]["checkpoint"]: track.TRACKERS[tracker.name]["revision"]}
+    repos = sorted(seed_repos | set(pinned))
     return {"harness": HARNESS_ID, "origin": "machine", "code_commit": commit, "dirty": bool(dirty),
             "source_sha256": {p.name: run_phase_a.sha256_file(p) for p in sorted(HERE.glob("*.py"))},
             "python": platform.python_version(), "packages": packages, "methods": {name: method},
-            "checkpoints": {name: [run_phase_a.checkpoint_files(repo) for repo in repos]},
+            "checkpoints": {name: [run_phase_a.checkpoint_files(repo, pinned.get(repo)) for repo in repos]},
             "repo_root": repo_root.name}
 
 
