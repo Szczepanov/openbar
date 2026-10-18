@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""Curate a leak-free, session-grouped COCO dataset from SAM 3 + SAM 2.1 teacher tracks (#233 Phase B).
+
+Stdlib only, model-free. Reads guarded (or raw, automatically applying ``track-guard-v2``) teacher
+JSONL tracks on the 27 development clips (``clips.development_role``), vetoes clips whose seed was
+refused or disagrees with development truth (``identity-loose-v1``), groups clips by recording
+session so no session straddles ``train`` and ``val``, and writes deterministic COCO bounding-box
+annotations plus ``dataset_manifest.json``.
+
+Clips tagged ``split-reserved-57``, ``purpose: validation``, ``split-frozen-eval``, pilot, or
+refusal-candidate are unconditionally refused by ``clips.development_role`` and ``held_out_guard``.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(ROOT / "validation" / "tools"))
+
+import clips  # noqa: E402
+import guard  # noqa: E402
+import held_out_guard  # noqa: E402
+import label_package  # noqa: E402
+import selection  # noqa: E402
+import truth  # noqa: E402
+
+HARNESS_ID = "plate-detection-phase-b-distill-v1"
+CATEGORY_ID = 1
+CATEGORY_NAME = "barbell_plate"
+TRUTH_MATCH_TOLERANCE_S = 0.04
+DEFAULT_VAL_SESSIONS = frozenset({
+    "session-self-2023-02-06",
+    "session-self-2023-02-12",
+    "session-self-early",
+})
+_DATE_TOKEN_RE = re.compile(r"-(1015|0203|0206|0212|0213|0215|0219|0226)-")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def session_group(fixture_id: str) -> str:
+    """Return the recording-session group identifier so no session straddles train and val."""
+    if fixture_id.startswith("vbt-"):
+        return "session-vbt-2026-10-03"
+    match = _DATE_TOKEN_RE.search(fixture_id)
+    if match:
+        token = match.group(1)
+        year = "2026" if token == "1015" else "2023"
+        month, day = token[:2], token[2:]
+        return f"session-self-{year}-{month}-{day}"
+    if fixture_id.startswith("self-"):
+        return "session-self-early"
+    return f"session-other-{fixture_id}"
+
+
+def assign_session_folds(
+    clip_ids: list[str],
+    val_sessions: frozenset[str] | set[str] = DEFAULT_VAL_SESSIONS,
+) -> dict[str, str]:
+    """Assign each clip_id to 'train' or 'val' strictly by session_group."""
+    folds: dict[str, str] = {}
+    for clip_id in sorted(clip_ids):
+        group = session_group(clip_id)
+        folds[clip_id] = "val" if group in val_sessions else "train"
+    train_groups = {session_group(cid) for cid, fold in folds.items() if fold == "train"}
+    val_groups = {session_group(cid) for cid, fold in folds.items() if fold == "val"}
+    overlap = train_groups & val_groups
+    if overlap:
+        raise RuntimeError(f"session group leakage between train and val: {sorted(overlap)}")
+    return folds
+
+
+def circle_to_coco_bbox(
+    center_x_px: float,
+    center_y_px: float,
+    radius_px: float,
+    width_px: int,
+    height_px: int,
+) -> list[float] | None:
+    """Convert a circle (cx, cy, r) to a clamped COCO [x_min, y_min, width, height] box."""
+    if not all(math.isfinite(v) for v in (center_x_px, center_y_px, radius_px)):
+        return None
+    if radius_px <= 0.0 or width_px <= 0 or height_px <= 0:
+        return None
+    x0 = max(0.0, min(float(width_px), center_x_px - radius_px))
+    y0 = max(0.0, min(float(height_px), center_y_px - radius_px))
+    x1 = max(0.0, min(float(width_px), center_x_px + radius_px))
+    y1 = max(0.0, min(float(height_px), center_y_px + radius_px))
+    box_w = round(x1 - x0, 4)
+    box_h = round(y1 - y0, 4)
+    if box_w <= 0.0 or box_h <= 0.0:
+        return None
+    return [round(x0, 4), round(y0, 4), box_w, box_h]
+
+
+def seed_matches_truth(
+    records: list[dict[str, Any]],
+    truth_points: list[truth.TruthPoint],
+) -> tuple[bool, str]:
+    """Verify that the teacher clip's seed was accepted and agrees with development truth."""
+    if not records:
+        return False, "empty_records"
+    first_seed = records[0].get("seed") or {}
+    if first_seed.get("refused") is True:
+        return False, "seed_refused"
+    if first_seed.get("tracked") is False or not records[0].get("candidates"):
+        return False, "seed_untracked"
+
+    if not truth_points:
+        return True, "accepted_unlabelled_exploration"
+
+    # Check the earliest record that aligns with a human truth label.
+    for point in sorted(truth_points, key=lambda p: p.timestamp_s):
+        nearest = min(records, key=lambda r: abs(float(r["time_s"]) - point.timestamp_s))
+        if abs(float(nearest["time_s"]) - point.timestamp_s) > TRUTH_MATCH_TOLERANCE_S:
+            continue
+        candidates = nearest.get("candidates") or []
+        if not candidates:
+            return False, "seed_lost_at_first_truth"
+        cand = selection.Candidate.from_dict(candidates[0])
+        if not selection.match(cand, point.center_x_px, point.center_y_px, point.radius_px):
+            return False, "seed_off_target_vs_truth"
+        return True, "accepted_verified_vs_truth"
+
+    return True, "accepted_no_aligned_truth"
+
+
+def curate_clip_records(
+    fixture: dict[str, Any],
+    records: list[dict[str, Any]],
+    truth_points: list[truth.TruthPoint],
+) -> dict[str, Any]:
+    """Validate clip split role, apply track-guard-v2 if needed, and extract positive boxes."""
+    if held_out_guard.is_held_out(fixture):
+        raise clips.ClipRefused(f"{fixture.get('id', '<no id>')} is held-out; refused for Phase B distillation")
+    role = clips.development_role(fixture)
+    fixture_id = fixture["id"]
+
+    guarded = records if (records and "guard" in records[0]) else guard.guard_track(records)
+    accepted_seed, reason = seed_matches_truth(guarded, truth_points)
+    if not accepted_seed:
+        return {
+            "fixture_id": fixture_id,
+            "role": role,
+            "session_group": session_group(fixture_id),
+            "status": "excluded",
+            "reason": reason,
+            "total_frames": len(guarded),
+            "accepted_frames": 0,
+            "frames": [],
+        }
+
+    frames: list[dict[str, Any]] = []
+    for rec in guarded:
+        guard_info = rec.get("guard") or {"status": "tracked"}
+        if guard_info.get("status") != "tracked":
+            continue
+        candidates = rec.get("candidates") or []
+        if not candidates:
+            continue
+        cand = candidates[0]
+        cx = float(cand["center_x_px"])
+        cy = float(cand["center_y_px"])
+        radius = float(cand["radius_px"])
+        width_px = int(rec["width_px"])
+        height_px = int(rec["height_px"])
+        bbox = circle_to_coco_bbox(cx, cy, radius, width_px, height_px)
+        if bbox is None:
+            continue
+        frames.append(
+            {
+                "fixture_id": fixture_id,
+                "frame_index": int(rec["frame_index"]),
+                "pts": int(rec["pts"]),
+                "time_s": float(rec["time_s"]),
+                "width_px": width_px,
+                "height_px": height_px,
+                "bbox": bbox,
+                "center_x_px": round(cx, 4),
+                "center_y_px": round(cy, 4),
+                "radius_px": round(radius, 4),
+                "teacher_score": round(float(cand.get("score", 1.0)), 5),
+            }
+        )
+
+    return {
+        "fixture_id": fixture_id,
+        "role": role,
+        "session_group": session_group(fixture_id),
+        "status": "included" if frames else "excluded",
+        "reason": reason if frames else "no_accepted_frames",
+        "total_frames": len(guarded),
+        "accepted_frames": len(frames),
+        "frames": frames,
+    }
+
+
+def build_coco_split(curated_clips: list[dict[str, Any]], fold: str) -> dict[str, Any]:
+    """Build a deterministic COCO object-detection dictionary for a single fold ('train' or 'val')."""
+    images: list[dict[str, Any]] = []
+    annotations: list[dict[str, Any]] = []
+    next_image_id = 1
+    next_ann_id = 1
+
+    for clip in sorted(curated_clips, key=lambda c: c["fixture_id"]):
+        if clip.get("fold") != fold or clip.get("status") != "included":
+            continue
+        fixture_id = clip["fixture_id"]
+        for frame in clip["frames"]:
+            frame_idx = frame["frame_index"]
+            file_name = f"frames/{fixture_id}/frame_{frame_idx:06d}.png"
+            images.append(
+                {
+                    "id": next_image_id,
+                    "file_name": file_name,
+                    "width": frame["width_px"],
+                    "height": frame["height_px"],
+                    "fixture_id": fixture_id,
+                    "frame_index": frame_idx,
+                    "pts": frame["pts"],
+                    "time_s": frame["time_s"],
+                    "session_group": clip["session_group"],
+                }
+            )
+            box_w, box_h = frame["bbox"][2], frame["bbox"][3]
+            annotations.append(
+                {
+                    "id": next_ann_id,
+                    "image_id": next_image_id,
+                    "category_id": CATEGORY_ID,
+                    "bbox": frame["bbox"],
+                    "area": round(box_w * box_h, 4),
+                    "iscrowd": 0,
+                    "center_x_px": frame["center_x_px"],
+                    "center_y_px": frame["center_y_px"],
+                    "radius_px": frame["radius_px"],
+                    "teacher_score": frame["teacher_score"],
+                }
+            )
+            next_image_id += 1
+            next_ann_id += 1
+
+    return {
+        "info": {
+            "description": f"OpenBar Phase B teacher-distilled plate dataset ({fold} fold, machine-origin)",
+            "version": "1.0",
+            "harness": HARNESS_ID,
+            "origin": "machine",
+            "fold": fold,
+        },
+        "licenses": [
+            {
+                "id": 1,
+                "name": "Research-only development split (see docs/legal/SAM3_LICENCE_REVIEW.md)",
+            }
+        ],
+        "categories": [
+            {
+                "id": CATEGORY_ID,
+                "name": CATEGORY_NAME,
+                "supercategory": "equipment",
+            }
+        ],
+        "images": images,
+        "annotations": annotations,
+    }
+
+
+def export_distillation_dataset(
+    *,
+    repo_root: Path,
+    teacher_run_dir: Path,
+    method: str,
+    output_dir: Path,
+    manifests: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Curate and export train/val COCO annotations and dataset_manifest.json."""
+    repo_root = repo_root.resolve()
+    teacher_run_dir = teacher_run_dir.resolve()
+    output_dir = output_dir.resolve()
+    if not output_dir.is_relative_to(label_package.PRIVATE_ROOT.resolve()):
+        raise SystemExit(f"output must be under {label_package.PRIVATE_ROOT}")
+    if output_dir.exists():
+        raise SystemExit(f"{output_dir} already exists; choose a new --output-dir")
+
+    manifest_paths = manifests or [
+        repo_root / "validation" / "private" / "manifest.json",
+        repo_root / "validation" / "private" / "vbt" / "manifest.json",
+    ]
+    fixtures = clips.load_fixtures(manifest_paths)
+    allowed = clips.development_clips(fixtures)
+    folds = assign_session_folds(list(allowed))
+
+    candidates_dir = teacher_run_dir / "candidates" / method
+    if not candidates_dir.is_dir():
+        raise SystemExit(f"teacher candidates directory not found: {candidates_dir}")
+
+    private_root = repo_root / "validation" / "private"
+    curated_clips: list[dict[str, Any]] = []
+    jsonl_hashes: dict[str, str] = {}
+
+    for fixture_id in sorted(allowed):
+        jsonl_path = candidates_dir / f"{fixture_id}.jsonl"
+        if not jsonl_path.is_file():
+            continue
+        jsonl_hashes[fixture_id] = sha256_file(jsonl_path)
+        records = [
+            json.loads(line)
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        truth_points = truth.load_truth(fixture_id, private_root)
+        curated = curate_clip_records(fixtures[fixture_id], records, truth_points)
+        curated["fold"] = folds[fixture_id]
+        curated_clips.append(curated)
+
+    train_coco = build_coco_split(curated_clips, "train")
+    val_coco = build_coco_split(curated_clips, "val")
+
+    ann_dir = output_dir / "annotations"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+    train_path = ann_dir / "train.coco.json"
+    val_path = ann_dir / "val.coco.json"
+    train_path.write_text(json.dumps(train_coco, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    val_path.write_text(json.dumps(val_coco, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=False
+    ).stdout.strip()
+    run_json_path = teacher_run_dir / "run.json"
+    manifest_doc = {
+        "harness": HARNESS_ID,
+        "origin": "machine",
+        "code_commit": commit,
+        "teacher_run": {
+            "path": teacher_run_dir.name,
+            "method": method,
+            "run_json_sha256": sha256_file(run_json_path) if run_json_path.is_file() else None,
+            "clip_jsonl_sha256": jsonl_hashes,
+        },
+        "summary": {
+            "total_clips": len(curated_clips),
+            "included_clips": sum(1 for c in curated_clips if c["status"] == "included"),
+            "excluded_clips": sum(1 for c in curated_clips if c["status"] == "excluded"),
+            "train_images": len(train_coco["images"]),
+            "val_images": len(val_coco["images"]),
+        },
+        "clips": [
+            {k: v for k, v in clip.items() if k != "frames"}
+            for clip in curated_clips
+        ],
+    }
+    (output_dir / "dataset_manifest.json").write_text(
+        json.dumps(manifest_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return manifest_doc
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--repo-root", type=Path, required=True, help="checkout holding validation/private")
+    p.add_argument("--teacher-run-dir", type=Path, required=True, help="Phase A.2 / SAM 3 seed run directory")
+    p.add_argument(
+        "--method",
+        default="track_sam2_sam3seed_guard",
+        help="candidate directory name under <teacher-run-dir>/candidates/",
+    )
+    p.add_argument("--output-dir", type=Path, required=True, help="target directory under validation/private")
+    p.add_argument("--manifest", type=Path, action="append")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    manifest_doc = export_distillation_dataset(
+        repo_root=args.repo_root,
+        teacher_run_dir=args.teacher_run_dir,
+        method=args.method,
+        output_dir=args.output_dir,
+        manifests=args.manifest,
+    )
+    print(json.dumps(manifest_doc["summary"], sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

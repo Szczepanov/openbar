@@ -19,7 +19,7 @@ Then open **`http://127.0.0.1:8080`** in Chrome on your Xiaomi 14T Pro:
 1. Tap **Choose File** to record a lift with the camera or pick a clip from your gallery.
 2. Tap **Load Seed Frame** (extracts the display-oriented frame with `ffprobe`/`ffmpeg` PTS alignment).
 3. Tap the plate centre on the touch canvas and adjust the radius slider.
-4. Select `--tracker csrt-gray` (or `template` / `contrast`) and tap **Run OpenBar Analysis**.
+4. Select `--tracker csrt-gray`, `opencv-csrt` (via `research/opencv-tracking/track.py` -> `openbar-cli analyze --observations`, supporting full 1080p plate radii `> 127.75 px`), `template`, or `contrast`, and tap **Run OpenBar Analysis**.
 5. Inspect upward rep velocity preview ([ADR-0012](../../docs/adr/0012-portable-rep-and-phase-metrics-contract.md)), stage timings against the `< 5.0 s` median / `< 8.0 s` max target ([ANDROID_LATENCY_EVIDENCE.md](../../docs/validation/ANDROID_LATENCY_EVIDENCE.md)), and the diagnostic SVG overlay ([ADR-0013](../../docs/adr/0013-video-playback-and-bar-path-overlay-contract.md)).
 
 ### 2. Over Home/Gym Wi-Fi from PC

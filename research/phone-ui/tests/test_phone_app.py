@@ -150,6 +150,45 @@ class PhoneAppTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_opencv_csrt_observations_flow_when_opencv_available(self) -> None:
+        if not ffmpeg_available():
+            self.skipTest("ffmpeg/ffprobe not on PATH")
+        try:
+            phone_app.resolve_opencv_python()
+        except phone_app.PhoneAppError:
+            self.skipTest("opencv-contrib-python not installed")
+
+        synthetic_mp4 = ROOT / "validation" / "fixtures" / "public" / "synthetic-clean-side-12.mp4"
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            probe = phone_app.probe_and_extract_seed_frame(synthetic_mp4, work_dir, at_s=0.0)
+            seed_doc = phone_app.build_manual_seed_document(
+                fixture_id=probe["fixture_id"],
+                source_video_sha256=probe["source_video_sha256"],
+                encoded_width_px=probe["encoded_width_px"],
+                encoded_height_px=probe["encoded_height_px"],
+                rotation_deg=probe["rotation_deg"],
+                display_width_px=probe["display_width_px"],
+                display_height_px=probe["display_height_px"],
+                timestamp_s=probe["timestamp_s"],
+                frame_index=probe["frame_index"],
+                center_x_px=100.0,
+                center_y_px=190.0,
+                radius_px=24.0,
+            )
+            result = phone_app.run_phone_analysis(
+                video_path=synthetic_mp4,
+                seed_doc=seed_doc,
+                plate_diameter_m=0.45,
+                tracker="opencv-csrt",
+                filter_preset="savitzky-golay-7",
+                exercise="back_squat",
+                work_dir=work_dir,
+            )
+            self.assertEqual(result["tracker"], "opencv-csrt")
+            self.assertEqual(result["observation_counts"]["total"], 12)
+            self.assertIn("<svg", result["diagnostic_svg"] or "")
+
 
 if __name__ == "__main__":
     unittest.main()

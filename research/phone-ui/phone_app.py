@@ -39,9 +39,11 @@ import label_package  # noqa: E402
 import schema_check  # noqa: E402
 
 SEED_SCHEMA_PATH = ROOT / "validation" / "schema" / "manual-target-seed-v1.schema.json"
+PREDICTION_SCHEMA_PATH = ROOT / "validation" / "schema" / "tracker-prediction-v1.schema.json"
 ANALYSIS_SCHEMA_PATH = ROOT / "validation" / "schema" / "analysis-v1.schema.json"
+OPENCV_TRACK_SCRIPT = ROOT / "research" / "opencv-tracking" / "track.py"
 
-TRACKERS = ("csrt-gray", "template", "contrast")
+TRACKERS = ("csrt-gray", "opencv-csrt", "template", "contrast")
 FILTERS = ("savitzky-golay-0.15s", "savitzky-golay-7", "raw")
 EXERCISES = ("back_squat", "snatch", "clean", "deadlift", "bench_press", "other")
 PREVIEW_MIN_RISE_M = 0.10
@@ -63,6 +65,31 @@ def compute_sha256(path: Path) -> str:
 
 def fixture_id_for_sha256(sha256_hex: str) -> str:
     return f"phone-{sha256_hex[:16]}"
+
+
+def resolve_opencv_python() -> str:
+    """Return a Python interpreter with OpenCV (`cv2`) installed, or raise PhoneAppError."""
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python"
+    candidates = [
+        ROOT / "research" / "opencv-tracking" / ".venv" / bin_dir / exe_name,
+        ROOT / "research" / "plate-detection" / ".venv" / bin_dir / exe_name,
+        Path(sys.executable),
+    ]
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        proc = subprocess.run(
+            [str(candidate), "-c", "import cv2; assert hasattr(cv2, 'TrackerCSRT_create') or hasattr(getattr(cv2, 'legacy', None), 'TrackerCSRT_create')"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0:
+            return str(candidate)
+    raise PhoneAppError(
+        "opencv-csrt requires opencv-contrib-python (install in research/opencv-tracking/.venv or Termux python-opencv)"
+    )
 
 
 def resolve_openbar_cli(explicit_binary: Path | None = None) -> list[str]:
@@ -339,6 +366,65 @@ def run_phone_analysis(
         filter_flags = ["--filter", "raw"]
     prefix = cli_prefix if cli_prefix is not None else resolve_openbar_cli()
 
+    if tracker == "opencv-csrt":
+        python_exe = resolve_opencv_python()
+        probed = label_package.probe(video_path)
+        manifest_path = work_dir / f"{fixture_id}.manifest.json"
+        prediction_path = work_dir / f"{fixture_id}.opencv-csrt.prediction-v1.json"
+        try:
+            repo_rel = video_path.resolve().relative_to(ROOT.resolve()).as_posix()
+        except ValueError:
+            repo_rel = str(video_path.resolve())
+        manifest_doc = {
+            "fixtures": [
+                {
+                    "id": fixture_id,
+                    "purpose": "development",
+                    "media": {
+                        "repository_path": repo_rel,
+                        "sha256": compute_sha256(video_path),
+                    },
+                    "video": {
+                        "width_px": int(probed["width_px"]),
+                        "height_px": int(probed["height_px"]),
+                        "rotation_deg": int(probed["rotation_deg"]),
+                    },
+                    "conditions": {
+                        "challenge_tags": ["phone-ui"],
+                    },
+                }
+            ]
+        }
+        manifest_path.write_text(json.dumps(manifest_doc, indent=2) + "\n", encoding="utf-8")
+        track_cmd = [
+            python_exe,
+            str(OPENCV_TRACK_SCRIPT),
+            "--manifest",
+            str(manifest_path.resolve()),
+            "--fixture",
+            fixture_id,
+            "--seed",
+            str(seed_path.resolve()),
+            "--tracker",
+            "csrt",
+            "--omit-runtime",
+            "--output",
+            str(prediction_path.resolve()),
+        ]
+        track_proc = subprocess.run(
+            track_cmd, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        if track_proc.returncode != 0:
+            raise PhoneAppError(f"opencv-csrt track.py failed: {track_proc.stderr.strip()[-500:]}")
+        pred_doc = json.loads(prediction_path.read_text(encoding="utf-8"))
+        pred_schema = schema_check.load_schema(PREDICTION_SCHEMA_PATH)
+        pred_errors = schema_check.validate_document(pred_doc, pred_schema)
+        if pred_errors:
+            raise PhoneAppError(f"opencv-csrt prediction failed schema check: {'; '.join(pred_errors)}")
+        tracker_flags = ["--observations", str(prediction_path.resolve())]
+    else:
+        tracker_flags = ["--tracker", tracker]
+
     analyze_cmd = [
         *prefix,
         "analyze",
@@ -352,8 +438,7 @@ def run_phone_analysis(
         str(seed_path.resolve()),
         "--plate-diameter-m",
         str(plate_diameter_m),
-        "--tracker",
-        tracker,
+        *tracker_flags,
         *filter_flags,
         "--kinematics-max-gap-s",
         "0.2",
@@ -563,11 +648,12 @@ MOBILE_HTML = """<!doctype html>
   </div>
   <div class="row">
     <div>
-      <label>Rust Tracker (#57)</label>
+      <label>Tracker (#57)</label>
       <select id="tracker">
-        <option value="csrt-gray">csrt-gray (CSRT grayscale)</option>
-        <option value="template">template (M0 baseline)</option>
-        <option value="contrast">contrast (M0 baseline)</option>
+        <option value="csrt-gray">csrt-gray (Rust CSRT grayscale, r &le; 127.75 px)</option>
+        <option value="opencv-csrt">opencv-csrt (OpenCV CSRT &rarr; analyze --observations, any r)</option>
+        <option value="template">template (Rust M0 baseline)</option>
+        <option value="contrast">contrast (Rust M0 baseline)</option>
       </select>
     </div>
     <div>
@@ -670,9 +756,9 @@ document.getElementById('btnLoadFrame').addEventListener('click', async () => {
       x: Math.floor(data.display_width_px / 2),
       y: Math.floor(data.display_height_px / 2),
     };
-    const maxR = Math.min(125, Math.floor(Math.min(data.display_width_px, data.display_height_px) / 4));
+    const maxR = Math.min(480, Math.floor(Math.min(data.display_width_px, data.display_height_px) / 2.2));
     radiusSlider.max = Math.max(8, maxR);
-    radiusSlider.value = Math.min(24, Math.max(6, Math.floor(maxR * 0.6)));
+    radiusSlider.value = Math.min(80, Math.max(6, Math.floor(maxR * 0.25)));
     radiusLabel.textContent = radiusSlider.value;
 
     frameImg.onload = () => {
