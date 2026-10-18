@@ -7,6 +7,7 @@ docs/analysis/PLATE_MOTION_OBSERVATION.md for the statistic and its limits.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -105,7 +106,9 @@ def observe(records):
 
 def report_run(run_dir, manifests):
     source_path = run_dir / "run.json"
-    source = json.loads(source_path.read_text(encoding="utf-8"))
+    source_bytes = source_path.read_bytes()
+    source = json.loads(source_bytes.decode("utf-8"))
+    manifest_hashes = [sha256_file(p) for p in manifests]
     fixtures = clips.load_fixtures(manifests)
     # Check every declared clip before opening any track, including clips not yet written.
     for name, role in source["clips"].items():
@@ -126,26 +129,29 @@ def report_run(run_dir, manifests):
             if Path(name).name != name or name in (".", ".."):
                 raise ValueError("invalid fixture path")
             path = folder / f"{name}.jsonl"
-            records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            track_bytes = path.read_bytes()
+            records = [json.loads(line) for line in track_bytes.decode("utf-8").splitlines() if line.strip()]
             if not records:
                 raise ValueError(f"{path}: empty track")
             if any(r.get("fixture_id") != name or r.get("method") != method for r in records):
                 raise ValueError(f"{path}: track identity mismatch")
             tracks[method][name] = {
-                "role": source["clips"][name], "source_sha256": sha256_file(path),
+                "role": source["clips"][name], "source_sha256": hashlib.sha256(track_bytes).hexdigest(),
                 "recorded_seed_decision": {k: v for k, v in records[0].get("seed", {}).items()
                                            if k != "candidates"},
                 **observe(records),
             }
+    if [sha256_file(p) for p in manifests] != manifest_hashes:
+        raise ValueError("manifest changed during processing; refusing inconsistent provenance")
     return {
         "rule": RULE, "origin": "machine", "use": "development-observation-only",
         "config": {"threshold_radii": THRESHOLD_RADII, "max_gap_s": MAX_GAP_S,
                    "quantiles": [.02, .98], "weighting": "left_endpoint_valid_interval_duration",
                    "normalization": "first_valid_tracked_radius"},
-        "source_run_sha256": sha256_file(source_path),
+        "source_run_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "source_sha256": {p.name: sha256_file(p) for p in
                           (Path(__file__), Path(clips.__file__))},
-        "manifest_sha256": [sha256_file(p) for p in manifests],
+        "manifest_sha256": manifest_hashes,
         "tracks": tracks,
     }
 

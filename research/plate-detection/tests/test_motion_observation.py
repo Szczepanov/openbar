@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import contextlib
+import hashlib
 import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import motion_observation as motion
@@ -96,6 +98,46 @@ class MotionTests(unittest.TestCase):
                                        for r in [frame(0, 0), frame(.1, 0)]))
             first = motion.report_run(run, [manifest])
             self.assertEqual(first, motion.report_run(run, [manifest]))
+            for input_path, digest in ((track, first["tracks"]["track"]["example"]["source_sha256"]),
+                                       (run / "run.json", first["source_run_sha256"])):
+                original = input_path.read_bytes()
+                read_bytes, read_text = Path.read_bytes, Path.read_text
+
+                def replace_after_bytes(path, *args, **kwargs):
+                    data = read_bytes(path, *args, **kwargs)
+                    if path == input_path:
+                        path.write_bytes(original + b"\n")
+                    return data
+
+                def replace_after_text(path, *args, **kwargs):
+                    data = read_text(path, *args, **kwargs)
+                    if path == input_path:
+                        path.write_bytes(original + b"\n")
+                    return data
+
+                try:
+                    with patch.object(Path, "read_bytes", replace_after_bytes), \
+                            patch.object(Path, "read_text", replace_after_text):
+                        changed = motion.report_run(run, [manifest])
+                    reported = (changed["source_run_sha256"] if input_path.name == "run.json" else
+                                changed["tracks"]["track"]["example"]["source_sha256"])
+                    self.assertEqual(reported, digest)
+                    self.assertNotEqual(reported, hashlib.sha256(input_path.read_bytes()).hexdigest())
+                finally:
+                    input_path.write_bytes(original)
+            original = manifest.read_bytes()
+            load_fixtures = motion.clips.load_fixtures
+
+            def replace_manifest(paths):
+                fixtures = load_fixtures(paths)
+                manifest.write_bytes(original + b"\n")
+                return fixtures
+
+            try:
+                with patch.object(motion.clips, "load_fixtures", replace_manifest), self.assertRaises(ValueError):
+                    motion.report_run(run, [manifest])
+            finally:
+                manifest.write_bytes(original)
             track.write_text(track.read_text() + "\n")
             self.assertNotEqual(first["tracks"], motion.report_run(run, [manifest])["tracks"])
             fixture["conditions"]["challenge_tags"].append("split-reserved-57")

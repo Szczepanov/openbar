@@ -17,9 +17,15 @@ and accept the first moving one on this evidence.
 `research/plate-detection/motion_observation.py` reads completed track JSONL and writes a separate
 report. It opens no media, labels or models and changes no source track. Its development-input
 gate uses the manifests and `clips.development_role` before reading any track, including an
-unconditional refusal of `split-reserved-57`. Missing tracks, partial/unexpected files, invalid
-coordinates, radii, scores, timestamps and track-identity mismatches fail closed. Output cannot
-be inside the source run or overwrite an existing file.
+unconditional refusal of `split-reserved-57`. Missing tracks, partial/unexpected files, non-finite
+coordinates, invalid radii, scores, timestamps and track-identity mismatches fail closed. Finite
+off-frame fitted centres are retained as raw diagnostic evidence, not validated canonical pixel
+observations. Output cannot be inside the source run or overwrite an existing file.
+
+Track and run-metadata hashes identify the exact byte snapshots parsed, even if a producer
+replaces those files during processing. Manifests are hashed before loading and checked again
+before returning a report; a changed manifest refuses the report. This detects ordinary
+concurrent replacements, but assumes manifests are not changed and restored during one call.
 
 The descriptive rule `motion-observation-v1` is:
 
@@ -136,9 +142,11 @@ score, per-restart counts, source track hashes and hashes of the truth points us
    establish phone feasibility. `adb devices -l` returned no connected devices in this session.
 
 Verification: all 91 plate-detection unit tests passed, including nine motion-tool tests;
-`schema_check.py` passed (15 documents). Regenerating all four completed-run motion reports in
-memory matched the saved UTF-8 bytes exactly. Rust gates were not run because Rust code and
-canonical contracts were unchanged.
+`schema_check.py` passed (15 documents). During PR review, Rust formatting, Clippy, build and
+workspace tests passed, as did 357 validation tests (one skipped). Regression tests reproduce
+file replacements during processing and verify snapshot hashes and changed-manifest refusal.
+All four completed-run observation results remain unchanged after the provenance fix; only
+implementation hashes change. Repeated report generation still produces identical UTF-8 bytes.
 
 ## Reproduce the motion report
 
