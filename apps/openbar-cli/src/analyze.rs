@@ -35,9 +35,9 @@ use openbar_core::recording_support::{
 };
 use openbar_core::trajectory::{MetricPositionSample, PixelObservation};
 use openbar_tracking::{
-    LocalContrastConfig, LocalContrastTracker, ManualSeedTracker, TemplateMatchConfig,
-    TemplateMatchTracker, TrackerIdentity, TrackerObservationState, TrackerRun,
-    TrackerVisibilityState,
+    CsrtGrayConfig, CsrtGrayTracker, LocalContrastConfig, LocalContrastTracker, ManualSeedTracker,
+    TemplateMatchConfig, TemplateMatchTracker, TrackerIdentity, TrackerObservationState,
+    TrackerRun, TrackerVisibilityState,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -50,7 +50,7 @@ const DEFAULT_MAX_FRAME_MEMORY_MIB: u64 = 2048;
 pub(crate) const SEED_TIMESTAMP_TOLERANCE_S: f64 = 0.0005;
 
 const USAGE: &str = "Usage: openbar-cli analyze (--video <path> | --manifest <path> --fixture <id> [--video <override>]) --seed <path>\n\
-     \x20      --plate-diameter-m <m> (--tracker <template|contrast> | --observations <tracker-prediction-v1.json>)\n\
+     \x20      --plate-diameter-m <m> (--tracker <template|contrast|csrt-gray> | --observations <tracker-prediction-v1.json>)\n\
      \x20      --filter <raw|moving-average|savitzky-golay|kalman>\n\
      \x20      --kinematics-max-gap-s <s> --kinematics-min-confidence <0..1> --output <analysis.json>\n\
      \x20      [--start-s <s> --end-s <s>] [--max-frame-memory-mib <MiB>] [--tracker-search-radius-px <px>]\n\
@@ -67,6 +67,7 @@ Tracker options:\n\
   template: [--template-low-confidence-nmad <0..1>] [--template-max-nmad <0..1>]\n\
   contrast: [--contrast-min-seed-contrast <value>] [--contrast-min-mass-ratio <0..1>]\n\
             [--contrast-low-confidence-mass-ratio <0..1>]\n\
+  csrt-gray: default experimental grayscale CSRT configuration (--tracker-search-radius-px is not accepted)\n\
 \n\
 Filter options (there is deliberately no production default):\n\
   raw: no additional parameters\n\
@@ -85,6 +86,7 @@ Opt-in stage timings (non-deterministic environment evidence, never part of the 
 enum TrackerChoice {
     Template,
     Contrast,
+    CsrtGray,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -559,13 +561,14 @@ fn parse_tracker_choice(
             "--tracker and --observations are mutually exclusive; provide exactly one",
         )),
         (None, None) => Err(CliError::invalid_input(
-            "analyze requires exactly one of --tracker <template|contrast> or --observations <path>",
+            "analyze requires exactly one of --tracker <template|contrast|csrt-gray> or --observations <path>",
         )),
         (Some(value), None) => match value {
             "template" => Ok(Some(TrackerChoice::Template)),
             "contrast" => Ok(Some(TrackerChoice::Contrast)),
+            "csrt-gray" => Ok(Some(TrackerChoice::CsrtGray)),
             value => Err(CliError::invalid_input(format!(
-                "--tracker must be 'template' or 'contrast', got '{value}'"
+                "--tracker must be 'template', 'contrast', or 'csrt-gray', got '{value}'"
             ))),
         },
         (None, Some(_)) => Ok(None),
@@ -949,6 +952,18 @@ fn validate_tracker_specific_options(
                 "template-specific options cannot be used with --tracker contrast",
             ))
         }
+        Some(TrackerChoice::CsrtGray)
+            if search_radius.is_some()
+                || template_low.is_some()
+                || template_max.is_some()
+                || contrast_seed.is_some()
+                || contrast_min.is_some()
+                || contrast_low.is_some() =>
+        {
+            Err(CliError::invalid_input(
+                "--tracker-search-radius-px and template/contrast-specific options cannot be used with --tracker csrt-gray",
+            ))
+        }
         _ => Ok(()),
     }
 }
@@ -996,6 +1011,16 @@ fn build_tracker(
             })
             .map_err(|error| {
                 CliError::invalid_input(format!("invalid contrast tracker config: {error}"))
+            })?;
+            Ok(Box::new(tracker))
+        }
+        TrackerChoice::CsrtGray => {
+            let tracker = CsrtGrayTracker::try_new(CsrtGrayConfig {
+                seed_timestamp_tolerance_s: SEED_TIMESTAMP_TOLERANCE_S,
+                ..CsrtGrayConfig::default()
+            })
+            .map_err(|error| {
+                CliError::invalid_input(format!("invalid csrt-gray tracker config: {error}"))
             })?;
             Ok(Box::new(tracker))
         }
@@ -2017,6 +2042,40 @@ mod tests {
     }
 
     #[test]
+    fn csrt_gray_tracker_parses_and_rejects_template_contrast_or_search_radius_options() {
+        let mut args = base_args("analysis.json");
+        let tracker_index = args
+            .iter()
+            .position(|arg| arg == "--tracker")
+            .expect("tracker flag");
+        args[tracker_index + 1] = "csrt-gray".to_owned();
+        let parsed = parse_args(args.clone())
+            .expect("csrt-gray args parse")
+            .expect("not help");
+        assert_eq!(parsed.tracker, Some(TrackerChoice::CsrtGray));
+
+        for (flag, value) in [
+            ("--tracker-search-radius-px", "20"),
+            ("--template-low-confidence-nmad", "0.1"),
+            ("--template-max-nmad", "0.2"),
+            ("--contrast-min-seed-contrast", "5.0"),
+            ("--contrast-min-mass-ratio", "0.1"),
+            ("--contrast-low-confidence-mass-ratio", "0.2"),
+        ] {
+            let mut invalid = args.clone();
+            invalid.extend(strings(&[flag, value]));
+            let error = parse_args(invalid).expect_err("csrt-gray must reject foreign options");
+            assert_eq!(error.kind(), CliErrorKind::InvalidInput);
+            assert!(
+                error
+                    .to_string()
+                    .contains("cannot be used with --tracker csrt-gray"),
+                "{flag}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn direct_video_requires_explicit_geometry_metadata() {
         let mut args = base_args("analysis.json");
         let view_index = args
@@ -2367,6 +2426,68 @@ mod tests {
 
         let _ = fs::remove_file(output_a);
         let _ = fs::remove_file(output_b);
+    }
+
+    #[test]
+    fn end_to_end_csrt_gray_analyze_is_deterministic_and_refuses_oversized_seed() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let seed_path = scratch_file("csrt-gray-seed.json");
+        let output_a = scratch_file("csrt-gray-analysis-a.json");
+        let output_b = scratch_file("csrt-gray-analysis-b.json");
+        let refused_output = scratch_file("csrt-gray-refused.json");
+        for path in [&seed_path, &output_a, &output_b, &refused_output] {
+            let _ = fs::remove_file(path);
+        }
+
+        let mut seed_doc: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(repo_path(
+                "validation/fixtures/public/seeds/synthetic-clean-side-12.manual-target-seed-v1.json",
+            ))
+            .expect("read public seed"),
+        )
+        .expect("parse public seed");
+        seed_doc["seed"]["target"]["radius_px"] = serde_json::json!(12.0);
+        fs::write(&seed_path, format!("{}\n", seed_doc)).expect("write radius-12 seed");
+
+        let mut args_a = fixture_args(&output_a);
+        args_a.tracker = Some(TrackerChoice::CsrtGray);
+        args_a.seed = seed_path.clone();
+        let mut args_b = fixture_args(&output_b);
+        args_b.tracker = Some(TrackerChoice::CsrtGray);
+        args_b.seed = seed_path.clone();
+
+        run(&args_a).expect("first csrt-gray analysis succeeds");
+        run(&args_b).expect("second csrt-gray analysis succeeds");
+
+        let bytes_a = fs::read(&output_a).expect("first csrt-gray output");
+        let bytes_b = fs::read(&output_b).expect("second csrt-gray output");
+        assert_eq!(
+            bytes_a, bytes_b,
+            "csrt-gray analysis output must be deterministic"
+        );
+
+        let parsed = Analysis::from_json(
+            std::str::from_utf8(&bytes_a).expect("analysis JSON must be UTF-8"),
+        )
+        .expect("csrt-gray output round-trips through canonical model");
+        assert_eq!(parsed.provenance().tracker.id, "csrt-gray-v1");
+        assert_eq!(parsed.raw_observations().len(), 12);
+
+        let mut refused_args = fixture_args(&refused_output);
+        refused_args.tracker = Some(TrackerChoice::CsrtGray);
+        let error = run(&refused_args)
+            .expect_err("public radius-24 seed support window does not fit 240px height");
+        assert_eq!(error.kind(), CliErrorKind::Tracking);
+        assert!(
+            !refused_output.exists(),
+            "failed csrt-gray run must not write canonical output"
+        );
+
+        for path in [seed_path, output_a, output_b, refused_output] {
+            let _ = fs::remove_file(path);
+        }
     }
 
     #[test]

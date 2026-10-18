@@ -1,10 +1,10 @@
 # ADR-0013: Timestamp-aligned video playback and bar-path overlay contract
 
-- Status: Proposed
+- Status: Accepted (owner decision 2026-10-18)
 - Date: 2026-10-13
 - Issue: #181 (child design of #80)
 - Related: ADR-0001, ADR-0003, ADR-0006 (Proposed, headless M0 decode), ADR-0007, ADR-0008,
-  ADR-0012 (Proposed), #179, #180
+  ADR-0012 (Accepted), #179, #180
 - Detail: [`docs/validation/VIDEO_OVERLAY_CONTRACT.md`](../validation/VIDEO_OVERLAY_CONTRACT.md)
 
 ## Context
@@ -149,16 +149,15 @@ Costs and risks:
 - the overlay is only as correct as the Analysis. Silent false tracking (ADR-0008) draws a confident
   path over the wrong object; nothing in presentation can fix that.
 
-## Owner decisions requested
+## Owner decisions (recorded 2026-10-18)
 
-1. **Refuse versus degrade.** Recommended: refuse the overlay on any failed check and play the video.
-   Alternative: draw with a warning. The recommendation keeps a misaligned path from being read.
-2. **Selected rep seek target.** Recommended: the metric interval's first sample (normally the
-   turnaround), where the displayed duration and mean begin. Alternative: the window's first frame.
-3. **First-release layers.** Recommended: raw path only. Alternative: add a labelled filtered path.
-4. **Annotated video export.** Recommended: defer until after the first results release. Alternative:
-   include a still image or vector path export first.
-5. **Tolerances.** Whether 1 px (raster) and 1 µs (timeline) are acceptable starting values.
+1. **Refuse versus degrade.** Decided: refuse the overlay on any failed check and play the video
+   with an explicit reason.
+2. **Selected rep seek target.** Decided: seek to the metric interval's first sample (normally the
+   turnaround), where the displayed duration and mean begin.
+3. **First-release layers.** Decided: raw path only in the first release.
+4. **Annotated video export.** Decided: defer until after the first results release.
+5. **Tolerances.** Decided: 1 px (raster) and 1 µs (timeline) are accepted as starting values.
 
 ## Revisit when
 

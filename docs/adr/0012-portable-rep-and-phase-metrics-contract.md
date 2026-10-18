@@ -1,6 +1,6 @@
 # ADR-0012: Portable per-rep and lift-phase metrics contract
 
-- Status: Proposed
+- Status: Accepted (owner decision 2026-10-18)
 - Date: 2026-10-13
 - Issue: #180 (child design of #80)
 - Related: ADR-0001, ADR-0003, ADR-0007, ADR-0008, #79, #58, #181, #179
@@ -219,16 +219,15 @@ Costs and risks:
 - reps can be fragmented or dropped by the rise rules, and the rejected-run diagnostic only surfaces
   that; resolving it needs real-clip evidence.
 
-## Owner decisions requested
+## Owner decisions (recorded 2026-10-18)
 
-1. **Displayed mean.** Recommended: core time-weighted mean over the metric interval, as above.
-   Alternative: the consumer's sample mean under its own name. The recommendation keeps one metric
-   meaning and matches the consumer exactly on uniformly sampled video.
-2. **Recommender alignment.** Whether the recommender should later adopt a `v3` with the same interval
-   and time weighting. This is outside the #79 freeze and outside this ADR.
-3. **Snatch and clean in stage 1.** Recommended: only after #79 rep-count evidence.
-4. **Label.** Recommended: keep "mean upward velocity" until validation, then amend
-   `KINEMATIC_METRICS.md` in the validating change. Alternative: amend it now.
+1. **Displayed mean.** Decided: core time-weighted mean over the metric interval, as specified in
+   Section 3. This keeps one metric meaning and matches the consumer on uniformly sampled video.
+2. **Recommender alignment.** Decided: deferred outside the #79 freeze and outside this ADR.
+3. **Snatch and clean in stage 1.** Decided: back squat only in Stage 1; snatch and clean join
+   only after #79 rep-count and pairing evidence.
+4. **Label.** Decided: keep "mean upward velocity" (and "upward ROM" / "peak upward velocity")
+   until validation, then amend `KINEMATIC_METRICS.md` in the validating change.
 
 ## Revisit when
 
