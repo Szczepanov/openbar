@@ -29,16 +29,23 @@ class GuardTests(unittest.TestCase):
     def test_long_loss_stops_the_track(self) -> None:
         records = [frame(0.0, 300), frame(0.3), frame(0.6), frame(0.7, 300), frame(0.8, 305)]
         out = guard.guard_track(records)
-        self.assertEqual([r["guard"]["status"] for r in out], ["tracked", "lost", "lost", "stopped_gap", "after_stop"])
+        self.assertEqual([r["guard"]["status"] for r in out], ["tracked", "lost", "stopped_gap", "after_stop",
+                                                               "after_stop"])
         self.assertEqual([len(r["candidates"]) for r in out], [1, 0, 0, 0, 0])
 
-    def test_jump_or_radius_change_stops_the_track(self) -> None:
+    def test_a_glitch_frame_is_rejected_and_the_track_goes_on(self) -> None:
         # 18 radii/s at dt = 1/30 s allows 0.6 + 0.25 = 0.85 radii = 85 px.
         self.assertEqual(statuses([frame(0.0, 300), frame(1 / 30, 384)]), ["tracked", "tracked"])
-        self.assertEqual(statuses([frame(0.0, 300), frame(1 / 30, 386), frame(2 / 30, 390)]),
-                         ["tracked", "stopped_step", "after_stop"])
+        self.assertEqual(statuses([frame(0.0, 300), frame(1 / 30, 386), frame(2 / 30, 310)]),
+                         ["tracked", "rejected_step", "tracked"])
         self.assertEqual(statuses([frame(0.0, 300), frame(1 / 30, 300, r=115)]), ["tracked", "tracked"])
-        self.assertEqual(statuses([frame(0.0, 300), frame(1 / 30, 300, r=116)]), ["tracked", "stopped_step"])
+        self.assertEqual(statuses([frame(0.0, 300), frame(1 / 30, 300, r=116), frame(2 / 30, 300)]),
+                         ["tracked", "rejected_step", "tracked"])
+
+    def test_rejected_frames_count_towards_the_gap(self) -> None:
+        # The allowed jump grows with time since the last accepted frame; at 0.5 s it is 925 px.
+        records = [frame(0.0, 300)] + [frame(0.1 * i, 1300) for i in range(1, 7)]
+        self.assertEqual(statuses(records), ["tracked"] + ["rejected_step"] * 5 + ["stopped_gap"])
 
     def test_time_order_raw_untouched_and_one_candidate(self) -> None:
         records = [frame(1 / 30, 310), frame(0.0, 300)]
