@@ -1,7 +1,7 @@
 # Android import-to-results latency evidence
 
-Issue: #179 (child of #80). **Status: Accepted target parameters (owner decision 2026-10-18); no
-qualifying measurement exists yet.**
+Issue: #179 (child of #80). **Status: Accepted target parameters (owner decision 2026-10-18); reference
+phone benchmark evidence recorded (2026-10-19); no qualifying measurement exists yet.**
 
 This document defines what "results within seconds" has to mean before anyone measures it: which
 phone, which clips, which clock start and stop, which statistics, and which evidence is allowed to
@@ -238,11 +238,75 @@ paths.
 | #176 tracker | Implemented as a library only; no `analyze` or `tracker-run` wiring, so it cannot yet be timed on a phone. Wiring and real-video evaluation are separate work. |
 | Owner decisions above | No numeric threshold may be applied until recorded. |
 | Android app import and overlay path | Not built. App-level evidence waits for an approved mobile implementation. |
-| Reference phone run | The unit's identity is confirmed (model 2407FPN8EG, `rothko`, arm64-v8a, Android 16), but no harness run on it exists. Without one, delivery is the contract and harness only. |
+| Reference phone run | Unit identity confirmed and 5-repeat benchmark run executed on 2026-10-19 on the physical Xiaomi 14T Pro (see below). |
 
-Next steps once unblocked: record the owner decisions here; freeze the candidate and clip set; run
-the harness with `--stage-timings` on the reference phone; retain the artifact under the checklist
-above; report the evidence class honestly.
+Next steps once unblocked: freeze the production candidate and clip set; measure through the
+production app import and overlay path once built; report the evidence class honestly.
+
+## Reference phone benchmark evidence (2026-10-19)
+
+**Status:** NON-QUALIFYING DIAGNOSTIC (pipeline-level diagnostic on physical reference phone; production candidate not frozen by #57; app import, per-rep metrics and overlay stages not measured).
+
+- **Evaluated commit:** `46e865954258d64c6446affda290c9e546a1c51c`
+- **Device & Environment (`reference_match: true`):**
+  - Model: Xiaomi 14T Pro (`2407FPN8EG`, device codename `rothko`)
+  - SoC: MediaTek Dimensity 9300+ (4x Cortex-X4 @ 3.4 GHz + 4x Cortex-A720 @ 2.0 GHz)
+  - OS / ABI: Android 16 (SDK 36, `arm64-v8a`)
+  - Total RAM: 11,190.9 MiB (~12 GB)
+  - Tool versions: Termux 0.118.3, `openbar-cli` (release profile, rustc 1.99.0), FFmpeg 8.1.3, Python 3.14.6
+- **Frozen pipeline configuration under test:**
+  - Tracker: `template-sad-v1@1`
+  - Filter: `raw-identity@1`
+  - Kinematics: `backward-difference@1` (max gap 0.2 s, min confidence 0.0)
+  - Decode boundary: ADR-0006 external ffmpeg/ffprobe process
+- **Harness command:**
+  ```bash
+  python validation/tools/phone_runtime_benchmark.py \
+    --suite validation/private/phone-runtime-suite-v1.json \
+    --output target/phone-runtime-benchmark-20261019.json \
+    --repeats 5 \
+    --stage-timings
+  ```
+
+### Case results (5 repeats per case)
+
+| Case ID | Fixture | Media span | Cold wall | Warm median | Max wall | Median ratio | Peak RSS | Warm slowdown | Determinism |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `synthetic-clean-side-12-smoke` | `synthetic-clean-side-12` | 0.917 s | 0.274 s | 0.275 s | 0.285 s | 0.299x | 49.6 MiB | 1.029 | Identical (`49cf10f1...`) |
+| `self-back-squat-side-002-lift` | `self-back-squat-side-002` (4.8–10.8 s) | 5.966 s | 15.284 s | 15.330 s | 15.358 s | 2.566x | 249.7 MiB | 1.0028 | Identical (`348ba016...`) |
+| `self-back-squat-side-002-full` | `self-back-squat-side-002` (0.0–15.0 s) | 15.001 s | 22.093 s | 23.097 s | 23.190 s | 1.539x | 482.6 MiB | 0.9964 | Identical (`323fffbd...`) |
+
+### Stage timings breakdown (median seconds per stage)
+
+| Stage | `synthetic-smoke` (0.92 s) | `back-squat-lift` (5.97 s) | `back-squat-full` (15.00 s) |
+| --- | --- | --- | --- |
+| `setup` | 0.084 ms | 0.285 ms | 0.326 ms |
+| `probe` (ffprobe + media hash) | 0.122 s | 1.592 s | 1.657 s |
+| `decode` (external ffmpeg process) | 0.072 s | 3.688 s | 3.598 s |
+| `tracking` (`template-sad-v1` CPU) | 0.063 s | 9.992 s | 17.705 s |
+| `calibration` | 0.007 ms | 0.011 ms | 0.020 ms |
+| `filtering` (`raw-identity`) | 0.007 ms | 0.004 ms | 0.011 ms |
+| `kinematics` (`backward-difference`) | 0.013 ms | 0.020 ms | 0.041 ms |
+| `recording_support` | 0.016 ms | 0.012 ms | 0.014 ms |
+| `output_write` | 1.198 ms | 1.908 ms | 2.090 ms |
+| `unattributed` remainder | 0.133 ms | 0.194 ms | 0.157 ms |
+| **Total Analyze Wall Time** | **0.274 s** | **15.308 s** | **23.087 s** |
+
+### Key Findings & Architectural Bottlenecks
+
+1. **Decoder & Probe Overhead:**
+   Spawning external subprocesses per ADR-0006 consumes **5.28 s** on the 6.0 s lift (`1.59 s` probe + `3.69 s` ffmpeg pipe decode). Spawning overhead and raw-pipe IPC alone exceed the `< 5.0 s` product median budget before any tracking starts.
+2. **Tracker CPU Cost:**
+   The development template probe (`template-sad-v1`, pure CPU template SAD) takes **9.99 s** for 179 frames of 1080p (~55 ms/frame). Combined with probe/decode, total wall time reaches **15.3 s**.
+3. **Implications for the Product Latency Budget (< 5.0 s median, < 8.0 s max):**
+   Meeting the owner-approved latency target requires two architectural steps:
+   - **Hardware-accelerated in-process video decoding** (e.g. Android `AMediaCodec` / NDK `MediaCodec`), eliminating the ~5.3 s external ffmpeg/ffprobe pipeline latency.
+   - **Neural detector & tracker execution** (static-shape `D-FINE-S` student model at ~28 ms GPU / ~140 ms CPU on frame 0, combined with EdgeTAM/CSRT).
+4. **Thermal Stability & Memory:**
+   - Over 5 back-to-back repeats, `warm_slowdown_ratio` was **1.0028** on the lift segment and **0.9964** on the full clip. Zero thermal throttling degradation was observed on the Dimensity 9300+.
+   - Peak RSS was strictly bounded: **249.7 MiB** for the 6.0 s lift, **482.6 MiB** for the full 15.0 s 1080p clip, with complete process-tree enumeration (`process_tree_rss_complete: true`).
+5. **Determinism:**
+   Analysis bytes across all 5 repeated runs were **100% byte-identical** (`analysis_bytes_identical: true`).
 
 ## Non-goals
 
