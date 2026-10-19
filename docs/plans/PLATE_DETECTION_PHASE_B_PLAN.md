@@ -196,19 +196,29 @@ However:
     vision encoder, memory encoder, and mask decoder subgraphs to static-shape PyTorch 2 `ExportedProgram` archives:
     - Vision encoder (`edgetam_vision_fp32.pt2`, static `[1, 3, 1024, 1024]` input, outputting `[1, 256, 256, 256]`,
       `[1, 256, 128, 128]`, `[1, 256, 64, 64]` FPN feature pyramids; `35,025,807` bytes, SHA-256
-      `ae971759bd7a2e221fcc8c8d1857fe5d22adb533b668c95f9deccac93fd3e4bd`).
+      `ae971759bd7a2e221fcc8c8d1857fe5d22adb533b668c95f9deccac93fd3e4bd`; original export).
     - Memory encoder (`edgetam_memory_fp32.pt2`, static `[1, 256, 64, 64]` feature and `[1, 1, 1024, 1024]` mask inputs,
       outputting `[1, 64, 64, 64]` memory features and pos encodings; `14,158,503` bytes, SHA-256
-      `da18080f7b12d1c6e26210fdf4fa3a31c56b6b77ca76579803b9f3d997ceae71`).
+      `da18080f7b12d1c6e26210fdf4fa3a31c56b6b77ca76579803b9f3d997ceae71`; original export).
     - Mask decoder (`edgetam_decoder_fp32.pt2`, static prompt embeddings, visual features and high-res feature inputs,
-      outputting `[1, 1, 1, 256, 256]` mask logits, IoU logits, and object score logits; `91,682,781` bytes, SHA-256
-      `cafc4ee906d5eafa684c386de66604294f9875d3487e2759a13ec3f765e10146`).
-  - **Numerical parity (`validation/private/plate-detection-phase-b/edgetam-export/export_manifest.json`):**
+      including the native `conv_s0`/`conv_s1` projections from raw 256-channel FPN features to 32/64 channels.
+      Outputs `[1, 1, 1, 256, 256]` mask logits, `[1, 1, 1]` IoU predictions and object score logits;
+      review export `113,994,522` bytes, SHA-256
+      `1e68b62b18847b89eaab99a854943be2cab86995edd7065de4286800a0fe8236`.
+      The earlier decoder archive omitted the projections and must be regenerated.)
+  - **Numerical parity (`validation/private/plate-detection-phase-b/pr262-review-export/export_manifest.json`,
+    synthetic-only review rerun on 2026-10-19 using cached checkpoint weights):**
     - `overall_max_abs_diff = 0.0` across all exported feature and mask tensors on synthetic inputs (`passed: true`).
-  - **Desktop diagnostic timings (`NON-QUALIFYING DIAGNOSTIC`):**
-    - Vision encoder CPU: `468.92 ms` median forward pass.
-    - Memory encoder CPU: `53.12 ms` median forward pass.
-    - Mask decoder CPU: `29.10 ms` median forward pass.
+  - **Desktop diagnostic timings (`NON-QUALIFYING DIAGNOSTIC`, review rerun):**
+    - Vision encoder CPU: `673.85 ms` median forward pass.
+    - Memory encoder CPU: `67.62 ms` median forward pass.
+    - Mask decoder CPU (including FPN projections): `77.22 ms` median forward pass.
+    - Loaded modules are constructed once before timing; earlier timings included module reconstruction
+      and are superseded. These desktop measurements are not a controlled performance comparison.
+  - Optional real-frame parity accepts only a curated Phase B dataset admitted by
+    `train_phase_b.validate_dataset_dir`; it reads the admitted validation COCO entries rather than
+    scanning arbitrary JPGs. Held-out fixtures are refused before loading weights or opening frames.
+  - These are component exports, not a complete on-device video tracker; no phone or ONNX parity is claimed here.
   - **Tests:** `research/plate-detection/tests/test_export_edgetam.py`.
 - **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, completed 2026-10-19):**
   - Connected Xiaomi 14T Pro (`rothko`, Android 16) over ADB and executed the full 5-repeat benchmark with
