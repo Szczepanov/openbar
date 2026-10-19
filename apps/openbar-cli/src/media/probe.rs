@@ -167,7 +167,11 @@ impl VideoProbe {
 
     /// The documented Y-plane transform for this stream (ADR-0006, Amendment 1).
     pub fn luma_transform(&self) -> Result<LumaTransform, MediaError> {
-        LumaTransform::select(&self.pix_fmt, self.frame_color_range.as_deref())
+        LumaTransform::select(
+            &self.pix_fmt,
+            self.frame_color_range.as_deref(),
+            self.color_range.as_deref(),
+        )
     }
 
     /// Display-oriented dimensions after the rotation metadata is applied.

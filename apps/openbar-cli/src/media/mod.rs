@@ -608,6 +608,7 @@ mod tests {
                 Some(frame_range)
             );
             let luma_bytes = 96 * 64;
+            // Both generated clips are 4:2:0: Y plus two quarter-size chroma planes per frame.
             let chunks = raw_yuv
                 .stdout
                 .chunks(luma_bytes * 3 / 2)
@@ -629,6 +630,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Every 8-bit code, including the clipped tails below 16 and above 235, goes through the exact
+    /// production filter on this FFmpeg build and must equal the ADR-0006 integer rule.
+    #[test]
+    fn limited_to_full_filter_matches_the_documented_rule_for_every_code() {
+        if !ffmpeg_available() {
+            return;
+        }
+        // 16x16 yuv420p frame: Y holds codes 0..=255, both 8x8 chroma planes are neutral.
+        let ramp = scratch_file("luma-ramp.yuv");
+        let frame: Vec<u8> = (0..=255u8).chain(std::iter::repeat_n(128, 128)).collect();
+        std::fs::write(&ramp, &frame).expect("scratch file is writable");
+        let output = Command::new("ffmpeg")
+            .args([
+                "-nostdin", "-v", "error", "-f", "rawvideo", "-pix_fmt", "yuv420p",
+            ])
+            .args(["-s", "16x16", "-color_range", "tv", "-i"])
+            .arg(&ramp)
+            .args(["-vf", LumaTransform::LimitedToFull.filter()])
+            .args(["-pix_fmt", "gray", "-f", "rawvideo", "-"])
+            .output()
+            .expect("ffmpeg runs");
+        let _ = std::fs::remove_file(&ramp);
+        assert!(output.status.success(), "ramp filter failed");
+        let expected: Vec<u8> = (0..=255i32)
+            .map(|code| {
+                if code <= 16 {
+                    0
+                } else {
+                    (((code - 16) * 255 + 109) / 219).min(255) as u8
+                }
+            })
+            .collect();
+        assert_eq!(output.stdout, expected);
     }
 
     #[test]

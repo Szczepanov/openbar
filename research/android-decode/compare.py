@@ -58,13 +58,27 @@ class ReferenceProbe:
     height_px: int
     timestamps_s: tuple[float, ...]
     luma_transform: str = "limited_to_full"
+    pix_fmt: str = "yuv420p"
+
+    def yuv_frame_bytes(self) -> int:
+        """Bytes per raw frame in the source pixel format (Y plus two chroma planes)."""
+        w, h = self.width_px, self.height_px
+        if "444" in self.pix_fmt:
+            chroma = w * h
+        elif "422" in self.pix_fmt:
+            chroma = ((w + 1) // 2) * h
+        else:
+            chroma = ((w + 1) // 2) * ((h + 1) // 2)
+        return w * h + 2 * chroma
 
     @property
     def luma_filter(self) -> str:
         return IDENTITY_FILTER if self.luma_transform == "identity" else LIMITED_TO_FULL_FILTER
 
 
-def select_luma_transform(pix_fmt: str | None, frame_ranges: Sequence[str | None]) -> str:
+def select_luma_transform(
+    pix_fmt: str | None, frame_ranges: Sequence[str | None], stream_range: str | None = None
+) -> str:
     """Same rule as ``openbar-cli`` ``LumaTransform::select``: the frame-level range decides."""
     if pix_fmt not in SUPPORTED_PIX_FMTS:
         raise ValueError(f"pixel format {pix_fmt} has no canonical gray (8-bit planar YUV only)")
@@ -76,7 +90,12 @@ def select_luma_transform(pix_fmt: str | None, frame_ranges: Sequence[str | None
         return "identity"
     if frame_range == "tv":
         return "limited_to_full"
-    return "identity" if pix_fmt.startswith("yuvj") else "limited_to_full"
+    default = "identity" if pix_fmt.startswith("yuvj") else "limited_to_full"
+    if stream_range in ("pc", "tv") and (stream_range == "pc") != (default == "identity"):
+        raise ValueError(
+            f"frames report no color range and stream tag {stream_range} contradicts {pix_fmt}"
+        )
+    return default
 
 
 def parse_probe(probe: dict) -> ReferenceProbe:
@@ -112,9 +131,10 @@ def parse_probe(probe: dict) -> ReferenceProbe:
     timestamps = tuple(float((value - start_pts) * time_base) for value in pts)
     validate_timestamps(timestamps)
     transform = select_luma_transform(
-        stream.get("pix_fmt"), [frame.get("color_range") for frame in frames]
+        stream.get("pix_fmt"), [frame.get("color_range") for frame in frames],
+        stream.get("color_range"),
     )
-    return ReferenceProbe(width, height, timestamps, transform)
+    return ReferenceProbe(width, height, timestamps, transform, stream["pix_fmt"])
 
 
 def window_indices(
@@ -264,15 +284,15 @@ def parity(args: argparse.Namespace) -> int:
             if not args.skip_raw_y:
                 # Diagnostic only, not a gate: FFmpeg's decoded Y plane (no -pix_fmt gray
                 # conversion), expanded by the transform the reference contract selects.
-                # Separates decoder differences from FFmpeg's gray conversion.
+                # Separates decoder differences from FFmpeg's gray conversion. Decoded in the
+                # source pixel format so a yuvj source is not range-converted first.
                 yuv = Path(tmp) / "reference.yuv"
-                run_ffmpeg_gray(args.ffmpeg, Path(args.input), yuv, pix_fmt="yuv420p")
+                run_ffmpeg_gray(args.ffmpeg, Path(args.input), yuv, pix_fmt=reference.pix_fmt)
                 table = limited_to_full_table() if reference.luma_transform == "limited_to_full" else None
                 with open(args.dump, "rb") as proto, open(yuv, "rb") as ref:
                     decoder_luma = compare_frames(
                         proto, ref, frame_bytes, indices,
-                        reference_frame_bytes=(frame_bytes + 2 * ((reference.width_px + 1) // 2)
-                                               * ((reference.height_px + 1) // 2)),
+                        reference_frame_bytes=reference.yuv_frame_bytes(),
                         transform=table,
                     )
     passed = bool(dims_equal and timestamps["within_tolerance"] and frames and frames["within_gate"])

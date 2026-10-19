@@ -1,7 +1,8 @@
 //! Canonical gray = an explicit per-pixel function of the decoded Y plane (ADR-0006, Amendment 1).
 //!
-//! `-pix_fmt gray` alone lets swscale convert through RGB when the source matrix is BT.709, which
-//! leaks chroma into luma and changes between FFmpeg releases. The decode graph therefore extracts
+//! `-pix_fmt gray` alone was observed to convert through RGB when the source matrix is BT.709
+//! (FFmpeg 8.1.3 and 9.0.2; docs/analysis/FFMPEG_GRAY_CONVERSION_FINDINGS.md), which leaks chroma
+//! into luma and changes between FFmpeg releases. The decode graph therefore extracts
 //! the Y plane and, for limited-range frames, applies the documented expansion as a lookup table.
 
 use super::MediaError;
@@ -28,19 +29,37 @@ pub enum LumaTransform {
 
 impl LumaTransform {
     /// Chooses the transform from the frame-level range ffprobe reports, which decides over the
-    /// stream tag. Unspecified range is limited unless the pixel format is a full-range `yuvj*`.
-    pub fn select(pix_fmt: &str, frame_color_range: Option<&str>) -> Result<Self, MediaError> {
+    /// stream tag. Unspecified frame range falls back to the pixel format's default (full for
+    /// `yuvj*`, limited otherwise), unless a known stream tag contradicts that default: then the
+    /// range is ambiguous and decoding fails closed rather than guessing.
+    pub fn select(
+        pix_fmt: &str,
+        frame_color_range: Option<&str>,
+        stream_color_range: Option<&str>,
+    ) -> Result<Self, MediaError> {
         if !SUPPORTED_PIX_FMTS.contains(&pix_fmt) {
             return Err(MediaError::UnsupportedPixelFormat {
                 pix_fmt: pix_fmt.to_owned(),
             });
         }
-        Ok(match frame_color_range {
-            Some("pc") => Self::Identity,
-            Some("tv") => Self::LimitedToFull,
-            _ if pix_fmt.starts_with("yuvj") => Self::Identity,
-            _ => Self::LimitedToFull,
-        })
+        let default = if pix_fmt.starts_with("yuvj") {
+            Self::Identity
+        } else {
+            Self::LimitedToFull
+        };
+        match (frame_color_range, stream_color_range) {
+            (Some("pc"), _) => Ok(Self::Identity),
+            (Some("tv"), _) => Ok(Self::LimitedToFull),
+            (_, Some(stream @ ("pc" | "tv")))
+                if (stream == "pc") != (default == Self::Identity) =>
+            {
+                Err(MediaError::AmbiguousColorRange {
+                    pix_fmt: pix_fmt.to_owned(),
+                    stream_color_range: stream.to_owned(),
+                })
+            }
+            _ => Ok(default),
+        }
     }
 
     pub fn filter(self) -> &'static str {
@@ -82,20 +101,40 @@ mod tests {
     #[test]
     fn frame_range_decides_and_unspecified_follows_pixel_format() {
         let cases = [
-            ("yuv420p", Some("tv"), LumaTransform::LimitedToFull),
-            ("yuv420p", Some("pc"), LumaTransform::Identity),
-            ("yuv420p", None, LumaTransform::LimitedToFull),
+            ("yuv420p", Some("tv"), None, LumaTransform::LimitedToFull),
+            ("yuv420p", Some("pc"), Some("tv"), LumaTransform::Identity),
+            ("yuv420p", None, None, LumaTransform::LimitedToFull),
+            ("yuv420p", None, Some("tv"), LumaTransform::LimitedToFull),
             // Real phone clips: stream tagged tv, frames report pc.
-            ("yuvj420p", Some("pc"), LumaTransform::Identity),
-            ("yuvj420p", Some("tv"), LumaTransform::LimitedToFull),
-            ("yuvj420p", None, LumaTransform::Identity),
-            ("yuv444p", None, LumaTransform::LimitedToFull),
+            ("yuvj420p", Some("pc"), Some("tv"), LumaTransform::Identity),
+            ("yuvj420p", Some("tv"), None, LumaTransform::LimitedToFull),
+            ("yuvj420p", None, None, LumaTransform::Identity),
+            ("yuvj420p", None, Some("pc"), LumaTransform::Identity),
+            (
+                "yuv444p",
+                None,
+                Some("unknown"),
+                LumaTransform::LimitedToFull,
+            ),
         ];
-        for (pix_fmt, range, expected) in cases {
+        for (pix_fmt, frame, stream, expected) in cases {
             assert_eq!(
-                LumaTransform::select(pix_fmt, range),
+                LumaTransform::select(pix_fmt, frame, stream),
                 Ok(expected),
-                "{pix_fmt} {range:?}"
+                "{pix_fmt} frame {frame:?} stream {stream:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unspecified_frame_range_contradicted_by_stream_tag_fails_closed() {
+        for (pix_fmt, stream) in [("yuv420p", "pc"), ("yuvj420p", "tv")] {
+            assert_eq!(
+                LumaTransform::select(pix_fmt, None, Some(stream)),
+                Err(MediaError::AmbiguousColorRange {
+                    pix_fmt: pix_fmt.to_owned(),
+                    stream_color_range: stream.to_owned(),
+                })
             );
         }
     }
@@ -104,7 +143,7 @@ mod tests {
     fn non_8bit_or_packed_formats_fail_closed() {
         for pix_fmt in ["yuv420p10le", "nv12", "rgb24", "gray"] {
             assert_eq!(
-                LumaTransform::select(pix_fmt, Some("tv")),
+                LumaTransform::select(pix_fmt, Some("tv"), None),
                 Err(MediaError::UnsupportedPixelFormat {
                     pix_fmt: pix_fmt.to_owned()
                 })

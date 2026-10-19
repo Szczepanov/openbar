@@ -129,14 +129,16 @@ transfer, and their tracking quality is evaluated as a condition rather than ass
 
 ### Amendment 1 (2026-10-19): canonical gray is an explicit function of the Y plane
 
-**Finding.** On BT.709-tagged sources, `-pix_fmt gray` is not a function of Y. That covers every
-`yuv420p` Android clip in the private set: 31 of 62 clips. swscale converts YUV to RGB with the
-BT.709 matrix and then forms gray with BT.601 weights, so chroma leaks into luma. The deviation is
+**Finding.** On BT.709-tagged sources, `-pix_fmt gray` is not a function of Y. In the private set
+of 62 clips, that covers the 31 `yuv420p` clips tagged BT.709. In the observed FFmpeg builds,
+swscale converts YUV to RGB with the BT.709 matrix and then forms gray with BT.601 weights, so
+chroma leaks into luma. The deviation is
 up to 20 codes on saturated colours, and FFmpeg 8.1.3 and 9.0.2 give different results. The
 evidence is in [FFMPEG_GRAY_CONVERSION_FINDINGS.md](../analysis/FFMPEG_GRAY_CONVERSION_FINDINGS.md)
 and in the #258 section of [ANDROID_LATENCY_EVIDENCE.md](../validation/ANDROID_LATENCY_EVIDENCE.md).
 The 30 `yuvj420p` clips report frame-level `pc` and a BT.601 matrix, so their old output was already
-exactly Y.
+exactly Y. The remaining clip is `yuv420p` tagged BT.601 (`smpte170m`). It is still accepted, and
+its old output already matched the formula. All 62 clips are 8-bit H.264, so none is newly refused.
 
 **Decision.** Canonical gray is defined as a per-pixel function of the decoded 8-bit Y plane. It is
 computed in the decode graph with core FFmpeg filters only:
@@ -151,8 +153,11 @@ stream tag:
 
 - `pc` gives `identity`.
 - `tv` gives `limited_to_full`.
-- Unspecified gives `identity` for `yuvj*` pixel formats and `limited_to_full` otherwise, matching
-  FFmpeg's own default.
+- Unspecified gives the pixel format's default: `identity` for `yuvj*` and `limited_to_full`
+  otherwise.
+- Exception: if the frames are unspecified and a known stream tag contradicts that default, for
+  example `yuv420p` tagged `pc`, the range is ambiguous and decoding fails closed
+  (`AmbiguousColorRange`). It never guesses.
 - Frames that disagree on range fail closed (`MixedFrameColorRange`).
 
 Only 8-bit planar YUV pixel formats are accepted: `yuv420p`, `yuv422p`, `yuv444p` and their `yuvj`
@@ -172,8 +177,11 @@ matrix, white balance or tone mapping is applied.
 - Gray now depends only on the decoded Y plane and the documented table, not on swscale's matrix
   handling. An in-process decoder (for example Android MediaCodec, #258) can therefore reproduce it
   exactly from its own Y plane.
-- A generated BT.709 colour clip test, `media::tests::gray_is_the_documented_function_of_y_for_bt709_colour_sources`,
-  asserts gray = LUT(Y) and gray = Y for the two transforms. This makes the rule mechanical.
+- Two tests make the rule mechanical on whatever FFmpeg build CI uses:
+  - `media::tests::gray_is_the_documented_function_of_y_for_bt709_colour_sources` generates BT.709
+    colour clips and asserts gray = LUT(Y) for limited range and gray = Y for full range.
+  - `media::tests::limited_to_full_filter_matches_the_documented_rule_for_every_code` runs all 256
+    codes, including the clipped tails, through the production filter.
 
 ## Evidence from real footage
 

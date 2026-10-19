@@ -41,6 +41,11 @@ pub enum MediaError {
         first: String,
         current: String,
     },
+    /// Frames do not report a range and the stream tag contradicts the pixel format's default.
+    AmbiguousColorRange {
+        pix_fmt: String,
+        stream_color_range: String,
+    },
     NoFrames,
     MissingPts {
         index: usize,
@@ -137,6 +142,13 @@ impl fmt::Display for MediaError {
             } => write!(
                 f,
                 "frame {index} has color range {current} but earlier frames have {first}; one luma transform cannot be applied"
+            ),
+            Self::AmbiguousColorRange {
+                pix_fmt,
+                stream_color_range,
+            } => write!(
+                f,
+                "frames report no color range and the stream tag {stream_color_range} contradicts the {pix_fmt} default; refusing to guess the luma transform"
             ),
             Self::MissingPts { index } => write!(
                 f,

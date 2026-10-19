@@ -95,6 +95,16 @@ class LumaTransformTest(unittest.TestCase):
             compare.select_luma_transform("yuv420p", ["tv", "pc"])
         with self.assertRaises(ValueError):
             compare.select_luma_transform("yuv420p10le", ["tv"])
+        with self.assertRaises(ValueError):
+            compare.select_luma_transform("yuv420p", [None], "pc")
+        self.assertEqual(compare.select_luma_transform("yuvj420p", ["pc"], "tv"), "identity")
+
+    def test_raw_frame_size_follows_source_subsampling(self):
+        sizes = [
+            compare.ReferenceProbe(3, 3, (0.0,), "identity", fmt).yuv_frame_bytes()
+            for fmt in ("yuvj420p", "yuv422p", "yuv444p")
+        ]
+        self.assertEqual(sizes, [9 + 8, 9 + 12, 27])
 
     def test_probe_carries_transform_and_filter(self):
         ref = compare.parse_probe(probe())
