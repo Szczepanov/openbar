@@ -132,42 +132,47 @@ However:
 
 - **Tests:** `research/plate-detection/tests/test_train_phase_b.py`.
 
+- **Student v2 with dense frames & augmentation (`student-dfine-s-v2-s3-aug`, completed):**
+  - Trained on `validation/private/plate-detection-phase-b/dataset-stride3-v1/` (**2,358** train frames across 17 clips, 794 val frames).
+  - Augmentation: `student-aug-v1` (crop, horizontal flip, colour/contrast jitter, motion blur, and JPEG compression).
+  - Config: 20 epochs, batch size 4, lr `1e-4` with cosine decay to `5e-6`, evaluated against the fixed 160-frame `dataset-stride15-v1` val fold.
+  - Best checkpoint (`best_checkpoint/`, Epoch 4):
+    - `model.safetensors` SHA-256: `7724cab415bfcd4112d2aca4af5bed173b0dec5c2fa4b0a53e1d0099ba090a17`
+    - Final train loss: **5.70** (down from 10.09 in v1).
+    - Val plausible top-1: **158 / 160 (`98.75%`)** (improved from `96.88%`).
+    - Box IoU median / p90: **0.9807 / 0.9919** (improved from 0.9592 / 0.9847).
+    - Raw radius error median: **`0.60%`** (improved from `1.09%`).
+    - Raw centre error median: **`1.06%`** (improved from `2.40%`).
+
 ### WP3 — Development evaluation & `track-guard-v2` re-acquisition (`dfine-student-seed-v1` & `redetect-v1`, completed)
 
 - **Modules:** `GuardState` and `guard_track` in `research/plate-detection/guard.py`, `choose_seed_student`
-  (`dfine-student-seed-v1`) and `choose_redetect` (`redetect-v1`) in `research/plate-detection/track.py`, and
-  `run_phase_a2.py --seed dfine_s_student [--student-checkpoint <dir>] [--redetect]`.
-- **First-labelled-frame seed evaluation across all 27 development clips (`student-dfine-s-v1/frame0_seed_eval.json`):**
-  - **Session-disjoint `val` fold (6 unseen clips, 6 scored):** **6 / 6 (`100.0%`)** plausible top-1 hits on both
-    frame 0 (`val_frame0`, box IoU median `0.9693`, raw radius error median `0.68%`) and the first human-labelled
-    truth frame (`raw_radius_err_median = 0.94%`, `refined_radius_err_median = 1.07%`).
-  - **All 25 scored development clips:** **24 / 25 (`96.0%`)** plausible top-1 hits at the first human-labelled truth
-    frame — matching the 850M-parameter SAM 3 teacher's `24 / 25` (`sam3-seed-v2`) at ~82x fewer parameters
-    (10.2M vs 850M). On `vbt-45854c8cdf352a6f` (which was excluded from teacher training because SAM 3 refused it on
-    frame 0), the distilled student hits the foreground plate with `0.69%` refined radius error (`2.12%` raw box
-    radius error). Only `self-other-side-0215-27` misses (`1 / 25`), for the same stationary rack-plate ambiguity
-    diagnosed by `post-track-diagnostics-v1` (#250).
-- **End-to-end 100% Apache-2.0 phone candidate pipeline (`track_edgetam_dfinestudentseed_redetect`, `run-edgetam-student-redetect-1`):**
-  - Evaluated across all **6 unseen session-disjoint `val` clips** plus the 2 recovery/failure stress-test clips
-    (`self-clean-side-0203-17` and `self-other-side-0215-27`) at `0.071 s/frame` median latency (`1.3%` median radius
-    error, `2.4%` median centre error):
-    - **6 / 6 (`100%`) unseen `val` clips** seeded on the foreground plate and stayed on target across **125 / 127
-      (`98.4%`)** labelled frames (`25/25`, `21/21`, `1/1`, `23/23`, `27/29`, `28/28`) with `0` guard stops and `0`
-      diagnostic flags. On `self-snatch-side-0206-19`, the `rim-subpixel-v1`-refined student seed kept EdgeTAM on
-      target for `27 / 29` labelled frames (`lost = 6 / 442`), outperforming the SAM 3 seed (`7 / 29`, `lost = 227 / 442`).
-    - On `self-clean-side-0203-17`, after an initial background rack-plate seed was stopped by `track-guard-v2`,
-      `dfine_s_student` re-acquired the moving foreground plate at `t = 14.33 s` (`15 / 29` labelled frames, `2.70 radii`
-      travel in epoch 1).
-    - On `self-other-side-0215-27`, `post-track-diagnostics-v1` (`post_track_refusal.py`) flagged the stationary
-      rack-plate track (`insufficient_coverage`, `ambiguous_restart`, `no_motion_evidence`) with **0 false flags**
-      across the other 7 clips.
+  (`dfine-student-seed-v1`) and `choose_redetect` (`redetect-v1`) in `research/plate-detection/track.py`,
+  `run_phase_a2.py --seed dfine_s_student [--student-checkpoint <dir>] [--redetect]`, and
+  reproducible evaluation harness `eval_student_seed.py`.
+- **First-labelled-frame seed evaluation across all 27 development clips (`eval_student_seed.py`):**
+  - **Session-disjoint `val` fold (6 unseen clips, 6 scored):** **6 / 6 (`100.0%`)** plausible top-1 hits;
+    `raw_radius_err_median = 1.25%`, `refined_radius_err_median = 0.98%`.
+  - **All 25 scored development clips:** **24 / 25 (`96.0%`)** plausible top-1 hits.
+    - Raw radius error median: **`0.86%`** (improved from `1.34%` in Student v1).
+    - Refined radius error median: **`0.96%`** (improved from `1.18%` in Student v1).
+    - Raw centre error median: **`1.61%`**.
+    - Only `self-other-side-0215-27` misses (`1 / 25`), for the known stationary rack-plate ambiguity.
+- **End-to-end 100% Apache-2.0 phone candidate pipeline (`track_edgetam_dfinestudentseed_redetect`, `run-edgetam-student-v2-redetect-1`):**
+  - Evaluated across all **6 unseen session-disjoint `val` clips** plus the 2 recovery/failure stress-test clips:
+    - **6 / 6 (`100%`) unseen `val` clips** seeded on the foreground plate and stayed on target across **124 / 127
+      (`97.6%`)** labelled frames (`25/25`, `21/21`, `1/1`, `23/23`, `26/29`, `28/28`).
+    - Median per-frame centre error: **`2.1%`** (improved from `2.4%` in Student v1).
+    - Median per-frame radius error: **`1.2%`** (improved from `1.3%` in Student v1).
+    - Median tracking latency: **`0.070 s/frame`** (~14.3 FPS on desktop RTX 3060 Ti).
 - **Raw-observation preservation:** both offline `guard.guard_track` (`apply_guard.py`) and online
   `run_phase_a2.py --redetect` preserve raw `tracker_candidates` on every frame where `candidates` is blanked;
   on restart frames, `tracker_candidates` (and `tracker_session_index`) preserves the pre-restart tracker
   observation unmodified, while `post_restart_tracker_candidates` (and `post_restart_session_index`) records the
   new session's tracker observation alongside `redetect.pre_restart_tracker_candidates` and
   `redetect.post_restart_tracker_candidates`.
-- **Tests:** `test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes`,
+- **Tests:** `research/plate-detection/tests/test_eval_student_seed.py`,
+  `test_run_clip_redetect_preserves_both_pre_and_post_restart_outcomes`,
   `test_choose_seed_student_accepts_synthetic_disc_from_box`, and `test_checkpoint_files_hashes_local_directory` in
   `research/plate-detection/tests/test_phase_a2.py`, plus `test_long_loss_stops_the_track` and
   `test_resume_restarts_a_stopped_state_and_increments_session_index` in `research/plate-detection/tests/test_guard.py`.
@@ -175,22 +180,21 @@ However:
 ### WP4 — Static-shape mobile graph export, parity verification & Xiaomi 14T Pro latency benchmark (#179, #251)
 
 - **Desktop static-shape export & numerical parity (`research/plate-detection/export_student.py`, completed):**
-  - Exports `student-dfine-s-v1/best_checkpoint` to a static-shape (`[1, 3, 640, 640]`) PyTorch 2 `ExportedProgram`
+  - Exports `student-dfine-s-v2-s3-aug/best_checkpoint` to a static-shape (`[1, 3, 640, 640]`) PyTorch 2 `ExportedProgram`
     archive (`dfine_s_student_fp32.pt2`, `52,084,634` bytes, SHA-256
-    `6920f6e4f3cd5606e7c011041cef21c8fdbeff4f969d6a9e0f58b2f43b2a8db9`, for ExecuTorch / LiteRT-Torch / AOTInductor
+    `936756d2f7d70f9f2803c8125c1ba8d7bcf5b108f6018b955afa9891cb1dc8c7`, for ExecuTorch / LiteRT-Torch / AOTInductor
     mobile compilation; optional `.onnx` opset 18 via `--onnx`).
-  - **Numerical parity (`validation/private/plate-detection-phase-b/student-dfine-s-v1-export/export_manifest.json`):**
+  - **Numerical parity (`validation/private/plate-detection-phase-b/student-dfine-s-v2-export/export_manifest.json`):**
     - On 4 seeded synthetic tensors and 16 session-disjoint `val` frames: `logit_max_abs_diff = 0.0`,
       `box_max_abs_diff = 0.0`, `top1_query_match_rate = 1.0`, `top1_box_iou_min = 1.0` (`passed: true`).
   - **Desktop diagnostic timings (`NON-QUALIFYING DIAGNOSTIC`, never substituted for phone evidence):**
-    - Exported `.pt2` graph on desktop CPU: `139.79 ms` median (`158.48 ms` max) across 16 validation frames.
-    - Desktop GPU (`RTX 3060 Ti`) forward pass: `27.94 ms` median (`43.15 ms` max) — **25.8x faster** than SAM 3
-      (`~720 ms/frame`).
+    - Exported `.pt2` graph on desktop CPU: `142.58 ms` median (`165.73 ms` max) across 16 validation frames.
+    - Desktop GPU (`RTX 3060 Ti`) forward pass: `24.28 ms` median (`41.14 ms` max).
   - **Tests:** `research/plate-detection/tests/test_export_student.py`.
-- **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, blocked on device connection):**
-  - Benchmark frame-0 seed detection and tracking latency on the **Xiaomi 14T Pro** via LiteRT / ExecuTorch / ONNX
-    Runtime Mobile and `validation/tools/phone_runtime_benchmark.py`, recording results in
-    `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
+- **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, connected over ADB):**
+  - Xiaomi 14T Pro (`rothko`, Android 16) connectivity verified over ADB. Benchmark frame-0 seed detection and
+    tracking latency via LiteRT / ExecuTorch / ONNX Runtime Mobile and `validation/tools/phone_runtime_benchmark.py`,
+    recording results in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
 
 ### WP5 — Frozen evaluation on new independent sessions
 
@@ -202,9 +206,11 @@ However:
 
 ```bash
 python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --output-dir validation/private/plate-detection-phase-b/dataset-v1
+python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --frame-stride 3 --extract-frames --output-dir validation/private/plate-detection-phase-b/dataset-stride3-v1
 python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-dir validation/private/plate-detection-sam3-seed/run-2-guard-v2 --method track_sam2_sam3seed_guard --frame-stride 15 --extract-frames --output-dir validation/private/plate-detection-phase-b/dataset-stride15-v1
-research/plate-detection/.venv/Scripts/python.exe research/plate-detection/train_phase_b.py --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --repo-root . --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v1 --epochs 5 --batch-size 4 --learning-rate 1e-4
-research/plate-detection/.venv/Scripts/python.exe research/plate-detection/export_student.py --checkpoint-dir validation/private/plate-detection-phase-b/student-dfine-s-v1/best_checkpoint --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v1-export
+research/plate-detection/.venv/Scripts/python.exe research/plate-detection/train_phase_b.py --dataset-dir validation/private/plate-detection-phase-b/dataset-stride3-v1 --eval-dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --repo-root . --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug --epochs 20 --batch-size 4 --learning-rate 1e-4 --lr-schedule cosine --augment student-aug-v1
+research/plate-detection/.venv/Scripts/python.exe research/plate-detection/eval_student_seed.py --repo-root . --checkpoint validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug/best_checkpoint --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --output validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug/seed_eval.json
+research/plate-detection/.venv/Scripts/python.exe research/plate-detection/export_student.py --checkpoint-dir validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug/best_checkpoint --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v2-export
 python -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py
