@@ -5,8 +5,8 @@
 //! before the window are counted as pre-roll and never emitted.
 
 use crate::decode::{
-    DecodeError, DecodeReport, GeometrySource, OutputInfo, RangeSource, SourceInfo, StageTimings,
-    CODEC_OPERATING_RATE, CODEC_PRIORITY,
+    retain_window_output, DecodeError, DecodeReport, GeometrySource, OutputInfo, RangeSource,
+    SourceInfo, StageTimings, CODEC_OPERATING_RATE, CODEC_PRIORITY,
 };
 use crate::image_layout::parse_luma_plane;
 use crate::raster::{to_contract_luma, CropRect, LumaFrame, LumaRange, PlaneLayout, Rotation};
@@ -111,7 +111,7 @@ impl Format {
             .then(|| unsafe { std::slice::from_raw_parts(data as *const u8, size) }.to_vec())
     }
 
-    fn crop(&self) -> Option<CropRect> {
+    fn crop(&self) -> Result<Option<CropRect>, DecodeError> {
         let (mut left, mut top, mut right, mut bottom) = (0, 0, 0, 0);
         // SAFETY: as above. KEY_DISPLAY_CROP is API 28+; inclusive right/bottom.
         let found = unsafe {
@@ -124,15 +124,12 @@ impl Format {
                 &mut bottom,
             )
         };
-        if !found || left < 0 || top < 0 || right < 0 || bottom < 0 {
-            return None;
+        if !found {
+            return Ok(None);
         }
-        Some(CropRect {
-            left: left as usize,
-            top: top as usize,
-            right: right as usize,
-            bottom: bottom as usize,
-        })
+        Ok(Some(CropRect::try_from_android([
+            left, top, right, bottom,
+        ])?))
     }
 }
 
@@ -352,7 +349,7 @@ fn read_output_info(
             (stride, slice_height, source, 0)
         }
     };
-    let crop = format.crop();
+    let crop = format.crop()?;
     let crop_source = if crop.is_some() {
         GeometrySource::Decoder
     } else {
@@ -519,6 +516,7 @@ pub fn decode(
 
     let loop_started = Instant::now();
     let mut output: Option<OutputInfo> = None;
+    let mut window_output = None;
     let mut presentation_time_us = Vec::new();
     // Every sized output, including pre-roll and the frame that ends the window, so a decoder
     // that does not emit in presentation order fails instead of losing frames.
@@ -653,6 +651,7 @@ pub fn decode(
                         }
                         _ => display = Some(size_now),
                     }
+                    retain_window_output(&mut window_output, out)?;
 
                     let sink_started = Instant::now();
                     on_frame(&frame)?;
@@ -682,7 +681,7 @@ pub fn decode(
     };
     Ok(DecodeReport {
         source,
-        output: output.ok_or(DecodeError::MissingOutputFormat)?,
+        output: window_output.ok_or(DecodeError::MissingOutputFormat)?,
         window,
         origin_us,
         display_width_px,

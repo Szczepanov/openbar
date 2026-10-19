@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import operator
 import statistics
 import subprocess
@@ -61,13 +62,23 @@ def parse_probe(probe: dict) -> ReferenceProbe:
     if not streams:
         raise ValueError("ffprobe reported no video stream")
     stream = streams[0]
+    if stream.get("sample_aspect_ratio") not in (None, "0:1", "1:1"):
+        raise ValueError("reference has non-square pixels")
     time_base = Fraction(stream["time_base"])
-    start_pts = int(stream.get("start_pts", 0))
+    if time_base <= 0:
+        raise ValueError("reference time_base must be positive")
+    start_pts = int(stream["start_pts"])
     rotation = 0
     for side in stream.get("side_data_list") or []:
         if "rotation" in side:
-            rotation = int(side["rotation"]) % 360
+            angle = float(side["rotation"])
+            if not math.isfinite(angle) or abs(angle) > 360 or angle % 90 != 0:
+                raise ValueError("reference rotation must be a whole quarter turn")
+            rotation = int(angle) % 360
+            break
     width, height = int(stream["width"]), int(stream["height"])
+    if width <= 0 or height <= 0:
+        raise ValueError("reference dimensions must be positive")
     if rotation % 180 == 90:
         width, height = height, width
     frames = probe.get("frames") or []
@@ -76,6 +87,7 @@ def parse_probe(probe: dict) -> ReferenceProbe:
         raise ValueError("ffprobe reported a frame without pts")
     pts = [int(frame["pts"]) for frame in frames]
     timestamps = tuple(float((value - start_pts) * time_base) for value in pts)
+    validate_timestamps(timestamps)
     return ReferenceProbe(width, height, timestamps)
 
 
@@ -98,9 +110,18 @@ def frame_diff(a: bytes, b: bytes) -> tuple[int, float]:
     return max(diffs), sum(diffs) / len(diffs)
 
 
+def validate_timestamps(timestamps: Sequence[float]) -> None:
+    if not timestamps or any(not math.isfinite(t) or t < 0 for t in timestamps):
+        raise ValueError("timestamps must be nonempty, finite and non-negative")
+    if any(b <= a for a, b in zip(timestamps, timestamps[1:])):
+        raise ValueError("timestamps must be strictly increasing")
+
+
 def compare_timestamps(
     prototype: Sequence[float], reference: Sequence[float], tolerance_s: float = PTS_TOLERANCE_S
 ) -> dict:
+    validate_timestamps(prototype)
+    validate_timestamps(reference)
     worst = max(
         (abs(p - r) for p, r in zip(prototype, reference)),
         default=0.0,
@@ -222,7 +243,9 @@ def parity(args: argparse.Namespace) -> int:
                 with open(args.dump, "rb") as proto, open(yuv, "rb") as ref:
                     decoder_luma = compare_frames(
                         proto, ref, frame_bytes, indices,
-                        reference_frame_bytes=frame_bytes * 3 // 2, transform=table,
+                        reference_frame_bytes=(frame_bytes + 2 * ((reference.width_px + 1) // 2)
+                                               * ((reference.height_px + 1) // 2)),
+                        transform=table,
                     )
     passed = bool(dims_equal and timestamps["within_tolerance"] and frames and frames["within_gate"])
     result = {
@@ -291,7 +314,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     s.add_argument("reports", nargs="+")
     s.set_defaults(func=summarize)
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

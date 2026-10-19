@@ -1,9 +1,14 @@
 """Unit tests for the #258 parity/latency harness (stdlib unittest)."""
 
 import io
+import argparse
+import contextlib
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -55,6 +60,22 @@ class ParseProbeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare.parse_probe(broken)
 
+    def test_reference_rejects_inputs_outside_canonical_contract(self):
+        cases = []
+        for field, value in (("sample_aspect_ratio", "2:1"), ("width", 0),
+                             ("time_base", "-1/90000")):
+            broken = probe()
+            broken["streams"][0][field] = value
+            cases.append(broken)
+        missing_origin = probe()
+        del missing_origin["streams"][0]["start_pts"]
+        cases.append(missing_origin)
+        cases.extend((probe(rotation=45), probe(rotation=90.5), probe(pts=()),
+                      probe(pts=(0, 0)), probe(pts=(90, 0)), probe(start_pts=90)))
+        for broken in cases:
+            with self.subTest(probe=broken), self.assertRaises((ValueError, KeyError)):
+                compare.parse_probe(broken)
+
 
 class WindowTest(unittest.TestCase):
     def test_window_is_inclusive_and_open_ended(self):
@@ -65,6 +86,14 @@ class WindowTest(unittest.TestCase):
 
 
 class TimestampTest(unittest.TestCase):
+    def test_nonfinite_or_nonincreasing_timestamps_are_rejected(self):
+        for invalid in ([0.0, float("nan")], [0.0, float("inf")],
+                        [0.0, 0.0], [0.1, 0.0], [-0.1, 0.1], []):
+            for prototype, reference in ((invalid, [0.0, 0.1]), ([0.0, 0.1], invalid)):
+                with self.subTest(prototype=prototype, reference=reference):
+                    with self.assertRaises(ValueError):
+                        compare.compare_timestamps(prototype, reference)
+
     def test_microsecond_truncation_is_within_tolerance(self):
         result = compare.compare_timestamps([0.0, 0.033166], [0.0, 2985 / 90000])
         self.assertTrue(result["within_tolerance"], result)
@@ -117,6 +146,46 @@ class FrameDiffTest(unittest.TestCase):
             compare.compare_frames(io.BytesIO(b"\x00\x00\x00\x00"), io.BytesIO(b"\x00\x00"), 2, [0])
         with self.assertRaises(ValueError):
             compare.compare_frames(io.BytesIO(b"\x00"), io.BytesIO(b"\x00\x00"), 2, [0])
+
+
+class ParityTest(unittest.TestCase):
+    def test_cli_distinguishes_tool_error_from_parity_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
+            missing = str(Path(tmp) / "missing-report.json")
+            self.assertEqual(compare.main([
+                "parity", "--input", "unused", "--report", missing, "--dump", "unused"
+            ]), 2)
+
+    def test_raw_y_diagnostic_uses_rounded_up_chroma_dimensions(self):
+        metadata = probe(pts=(0, 9000))
+        metadata["streams"][0].update(width=3, height=3)
+        run = {
+            "window": {"start_s": 0, "end_s": None},
+            "timestamps_s": [0, 0.1],
+            "display_width_px": 3, "display_height_px": 3,
+            "decoder": {"name": "test", "luma_range": "full", "luma_range_source": "decoder"},
+        }
+        frames = (bytes(range(9)), bytes(range(10, 19)))
+
+        def decode(_ffmpeg, _video, destination, pix_fmt="gray"):
+            # A 3x3 YUV420 frame has 9 Y bytes and two 2x2 chroma planes.
+            destination.write_bytes(b"".join(
+                frame + (b"\xff" * 8 if pix_fmt == "yuv420p" else b"") for frame in frames
+            ))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "report.json").write_text(json.dumps(run), encoding="utf-8")
+            (root / "dump.gray").write_bytes(b"".join(frames))
+            args = argparse.Namespace(report=root / "report.json", input="unused.mp4",
+                                      dump=root / "dump.gray", output=root / "parity.json",
+                                      ffprobe="ffprobe", ffmpeg="ffmpeg", skip_raw_y=False)
+            with patch.object(compare, "run_ffprobe", return_value=metadata), \
+                    patch.object(compare, "run_ffmpeg_gray", side_effect=decode), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(compare.parity(args), 0)
+            result = json.loads(args.output.read_text(encoding="utf-8"))
+            self.assertEqual(result["diagnostic_decoder_luma_vs_ffmpeg_raw_y"]["frames_bit_exact"], 2)
 
 
 class SummarizeTest(unittest.TestCase):

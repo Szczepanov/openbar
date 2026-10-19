@@ -28,6 +28,9 @@ The plan is [`docs/plans/ANDROID_INPROCESS_DECODE_PLAN.md`](../../docs/plans/AND
 
 Windows are inclusive, the same as `openbar-cli` `TimeRange`. Unlike the FFmpeg path, which decodes
 the whole file and then filters, the prototype seeks to the previous sync frame before `start_s`.
+The input, report and gray dump must name distinct files; aliases are rejected before opening outputs
+(including hard links on Android). Present negative crop coordinates are errors, not missing metadata.
+The report retains the format used by selected frames, and format changes inside the window are refused.
 
 ## Layout
 
@@ -56,6 +59,9 @@ cargo test
 cargo clippy --target aarch64-linux-android --all-targets -- -D warnings   # type-check only, no linker needed
 python -m unittest discover -v -s tests
 ```
+
+The device-driver test uses Bash and stub tools, without media or a phone. On Windows set
+`OPENBAR_TEST_BASH` to the Git Bash executable to include it; otherwise that test is skipped.
 
 On a host the binary exits with a "needs an Android build" error.
 
@@ -101,6 +107,13 @@ Repeat the same steps for the full clip (no window) and for `validation/fixtures
 ```
 
 `parity` also writes a diagnostic, `diagnostic_decoder_luma_vs_ffmpeg_raw_y`. It compares the prototype against FFmpeg's decoded Y plane (`-pix_fmt yuv420p`), expanded with the same ADR-0006 rule. That separates decoder differences from FFmpeg's `gray` conversion. It is not a gate; `--skip-raw-y` turns it off.
+The reference probe rejects inputs outside the canonical contract (including non-square pixels,
+missing stream origin and unsupported rotation). Both timestamp lists must be nonempty, finite,
+non-negative and strictly increasing. The raw-Y diagnostic accounts for rounded-up chroma planes
+when either display dimension is odd.
+
+The device suite summarizes only reports from the current repeat loop. A parity mismatch is retained
+as evidence (exit 1) and the next case runs; tool and input errors (exit 2) stop the suite.
 
 `--dump-gray` adds file-write time to `sink_s` and `total_s`, so benchmark runs leave it off. `copy_s` is the part of `repack_s` spent copying luma out of the codec buffer.
 Timings live in the report's separate `timings` object. They are diagnostics, not measurement output.

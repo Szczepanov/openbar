@@ -62,9 +62,9 @@ dependency.
    - inclusive window;
    - monotonicity check;
    - report JSON.
-3. NDK decoder. Done, type-checked for `aarch64-linux-android`, not yet run:
+3. NDK decoder. Done, type-checked for `aarch64-linux-android` and run on the 14T Pro:
    - ByteBuffer output;
-   - only I420/NV12 accepted;
+   - I420/NV12 or flexible YUV with an explicit `image-data` luma layout;
    - seek to the previous sync frame;
    - pre-roll counted;
    - RAII handles;

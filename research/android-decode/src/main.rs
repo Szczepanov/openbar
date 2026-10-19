@@ -16,7 +16,7 @@ mod raster;
 mod timing;
 
 use raster::LumaRange;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: openbar-android-decode --input <video> --report <json> \
@@ -80,12 +80,64 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
     })
 }
 
+fn validate_output_paths(input: &Path, report: &Path, dump: Option<&Path>) -> std::io::Result<()> {
+    let paths = [Some(input), Some(report), dump]
+        .into_iter()
+        .flatten()
+        .map(|path| match path.canonicalize() {
+            Ok(resolved) => Ok((resolved, Some(std::fs::metadata(path)?))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if path
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.is_symlink())
+                {
+                    return Err(error);
+                }
+                let parent = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                Ok((
+                    parent.canonicalize()?.join(path.file_name().ok_or(error)?),
+                    None,
+                ))
+            }
+            Err(error) => Err(error),
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    for (index, (path, metadata)) in paths.iter().enumerate() {
+        for (other, other_metadata) in &paths[index + 1..] {
+            #[cfg(unix)]
+            let same_file = {
+                use std::os::unix::fs::MetadataExt;
+                metadata
+                    .as_ref()
+                    .zip(other_metadata.as_ref())
+                    .is_some_and(|(a, b)| a.dev() == b.dev() && a.ino() == b.ino())
+            };
+            #[cfg(not(unix))]
+            let same_file = {
+                let _ = (metadata, other_metadata);
+                false
+            };
+            if path == other || same_file {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "input, report and gray dump must be distinct files",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "android")]
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     use std::fs::File;
     use std::io::{BufWriter, Write};
 
     let window = timing::Window::try_new(args.start_s, args.end_s)?;
+    validate_output_paths(&args.input, &args.report, args.dump_gray.as_deref())?;
     let options = android::DecodeOptions {
         window,
         assume_range: args.assume_range,
@@ -147,6 +199,34 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn output_paths_cannot_alias_input_or_each_other() {
+        let root =
+            std::env::temp_dir().join(format!("openbar-decode-paths-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("input.mp4");
+        let report = root.join("report.json");
+        let dump = root.join("dump.gray");
+        std::fs::write(&input, b"original clip").unwrap();
+        assert!(validate_output_paths(&input, &report, Some(&dump)).is_ok());
+        assert!(validate_output_paths(&input, &input, None).is_err());
+        assert!(validate_output_paths(&input, &report, Some(&input)).is_err());
+        assert!(validate_output_paths(&input, &report, Some(&report)).is_err());
+        #[cfg(unix)]
+        {
+            let link = root.join("input-link.mp4");
+            std::fs::hard_link(&input, &link).unwrap();
+            assert!(validate_output_paths(&input, &report, Some(&link)).is_err());
+            std::fs::remove_file(link).unwrap();
+            std::os::unix::fs::symlink(&report, &dump).unwrap();
+            assert!(validate_output_paths(&input, &report, Some(&dump)).is_err());
+            std::fs::remove_file(&dump).unwrap();
+        }
+        assert_eq!(std::fs::read(&input).unwrap(), b"original clip");
+        std::fs::remove_file(input).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]

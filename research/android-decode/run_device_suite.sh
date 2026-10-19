@@ -15,14 +15,23 @@ mkdir -p "$OUT"
 # case-id | video | extra args (window), same windows as phone-runtime-suite-v1.json
 run_case() {
   local id=$1 video=$2; shift 2
+  local reports=()
   for i in $(seq 1 "$REPEATS"); do
     "$BIN" --input "$video" --assume-range limited "$@" --report "$OUT/$id-$i.json"
+    reports+=("$OUT/$id-$i.json")
   done
-  python compare.py summarize "$OUT/$id"-[0-9]*.json > "$OUT/$id-summary.json"
+  python compare.py summarize "${reports[@]}" > "$OUT/$id-summary.json"
   "$BIN" --input "$video" --assume-range limited "$@" \
     --report "$OUT/$id-parity-report.json" --dump-gray "$OUT/$id.gray"
+  rm -f "$OUT/$id-parity.json"
+  # A measured mismatch writes a result; a tool failure must stop the suite.
   python compare.py parity --input "$video" --report "$OUT/$id-parity-report.json" \
-    --dump "$OUT/$id.gray" --output "$OUT/$id-parity.json" > /dev/null || true
+    --dump "$OUT/$id.gray" --output "$OUT/$id-parity.json" > /dev/null || {
+      local status=$?
+      if [ "$status" -ne 1 ] || [ ! -s "$OUT/$id-parity.json" ]; then
+        return "$status"
+      fi
+    }
   rm -f "$OUT/$id.gray"
 }
 

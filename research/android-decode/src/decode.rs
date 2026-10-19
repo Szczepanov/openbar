@@ -182,6 +182,23 @@ pub struct OutputInfo {
     pub layout: PlaneLayout,
 }
 
+/// A single-format report must describe every emitted frame, not a later format event.
+pub fn retain_window_output(
+    selected: &mut Option<OutputInfo>,
+    current: &OutputInfo,
+) -> Result<(), DecodeError> {
+    match selected {
+        Some(first) if first != current => Err(DecodeError::Unsupported(
+            "decoder output format changed inside the window",
+        )),
+        Some(_) => Ok(()),
+        None => {
+            *selected = Some(current.clone());
+            Ok(())
+        }
+    }
+}
+
 /// Wall-clock stage timings. Diagnostics only, never measurement output.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct StageTimings {
@@ -427,6 +444,18 @@ mod tests {
     #[test]
     fn json_strings_are_escaped() {
         assert_eq!(json_string("a\"b\\c\n"), "\"a\\\"b\\\\c\\u000a\"");
+    }
+
+    #[test]
+    fn window_format_is_retained_and_changes_are_rejected() {
+        let first = report().output;
+        let mut selected = None;
+        retain_window_output(&mut selected, &first).unwrap();
+        retain_window_output(&mut selected, &first).unwrap();
+        let mut later = first.clone();
+        later.luma_range = LumaRange::Full;
+        assert!(retain_window_output(&mut selected, &later).is_err());
+        assert_eq!(selected, Some(first));
     }
 
     #[test]

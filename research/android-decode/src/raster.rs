@@ -10,6 +10,9 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RasterError {
     ZeroStride,
+    NegativeCrop {
+        coordinates: [i32; 4],
+    },
     /// Crop rectangle is inverted or falls outside the stride/slice-height plane.
     InvalidCrop {
         crop: CropRect,
@@ -31,6 +34,12 @@ impl fmt::Display for RasterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroStride => write!(f, "luma plane stride must be positive"),
+            Self::NegativeCrop { coordinates } => {
+                write!(
+                    f,
+                    "decoder crop {coordinates:?} contains a negative coordinate"
+                )
+            }
             Self::InvalidCrop {
                 crop,
                 stride,
@@ -62,6 +71,19 @@ pub struct CropRect {
 }
 
 impl CropRect {
+    pub fn try_from_android(coordinates: [i32; 4]) -> Result<Self, RasterError> {
+        if coordinates.iter().any(|&value| value < 0) {
+            return Err(RasterError::NegativeCrop { coordinates });
+        }
+        let [left, top, right, bottom] = coordinates.map(|value| value as usize);
+        Ok(Self {
+            left,
+            top,
+            right,
+            bottom,
+        })
+    }
+
     pub fn full(width_px: usize, height_px: usize) -> Self {
         Self {
             left: 0,
@@ -473,6 +495,17 @@ mod tests {
                 needed: 7,
                 actual: 6
             })
+        );
+    }
+
+    #[test]
+    fn android_crop_rejects_each_negative_coordinate() {
+        for coordinates in [[-1, 0, 1, 1], [0, -1, 1, 1], [0, 0, -1, 1], [0, 0, 1, -1]] {
+            assert!(CropRect::try_from_android(coordinates).is_err());
+        }
+        assert_eq!(
+            CropRect::try_from_android([0, 0, 3, 1]).unwrap(),
+            CropRect::full(4, 2)
         );
     }
 
