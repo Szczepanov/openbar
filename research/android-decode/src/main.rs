@@ -10,17 +10,25 @@
 
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(target_os = "android")]
+mod android_image;
+#[cfg(target_os = "android")]
+mod android_loop;
+mod collect;
 mod decode;
 mod image_layout;
 mod raster;
 mod timing;
+mod view;
 
+use collect::FrameMode;
+use decode::{CodecHints, OutputPath};
 use raster::LumaRange;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: openbar-android-decode --input <video> --report <json> \
-[--start-s <s>] [--end-s <s>] [--dump-gray <raw>] [--assume-range full|limited]";
+[--start-s <s>] [--end-s <s>] [--dump-gray <raw>] [--assume-range full|limited] [--frame-mode packed|view|view-scan] [--output-path bytebuffer|image-reader] [--priority <int>|none] [--operating-rate <fps>|none]";
 
 #[derive(Debug, PartialEq)]
 struct Args {
@@ -30,6 +38,9 @@ struct Args {
     end_s: Option<f64>,
     dump_gray: Option<PathBuf>,
     assume_range: Option<LumaRange>,
+    frame_mode: FrameMode,
+    output_path: OutputPath,
+    hints: CodecHints,
 }
 
 fn parse_args(raw: &[String]) -> Result<Args, String> {
@@ -39,6 +50,9 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
     let mut end_s = None;
     let mut dump_gray = None;
     let mut assume_range = None;
+    let mut frame_mode = FrameMode::Packed;
+    let mut output_path = OutputPath::ByteBuffer;
+    let mut hints = CodecHints::DEFAULT;
     let mut iter = raw.iter();
     while let Some(flag) = iter.next() {
         let mut value = || {
@@ -67,6 +81,39 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
                     }
                 })
             }
+            "--frame-mode" => {
+                frame_mode = match value()?.as_str() {
+                    "packed" => FrameMode::Packed,
+                    "view" => FrameMode::View,
+                    "view-scan" => FrameMode::ViewScan,
+                    other => {
+                        return Err(format!(
+                            "--frame-mode expects packed|view|view-scan, got {other:?}"
+                        ))
+                    }
+                }
+            }
+            "--output-path" => {
+                output_path = match value()?.as_str() {
+                    "bytebuffer" => OutputPath::ByteBuffer,
+                    "image-reader" => OutputPath::ImageReader,
+                    other => {
+                        return Err(format!(
+                            "--output-path expects bytebuffer|image-reader, got {other:?}"
+                        ))
+                    }
+                }
+            }
+            "--priority" => hints.priority = optional_hint(flag, value()?)?,
+            "--operating-rate" => {
+                hints.operating_rate = optional_hint::<f32>(flag, value()?)?;
+                if hints
+                    .operating_rate
+                    .is_some_and(|rate| !rate.is_finite() || rate <= 0.0)
+                {
+                    return Err(format!("{flag} must be a positive finite rate or none"));
+                }
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -77,7 +124,20 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         end_s,
         dump_gray,
         assume_range,
+        frame_mode,
+        output_path,
+        hints,
     })
+}
+
+/// `none` leaves the MediaFormat key unset; anything else must parse as the key's type.
+fn optional_hint<T: std::str::FromStr>(flag: &str, text: String) -> Result<Option<T>, String> {
+    if text == "none" {
+        return Ok(None);
+    }
+    text.parse()
+        .map(Some)
+        .map_err(|_| format!("{flag} expects a number or none, got {text:?}"))
 }
 
 fn validate_output_paths(input: &Path, report: &Path, dump: Option<&Path>) -> std::io::Result<()> {
@@ -141,15 +201,18 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let options = android::DecodeOptions {
         window,
         assume_range: args.assume_range,
+        frame_mode: args.frame_mode,
+        output_path: args.output_path,
+        hints: args.hints,
     };
     let mut dump = args
         .dump_gray
         .as_ref()
         .map(|path| File::create(path).map(BufWriter::new))
         .transpose()?;
-    let report = android::decode(&args.input, &options, |frame| {
+    let report = android_loop::decode(&args.input, &options, |frame| {
         if let Some(writer) = dump.as_mut() {
-            writer.write_all(&frame.pixels)?;
+            writer.write_all(&frame.packed_pixels())?;
         }
         Ok(())
     })?;
@@ -158,11 +221,13 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     }
     std::fs::write(&args.report, report.to_json())?;
     eprintln!(
-        "{} frames {}x{} via {} in {:.3} s",
+        "{} frames {}x{} via {} ({}, {}) in {:.3} s",
         report.timestamps_s.len(),
         report.display_width_px,
         report.display_height_px,
         report.output.decoder_name,
+        report.output_path.as_str(),
+        report.frame_mode.as_str(),
         report.timings.total_s
     );
     Ok(())
@@ -244,6 +309,14 @@ mod tests {
             "f.gray",
             "--assume-range",
             "limited",
+            "--frame-mode",
+            "view-scan",
+            "--output-path",
+            "image-reader",
+            "--priority",
+            "none",
+            "--operating-rate",
+            "240",
         ]))
         .unwrap();
         assert_eq!(
@@ -255,7 +328,26 @@ mod tests {
                 end_s: Some(7.25),
                 dump_gray: Some(PathBuf::from("f.gray")),
                 assume_range: Some(LumaRange::Limited),
+                frame_mode: FrameMode::ViewScan,
+                output_path: OutputPath::ImageReader,
+                hints: CodecHints {
+                    priority: None,
+                    operating_rate: Some(240.0),
+                },
             }
+        );
+    }
+
+    #[test]
+    fn defaults_keep_the_258_baseline() {
+        let args = parse_args(&strings(&["--input", "a", "--report", "b"])).unwrap();
+        assert_eq!(
+            (args.frame_mode, args.output_path, args.hints),
+            (
+                FrameMode::Packed,
+                OutputPath::ByteBuffer,
+                CodecHints::DEFAULT
+            )
         );
     }
 
@@ -276,14 +368,20 @@ mod tests {
             "x"
         ]))
         .is_err());
-        assert!(parse_args(&strings(&[
-            "--input",
-            "a",
-            "--report",
-            "b",
-            "--assume-range",
-            "tv"
-        ]))
-        .is_err());
+        for (flag, bad) in [
+            ("--assume-range", "tv"),
+            ("--frame-mode", "rotated"),
+            ("--output-path", "surface"),
+            ("--priority", "high"),
+            ("--operating-rate", "0"),
+            ("--operating-rate", "-30"),
+            ("--operating-rate", "inf"),
+            ("--operating-rate", "NaN"),
+        ] {
+            assert!(
+                parse_args(&strings(&["--input", "a", "--report", "b", flag, bad])).is_err(),
+                "{flag} {bad} should be rejected"
+            );
+        }
     }
 }

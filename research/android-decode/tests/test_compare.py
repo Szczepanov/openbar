@@ -28,12 +28,21 @@ def probe(rotation=None, start_pts=0, pts=(0, 2985, 5970)):
     return {"streams": [stream], "frames": [{"pts": p} for p in pts]}
 
 
-def report(total_s, frame_count=3):
+def report(total_s, frame_count=3, decoded=4, frame_mode="packed", **timing):
     timings = {stage: 0.0 for stage in compare.STAGES}
-    timings["total_s"] = total_s
+    timings.update(total_s=total_s, **timing)
     return {
         "frame_count": frame_count,
-        "decoder": {"name": "c2.test.avc.decoder"},
+        "decoded_output_count": decoded,
+        "frame_mode": frame_mode,
+        "decoder": {
+            "name": "c2.test.avc.decoder",
+            "output_path": "bytebuffer",
+            "priority_hint": 1,
+            "operating_rate_hint": 32767.0,
+            "hint_readback": {"input_priority": None, "input_operating_rate": None,
+                              "output_priority": None, "output_operating_rate": None},
+        },
         "timings": timings,
     }
 
@@ -198,7 +207,28 @@ class SummarizeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare.summarize_reports([report(0.1, 3), report(0.1, 4)])
         with self.assertRaises(ValueError):
+            compare.summarize_reports([report(0.1, decoded=4), report(0.1, decoded=5)])
+        with self.assertRaises(ValueError):
             compare.summarize_reports([])
+
+    def test_mixed_variants_are_rejected(self):
+        with self.assertRaises(ValueError):
+            compare.summarize_reports([report(0.1), report(0.1, frame_mode="view")])
+
+    def test_per_frame_split_of_decode_loop(self):
+        summary = compare.summarize_reports([report(
+            1.0, frame_count=2, decoded=4,
+            decode_loop_s=0.5, repack_s=0.1, copy_s=0.02, scan_s=0.04, sink_s=0.02)])
+        per_frame = {k: round(v["median"], 9) for k, v in summary["per_frame_ms"].items()}
+        self.assertEqual(per_frame, {
+            "decode_wait_per_output": 85.0,
+            "repack_per_frame": 50.0,
+            "copy_per_frame": 10.0,
+            "scan_per_frame": 20.0,
+        })
+        self.assertEqual(summary["variant"]["decoder.output_path"], "bytebuffer")
+        with self.assertRaises(ValueError):
+            compare.per_frame_ms(report(0.1, decoded=0))
 
 
 if __name__ == "__main__":

@@ -1,16 +1,60 @@
 //! Platform-independent decode result types, errors and the deterministic JSON report.
 
+use crate::collect::FrameMode;
 use crate::raster::{LumaRange, PlaneLayout, RasterError, Rotation};
 use crate::timing::{TimingError, Window};
 use std::fmt;
 use std::fmt::Write as _;
 
 /// Bumped whenever the report shape or frame semantics change.
-pub const REPORT_VERSION: u32 = 1;
+/// v2: frame mode, output path, configurable hints with their read-back, decoded output count.
+pub const REPORT_VERSION: u32 = 2;
 pub const FRAME_SOURCE_ID: &str = "android-mediacodec-gray";
-/// Codec configuration hints (speed only, not output): best-effort priority, unbounded rate.
-pub const CODEC_PRIORITY: i32 = 1;
-pub const CODEC_OPERATING_RATE: f32 = 32_767.0;
+
+/// Codec configuration hints. They may change speed, never output; `None` leaves a key unset.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CodecHints {
+    /// MediaFormat `priority`: 0 = realtime, 1 = best effort.
+    pub priority: Option<i32>,
+    /// MediaFormat `operating-rate` in frames per second.
+    pub operating_rate: Option<f32>,
+}
+
+impl CodecHints {
+    /// The #258 baseline: best-effort priority at an unbounded (`Short.MAX_VALUE`) rate.
+    pub const DEFAULT: Self = Self {
+        priority: Some(1),
+        operating_rate: Some(32_767.0),
+    };
+}
+
+/// Where decoded pictures are read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputPath {
+    /// `AMediaCodec_getOutputBuffer` (CPU-visible codec buffer, flexible YUV + `image-data`).
+    ByteBuffer,
+    /// Rendered to an `AImageReader` Surface (YUV_420_888) and read with `AImage_getPlaneData`.
+    ImageReader,
+}
+
+impl OutputPath {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ByteBuffer => "bytebuffer",
+            Self::ImageReader => "image-reader",
+        }
+    }
+}
+
+/// Hint keys as the codec reports them back after `start`, from its input and output formats.
+/// Absent keys are `None`: a codec that does not echo a hint has not confirmed it either way.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct HintReadback {
+    pub input_priority: Option<i32>,
+    pub input_operating_rate: Option<f32>,
+    pub output_priority: Option<i32>,
+    pub output_operating_rate: Option<f32>,
+}
 
 #[derive(Debug)]
 pub enum DecodeError {
@@ -55,6 +99,11 @@ pub enum DecodeError {
     },
     Stalled {
         idle_ms: u128,
+    },
+    /// A Surface image does not carry the PTS of the next rendered buffer: a drop or reorder.
+    ImageTimestampMismatch {
+        expected_us: i64,
+        image_ns: i64,
     },
     Unsupported(&'static str),
 }
@@ -106,6 +155,13 @@ impl fmt::Display for DecodeError {
             Self::Stalled { idle_ms } => {
                 write!(f, "decoder made no progress for {idle_ms} ms")
             }
+            Self::ImageTimestampMismatch {
+                expected_us,
+                image_ns,
+            } => write!(
+                f,
+                "image timestamp {image_ns} ns does not match the rendered buffer's pts {expected_us} us; refusing to pair frames"
+            ),
             Self::Unsupported(reason) => write!(f, "{reason}"),
         }
     }
@@ -144,6 +200,8 @@ pub enum GeometrySource {
     Decoder,
     /// Taken from the `image-data` (`MediaImage2`) description of a flexible-YUV buffer.
     ImageData,
+    /// Taken from the `AImage` plane and crop of a Surface image.
+    Image,
     Fallback,
 }
 
@@ -152,6 +210,7 @@ impl GeometrySource {
         match self {
             Self::Decoder => "decoder",
             Self::ImageData => "image-data",
+            Self::Image => "aimage",
             Self::Fallback => "fallback",
         }
     }
@@ -208,7 +267,10 @@ pub struct StageTimings {
     pub decode_loop_s: f64,
     /// Part of `repack_s`: the sequential copy of the luma plane out of codec memory.
     pub copy_s: f64,
+    /// Copy plus frame construction (materialised raster, or the view in `view` mode).
     pub repack_s: f64,
+    /// `view-scan` only: reading every display pixel through `intensity`.
+    pub scan_s: f64,
     pub sink_s: f64,
     pub total_s: f64,
 }
@@ -217,6 +279,12 @@ pub struct StageTimings {
 pub struct DecodeReport {
     pub source: SourceInfo,
     pub output: OutputInfo,
+    pub frame_mode: FrameMode,
+    pub output_path: OutputPath,
+    pub hints: CodecHints,
+    pub hint_readback: HintReadback,
+    /// Every sized decoder output, including pre-roll and the frame that ends the window.
+    pub decoded_output_count: u64,
     pub window: Window,
     /// Earliest PTS of the stream; timestamps are relative to it, like FFmpeg `start_pts`.
     pub origin_us: i64,
@@ -251,8 +319,10 @@ impl DecodeReport {
                 "  }},\n",
                 "  \"decoder\": {{\n",
                 "    \"name\": {},\n",
+                "    \"output_path\": \"{}\",\n",
                 "    \"priority_hint\": {},\n",
-                "    \"operating_rate_hint\": {:?},\n",
+                "    \"operating_rate_hint\": {},\n",
+                "    \"hint_readback\": {{ \"input_priority\": {}, \"input_operating_rate\": {}, \"output_priority\": {}, \"output_operating_rate\": {} }},\n",
                 "    \"color_format\": {},\n",
                 "    \"color_range_raw\": {},\n",
                 "    \"luma_range\": \"{}\",\n",
@@ -264,12 +334,14 @@ impl DecodeReport {
                 "    \"crop\": [{}, {}, {}, {}],\n",
                 "    \"crop_source\": \"{}\"\n",
                 "  }},\n",
+                "  \"frame_mode\": \"{}\",\n",
                 "  \"window\": {{ \"start_s\": {}, \"end_s\": {} }},\n",
                 "  \"origin_us\": {},\n",
                 "  \"display_width_px\": {},\n",
                 "  \"display_height_px\": {},\n",
                 "  \"frame_count\": {},\n",
                 "  \"preroll_discarded\": {},\n",
+                "  \"decoded_output_count\": {},\n",
                 "  \"presentation_time_us\": [{}],\n",
                 "  \"timestamps_s\": [{}],\n",
             ),
@@ -282,8 +354,13 @@ impl DecodeReport {
             source.rotation.ffmpeg_ccw_deg(),
             json_opt(source.duration_us),
             json_string(&output.decoder_name),
-            CODEC_PRIORITY,
-            CODEC_OPERATING_RATE,
+            self.output_path.as_str(),
+            json_opt(self.hints.priority),
+            json_opt_f32(self.hints.operating_rate),
+            json_opt(self.hint_readback.input_priority),
+            json_opt_f32(self.hint_readback.input_operating_rate),
+            json_opt(self.hint_readback.output_priority),
+            json_opt_f32(self.hint_readback.output_operating_rate),
             output.color_format,
             json_opt(output.color_range_raw),
             output.luma_range.as_str(),
@@ -300,6 +377,7 @@ impl DecodeReport {
             crop.right,
             crop.bottom,
             output.crop_source.as_str(),
+            self.frame_mode.as_str(),
             json_f64(self.window.start_s),
             json_f64(self.window.end_s),
             self.origin_us,
@@ -307,6 +385,7 @@ impl DecodeReport {
             self.display_height_px,
             self.timestamps_s.len(),
             self.preroll_discarded,
+            self.decoded_output_count,
             join(self.presentation_time_us.iter().map(i64::to_string)),
             join(self.timestamps_s.iter().map(|&t| json_f64(t))),
         );
@@ -321,6 +400,7 @@ impl DecodeReport {
                 "    \"decode_loop_s\": {},\n",
                 "    \"copy_s\": {},\n",
                 "    \"repack_s\": {},\n",
+                "    \"scan_s\": {},\n",
                 "    \"sink_s\": {},\n",
                 "    \"total_s\": {}\n",
                 "  }}\n",
@@ -332,6 +412,7 @@ impl DecodeReport {
             json_f64(t.decode_loop_s),
             json_f64(t.copy_s),
             json_f64(t.repack_s),
+            json_f64(t.scan_s),
             json_f64(t.sink_s),
             json_f64(t.total_s),
         );
@@ -341,6 +422,10 @@ impl DecodeReport {
 
 fn join(items: impl Iterator<Item = String>) -> String {
     items.collect::<Vec<_>>().join(", ")
+}
+
+fn json_opt_f32(value: Option<f32>) -> String {
+    value.map_or_else(|| "null".to_owned(), |v| json_f64(f64::from(v)))
 }
 
 fn json_opt<T: fmt::Display>(value: Option<T>) -> String {
@@ -402,6 +487,17 @@ mod tests {
                     crop: CropRect::full(1920, 1080),
                 },
             },
+            frame_mode: FrameMode::View,
+            output_path: OutputPath::ImageReader,
+            hints: CodecHints {
+                priority: None,
+                operating_rate: Some(240.0),
+            },
+            hint_readback: HintReadback {
+                input_operating_rate: Some(240.0),
+                ..HintReadback::default()
+            },
+            decoded_output_count: 6,
             window: Window::try_new(Some(0.5), None).unwrap(),
             origin_us: 66_666,
             display_width_px: 1080,
@@ -421,7 +517,13 @@ mod tests {
         let json = report().to_json();
         assert_eq!(json, report().to_json());
         for needle in [
-            "\"report_version\": 1",
+            "\"report_version\": 2",
+            "\"output_path\": \"image-reader\"",
+            "\"priority_hint\": null",
+            "\"operating_rate_hint\": 240.0",
+            "\"hint_readback\": { \"input_priority\": null, \"input_operating_rate\": 240.0, \"output_priority\": null, \"output_operating_rate\": null }",
+            "\"frame_mode\": \"view\"",
+            "\"decoded_output_count\": 6",
             "\"mime\": \"video/avc\"",
             "\"rotation_cw_deg\": 90",
             "\"rotation_ffmpeg_ccw_deg\": 270",

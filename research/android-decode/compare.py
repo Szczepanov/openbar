@@ -44,6 +44,7 @@ STAGES = (
     "decode_loop_s",
     "copy_s",
     "repack_s",
+    "scan_s",
     "sink_s",
     "total_s",
 )
@@ -268,26 +269,68 @@ def parity(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+# Report fields that define a variant; repeats of one case must agree on all of them.
+VARIANT_FIELDS = (
+    ("frame_mode",),
+    ("decoder", "name"),
+    ("decoder", "output_path"),
+    ("decoder", "priority_hint"),
+    ("decoder", "operating_rate_hint"),
+    ("decoder", "hint_readback"),
+)
+
+
+def _field(report: dict, path: tuple[str, ...]):
+    value = report
+    for key in path:
+        value = value[key]
+    return value
+
+
+def _spread(values: list[float]) -> dict:
+    return {"median": statistics.median(values), "min": min(values), "max": max(values)}
+
+
+def per_frame_ms(report: dict) -> dict:
+    """Codec wait (loop time not spent building, scanning or sinking frames) per decoded output,
+    and frame construction per emitted frame, in milliseconds."""
+    timings = report["timings"]
+    decoded = report["decoded_output_count"]
+    emitted = report["frame_count"]
+    if decoded <= 0 or emitted <= 0:
+        raise ValueError("report has no decoded or emitted frames")
+    wait_s = timings["decode_loop_s"] - timings["repack_s"] - timings["scan_s"] - timings["sink_s"]
+    return {
+        "decode_wait_per_output": 1000.0 * wait_s / decoded,
+        "repack_per_frame": 1000.0 * timings["repack_s"] / emitted,
+        "copy_per_frame": 1000.0 * timings["copy_s"] / emitted,
+        "scan_per_frame": 1000.0 * timings["scan_s"] / emitted,
+    }
+
+
 def summarize_reports(reports: Iterable[dict]) -> dict:
     reports = list(reports)
     if not reports:
         raise ValueError("no reports to summarize")
-    counts = {r["frame_count"] for r in reports}
-    if len(counts) != 1:
-        raise ValueError(f"repeats decoded different frame counts: {sorted(counts)}")
-    stages = {}
-    for stage in STAGES:
-        values = [r["timings"][stage] for r in reports]
-        stages[stage] = {
-            "median": statistics.median(values),
-            "min": min(values),
-            "max": max(values),
-        }
+    for key in ("frame_count", "decoded_output_count"):
+        counts = {r[key] for r in reports}
+        if len(counts) != 1:
+            raise ValueError(f"repeats disagree on {key}: {sorted(counts)}")
+    variant = {}
+    for path in VARIANT_FIELDS:
+        values = [json.dumps(_field(r, path), sort_keys=True) for r in reports]
+        if len(set(values)) != 1:
+            raise ValueError(f"repeats disagree on {'.'.join(path)}")
+        variant[".".join(path)] = _field(reports[0], path)
+    per_frame = [per_frame_ms(r) for r in reports]
     return {
         "repeats": len(reports),
-        "frame_count": counts.pop(),
+        "frame_count": reports[0]["frame_count"],
+        "decoded_output_count": reports[0]["decoded_output_count"],
         "decoder": reports[0]["decoder"]["name"],
-        "stages_s": stages,
+        "variant": variant,
+        "stages_s": {stage: _spread([r["timings"][stage] for r in reports]) for stage in STAGES},
+        "per_frame_ms": {key: _spread([p[key] for p in per_frame]) for key in per_frame[0]},
     }
 
 
