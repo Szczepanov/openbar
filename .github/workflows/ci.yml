@@ -19,6 +19,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  # Keep JavaScript actions executing on Node 20 runtime until upstream actions migrate to Node 24
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE20: "true"
   # Embedded at compile time by analyze.rs. github.sha matches actions/checkout's default
   # revision (the tested merge ref for pull requests, the pushed commit for push runs).
   OPENBAR_GIT_COMMIT: ${{ github.sha }}
@@ -57,9 +59,16 @@ jobs:
           path: ${{ runner.tool_cache }}/ffmpeg
           key: ffmpeg-cache-${{ runner.os }}-v1
       - name: Setup FFmpeg (external decode prerequisite, ADR-0006)
+        id: setup-ffmpeg
+        continue-on-error: true
         uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
         with:
           github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+      - name: Fallback install FFmpeg via apt (Linux)
+        if: steps.setup-ffmpeg.outcome != 'success'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
       - name: Verify FFmpeg
         run: |
           ffmpeg -hide_banner -version | head -n 1
@@ -244,9 +253,14 @@ jobs:
           path: ${{ runner.tool_cache }}/ffmpeg
           key: ffmpeg-cache-${{ runner.os }}-v1
       - name: Setup FFmpeg (external decode prerequisite, ADR-0006)
+        id: setup-ffmpeg
+        continue-on-error: true
         uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
         with:
           github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+      - name: Fallback install FFmpeg via choco (Windows)
+        if: steps.setup-ffmpeg.outcome != 'success'
+        run: choco install ffmpeg --no-progress -y
       - name: Verify FFmpeg
         run: |
           ffmpeg -hide_banner -version
