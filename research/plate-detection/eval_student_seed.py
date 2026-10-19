@@ -28,6 +28,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Sequence
@@ -121,7 +122,7 @@ def summarize(per_clip: dict[str, dict[str, Any]], fold: str | None = None) -> d
         "scored_clips": len(scored),
         "plausible_top1_hits": len(hits),
         "refused_scored": sum(1 for v in scored if v["refused"]),
-        "accepted_scored": sum(1 for v in scored if not v["refused"]),
+        "accepted_scored": sum(1 for v in scored if v["selected"] and not v["refused"]),
         "accepted_hits": sum(1 for v in scored if v["accepted_hit"]),
         "raw_centre_err_median": _median(errs("raw_centre_error_rel")),
         "raw_radius_err_median": _median(errs("raw_radius_abs_error_rel")),
@@ -152,9 +153,10 @@ def evaluate(*, repo_root: Path, checkpoint: Path, dataset_dir: Path, output: Pa
 
     torch.manual_seed(0)
     detector = detectors.build("dfine_s_student", checkpoint=checkpoint.resolve())
-    work = output.parent / f".{output.stem}-frames"
+    output.parent.mkdir(parents=True, exist_ok=True)
     per_clip: dict[str, dict[str, Any]] = {}
-    try:
+    with tempfile.TemporaryDirectory(prefix=f".{output.stem}-frames-", dir=output.parent) as temp:
+        work = Path(temp)
         for name, role in allowed.items():
             fixture = fixtures[name]
             points = truth.load_truth(name, repo_root / "validation" / "private")
@@ -181,8 +183,6 @@ def evaluate(*, repo_root: Path, checkpoint: Path, dataset_dir: Path, output: Pa
             shutil.rmtree(frames_dir, ignore_errors=True)
             print(f"{name}: fold={entry['fold']} hit={per_clip[name]['plausible_top1_hit']} "
                   f"refused={per_clip[name]['refused']}", flush=True)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
 
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True,
                             check=False).stdout.strip()

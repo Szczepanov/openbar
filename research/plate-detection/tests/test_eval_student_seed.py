@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -22,6 +26,26 @@ POINT = truth.TruthPoint(0.0, 500.0, 800.0, 100.0, "test")
 
 
 class EvalStudentSeedTests(unittest.TestCase):
+    def test_evaluate_preserves_preexisting_frame_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dataset_manifest.json").write_text('{"clips": []}', encoding="utf-8")
+            old_work = root / ".seed_eval-frames"
+            old_work.mkdir()
+            sentinel = old_work / "keep.txt"
+            sentinel.write_text("existing work", encoding="utf-8")
+            detector = SimpleNamespace(config=lambda: {})
+            modules = {"cv2": SimpleNamespace(), "torch": SimpleNamespace(manual_seed=lambda _: None)}
+            with patch.dict(sys.modules, modules), \
+                 patch.object(ev.label_package, "PRIVATE_ROOT", root), \
+                 patch.object(ev.clips, "load_fixtures", return_value={}), \
+                 patch("detectors.build", return_value=detector):
+                record = ev.evaluate(repo_root=root, checkpoint=root / "checkpoint", dataset_dir=root,
+                                     output=root / "seed_eval.json")
+            self.assertEqual(json.loads((root / "seed_eval.json").read_text(encoding="utf-8")), record)
+            self.assertTrue(sentinel.is_file(), "evaluation deleted a preexisting frame directory")
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "existing work")
+
     def test_clip_folds_maps_included_and_excluded(self) -> None:
         manifest = {"clips": [
             {"fixture_id": "a", "status": "included", "fold": "train"},
@@ -56,7 +80,7 @@ class EvalStudentSeedTests(unittest.TestCase):
         self.assertFalse(none["selected"])
 
     def test_summarize_separates_folds(self) -> None:
-        hit = {"scored": True, "plausible_top1_hit": True, "accepted_hit": True, "refused": False,
+        hit = {"scored": True, "selected": True, "plausible_top1_hit": True, "accepted_hit": True, "refused": False,
                "raw_centre_error_rel": 0.02, "raw_radius_abs_error_rel": 0.01,
                "refined_centre_error_rel": 0.01, "refined_radius_abs_error_rel": 0.005}
         miss = {**hit, "plausible_top1_hit": False, "accepted_hit": False,
@@ -70,6 +94,14 @@ class EvalStudentSeedTests(unittest.TestCase):
         all_dev = ev.summarize(per_clip)
         self.assertEqual((all_dev["clips"], all_dev["scored_clips"], all_dev["plausible_top1_hits"]), (3, 2, 1))
         self.assertEqual(all_dev["raw_radius_err_median"], 0.01)
+
+    def test_summarize_does_not_accept_a_missing_seed(self) -> None:
+        result = ev.score_seed([], {"selected_index": None,
+                                   "refusal": {"refused": False, "reason": "no_candidate"}}, POINT)
+        summary = ev.summarize({"empty": {**result, "fold": "val"}})
+        self.assertEqual(summary["scored_clips"], 1)
+        self.assertEqual(summary["accepted_scored"], 0)
+        self.assertEqual(summary["accepted_hits"], 0)
 
 
 if __name__ == "__main__":
