@@ -118,6 +118,27 @@ as evidence (exit 1) and the next case runs; tool and input errors (exit 2) stop
 `--dump-gray` adds file-write time to `sink_s` and `total_s`, so benchmark runs leave it off. `copy_s` is the part of `repack_s` spent copying luma out of the codec buffer.
 Timings live in the report's separate `timings` object. They are diagnostics, not measurement output.
 
+## Variants (per-frame cost follow-up)
+
+Each variant must keep the same parity as the baseline: equal frame count, PTS within 1 µs, and
+bit-exact luma against FFmpeg's raw Y diagnostic.
+
+| Flag | Values (default first) | What it changes |
+| --- | --- | --- |
+| `--frame-mode` | `packed`, `view`, `view-scan` | `packed` rotates and range-expands every pixel. `view` builds a `DisplayLumaView`: it copies the luma, then applies rotation and the limited-to-full LUT in `intensity(x, y)` (a local mirror of the ADR-0005 `GrayscaleImage` shape). `view-scan` also reads every pixel once through `intensity`, timed as `scan_s`; that is the worst case for a consumer. `--dump-gray` always writes the packed raster. |
+| `--output-path` | `bytebuffer`, `image-reader` | `image-reader` renders into an `AImageReader` Surface (YUV_420_888). Each image must carry its rendered buffer's `pts × 1000` ns, in order; otherwise the run fails. Rotation is applied by the prototype, and the codec is configured with `rotation-degrees` 0. |
+| `--priority` | `1`, any int, `none` | MediaFormat `priority`. `none` leaves the key unset. |
+| `--operating-rate` | `32767`, positive fps, `none` | MediaFormat `operating-rate`. |
+
+Report v2 records the variant, plus `hint_readback`, which is the hint keys as the codec echoes them
+from its input and output formats. `null` means the codec did not echo the key; that does not show
+whether the hint was ignored. `decoded_output_count` counts every sized output, including pre-roll.
+`compare.py summarize` adds `per_frame_ms`:
+- `decode_wait_per_output`: loop time not spent building, scanning or sinking frames, divided by decoded outputs;
+- `repack_per_frame`, `copy_per_frame` and `scan_per_frame`.
+
+The suite runs all variants by default; set `VARIANTS="packed view image-reader"` to run a subset. Results go to `<out>/<variant>/`.
+
 ## Known limits
 
 - **Range.** The prototype follows the `color-range` the decoder reports. ADR-0006 records a clip whose container said `tv` but whose frame-level range was full. If a decoder reports the container value there, the frames get expanded twice and `compare.py` shows a large luma difference. That is a parity finding, not a reason to loosen the gate.
