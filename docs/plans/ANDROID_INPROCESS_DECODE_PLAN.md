@@ -1,7 +1,12 @@
 # Android in-process hardware decode prototype (#258)
 
-Status: **experiment implemented on the host. Device evidence has not been collected.** This plan
-does not change ADR-0006, the ADR-0005 tracker frame boundary or any canonical output.
+Status: **experiment run on the 14T Pro (2026-10-19). Gates not met; owner decision pending.**
+- The hardware decoder is bit-exact with FFmpeg's decoder, PTS match and frames match.
+- The lift window takes a median of 2.02 s against 5.28 s for FFmpeg. That misses the 0.50 s target.
+- The luma gate against `-pix_fmt gray` fails because of FFmpeg's own gray conversion.
+
+See the [evidence](../validation/ANDROID_LATENCY_EVIDENCE.md#in-process-mediacodec-prototype-258-2026-10-19).
+This plan does not change ADR-0006, the ADR-0005 tracker frame boundary or any canonical output.
 
 ## 1. Context
 
@@ -72,8 +77,8 @@ dependency.
 
 **Evaluate evidence**
 
-6. Build on the phone, then run 5 repeats on each of: the synthetic smoke clip, the lift window and the full clip. Run parity once per clip.
-7. Record the results in an "In-process MediaCodec prototype" section of `ANDROID_LATENCY_EVIDENCE.md`, whether they pass or fail. Include device, commit, toolchain, decoder name, colour format and range source, and the median stage timings next to the FFmpeg baseline.
+6. Build on the phone, then run 5 repeats on each of: the synthetic smoke clip, the lift window and the full clip. Run parity once per clip. Done with `run_device_suite.sh`.
+7. Done. Record the results in an "In-process MediaCodec prototype" section of `ANDROID_LATENCY_EVIDENCE.md`, whether they pass or fail. Include device, commit, toolchain, decoder name, colour format and range source, and the median stage timings next to the FFmpeg baseline.
 
 **Promote (separate change, owner decision)**
 

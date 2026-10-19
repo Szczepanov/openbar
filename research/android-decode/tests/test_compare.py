@@ -96,6 +96,20 @@ class FrameDiffTest(unittest.TestCase):
             },
         )
 
+    def test_compare_frames_reads_luma_of_larger_reference_frames_with_transform(self):
+        # Two 2-byte luma frames, each followed by 1 byte of "chroma" (3-byte reference stride).
+        reference = io.BytesIO(bytes([0x10, 0xEB, 0x99, 0x7E, 0x10, 0x99]))
+        prototype = io.BytesIO(bytes([0x00, 0xFF, 0x80, 0x00]))
+        result = compare.compare_frames(
+            prototype, reference, 2, [0, 1],
+            reference_frame_bytes=3, transform=compare.limited_to_full_table(),
+        )
+        self.assertEqual(result["frames_bit_exact"], 2)
+
+    def test_limited_to_full_table_anchors(self):
+        table = compare.limited_to_full_table()
+        self.assertEqual([table[c] for c in (0, 16, 17, 126, 235, 255)], [0, 0, 1, 128, 255, 255])
+
     def test_compare_frames_fails_closed_on_length_mismatch(self):
         with self.assertRaises(ValueError):
             compare.compare_frames(io.BytesIO(b"\x00\x00"), io.BytesIO(b"\x00\x00"), 2, [0, 1])

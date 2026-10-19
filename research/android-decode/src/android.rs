@@ -6,7 +6,9 @@
 
 use crate::decode::{
     DecodeError, DecodeReport, GeometrySource, OutputInfo, RangeSource, SourceInfo, StageTimings,
+    CODEC_OPERATING_RATE, CODEC_PRIORITY,
 };
+use crate::image_layout::parse_luma_plane;
 use crate::raster::{to_contract_luma, CropRect, LumaFrame, LumaRange, PlaneLayout, Rotation};
 use crate::timing::{pts_us_to_seconds, push_strictly_increasing, Placement, Window};
 use ndk_sys as ffi;
@@ -18,15 +20,31 @@ use std::path::Path;
 use std::ptr;
 use std::time::{Duration, Instant};
 
+/// MediaFormat key strings. The NDK's `AMEDIAFORMAT_KEY_*` symbols are only exported from
+/// API 28 stubs (Termux links an older one), and the strings are the stable public key names.
+const KEY_MIME: &CStr = c"mime";
+const KEY_WIDTH: &CStr = c"width";
+const KEY_HEIGHT: &CStr = c"height";
+const KEY_ROTATION: &CStr = c"rotation-degrees";
+const KEY_DURATION: &CStr = c"durationUs";
+const KEY_COLOR_FORMAT: &CStr = c"color-format";
+const KEY_STRIDE: &CStr = c"stride";
+const KEY_SLICE_HEIGHT: &CStr = c"slice-height";
+const KEY_COLOR_RANGE: &CStr = c"color-range";
+const KEY_DISPLAY_CROP: &CStr = c"crop";
+const KEY_IMAGE_DATA: &CStr = c"image-data";
+const KEY_PRIORITY: &CStr = c"priority";
+const KEY_OPERATING_RATE: &CStr = c"operating-rate";
+
 /// `MediaCodecInfo.CodecCapabilities` colour formats.
 const COLOR_FORMAT_YUV420_PLANAR: i32 = 19;
 const COLOR_FORMAT_YUV420_SEMIPLANAR: i32 = 21;
 const COLOR_FORMAT_YUV420_FLEXIBLE: i32 = 0x7F42_0888;
 
 /// Input is polled without blocking; output waits briefly while input is still being fed so
-/// the decoder pipeline fills quickly, and longer once only draining remains.
+/// free input buffers are refilled quickly, and longer once only draining remains.
 const INPUT_TIMEOUT_US: i64 = 0;
-const OUTPUT_TIMEOUT_FEEDING_US: i64 = 2_000;
+const OUTPUT_TIMEOUT_FEEDING_US: i64 = 1_000;
 const OUTPUT_TIMEOUT_DRAINING_US: i64 = 10_000;
 const STALL_LIMIT: Duration = Duration::from_secs(5);
 /// Samples scanned from the start of the track to find the stream's first presentation time.
@@ -84,13 +102,22 @@ impl Format {
         })
     }
 
+    fn buffer(&self, key: *const c_char) -> Option<Vec<u8>> {
+        let mut data: *mut std::os::raw::c_void = ptr::null_mut();
+        let mut size = 0usize;
+        // SAFETY: the returned bytes are owned by the format and copied immediately.
+        let found = unsafe { ffi::AMediaFormat_getBuffer(self.0, key, &mut data, &mut size) };
+        (found && !data.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(data as *const u8, size) }.to_vec())
+    }
+
     fn crop(&self) -> Option<CropRect> {
         let (mut left, mut top, mut right, mut bottom) = (0, 0, 0, 0);
         // SAFETY: as above. KEY_DISPLAY_CROP is API 28+; inclusive right/bottom.
         let found = unsafe {
             ffi::AMediaFormat_getRect(
                 self.0,
-                ffi::AMEDIAFORMAT_KEY_DISPLAY_CROP,
+                KEY_DISPLAY_CROP.as_ptr(),
                 &mut left,
                 &mut top,
                 &mut right,
@@ -186,7 +213,7 @@ fn open_video_track(path: &Path) -> Result<(File, Extractor, Format, SourceInfo)
         let format = Format::non_null("AMediaExtractor_getTrackFormat", unsafe {
             ffi::AMediaExtractor_getTrackFormat(extractor.0, index)
         })?;
-        let Some(mime) = format.string(unsafe { ffi::AMEDIAFORMAT_KEY_MIME }) else {
+        let Some(mime) = format.string(KEY_MIME.as_ptr()) else {
             continue;
         };
         if !mime.starts_with("video/") {
@@ -203,14 +230,10 @@ fn open_video_track(path: &Path) -> Result<(File, Extractor, Format, SourceInfo)
         };
         let info = SourceInfo {
             mime,
-            coded_width_px: dimension(unsafe { ffi::AMEDIAFORMAT_KEY_WIDTH })?,
-            coded_height_px: dimension(unsafe { ffi::AMEDIAFORMAT_KEY_HEIGHT })?,
-            rotation: Rotation::from_android_cw(
-                format
-                    .int32(unsafe { ffi::AMEDIAFORMAT_KEY_ROTATION })
-                    .unwrap_or(0),
-            )?,
-            duration_us: format.int64(unsafe { ffi::AMEDIAFORMAT_KEY_DURATION }),
+            coded_width_px: dimension(KEY_WIDTH.as_ptr())?,
+            coded_height_px: dimension(KEY_HEIGHT.as_ptr())?,
+            rotation: Rotation::from_android_cw(format.int32(KEY_ROTATION.as_ptr()).unwrap_or(0))?,
+            duration_us: format.int64(KEY_DURATION.as_ptr()),
         };
         return Ok((file, extractor, format, info));
     }
@@ -236,8 +259,16 @@ fn configure_codec(source: &SourceInfo, track_format: &Format) -> Result<Codec, 
     unsafe {
         ffi::AMediaFormat_setInt32(
             track_format.0,
-            ffi::AMEDIAFORMAT_KEY_COLOR_FORMAT,
+            KEY_COLOR_FORMAT.as_ptr(),
             COLOR_FORMAT_YUV420_FLEXIBLE,
+        );
+        // Offline decode: ask for best-effort (non-realtime) priority at an unbounded rate, so
+        // the codec is not paced to the clip's frame rate. Hints only; they change speed, not output.
+        ffi::AMediaFormat_setInt32(track_format.0, KEY_PRIORITY.as_ptr(), CODEC_PRIORITY);
+        ffi::AMediaFormat_setFloat(
+            track_format.0,
+            KEY_OPERATING_RATE.as_ptr(),
+            CODEC_OPERATING_RATE,
         );
         check(
             "AMediaCodec_configure",
@@ -265,22 +296,34 @@ fn read_output_info(
         ffi::AMediaCodec_getOutputFormat(codec.raw)
     })?;
     let color_format = format
-        .int32(unsafe { ffi::AMEDIAFORMAT_KEY_COLOR_FORMAT })
+        .int32(KEY_COLOR_FORMAT.as_ptr())
         .ok_or(DecodeError::Unsupported(
             "output format has no color-format",
         ))?;
-    if color_format != COLOR_FORMAT_YUV420_PLANAR && color_format != COLOR_FORMAT_YUV420_SEMIPLANAR
-    {
-        return Err(DecodeError::UnsupportedColorFormat {
-            value: color_format,
-        });
-    }
+    // Flexible YUV in ByteBuffer mode carries its exact layout in `image-data`; anything else
+    // must be a fixed planar/semi-planar format whose Y plane starts the buffer.
+    let image_plane = match color_format {
+        COLOR_FORMAT_YUV420_PLANAR | COLOR_FORMAT_YUV420_SEMIPLANAR => None,
+        COLOR_FORMAT_YUV420_FLEXIBLE => Some(
+            parse_luma_plane(&format.buffer(KEY_IMAGE_DATA.as_ptr()).ok_or(
+                DecodeError::UnsupportedColorFormat {
+                    value: color_format,
+                },
+            )?)
+            .map_err(DecodeError::ImageLayout)?,
+        ),
+        _ => {
+            return Err(DecodeError::UnsupportedColorFormat {
+                value: color_format,
+            })
+        }
+    };
     let width = format
-        .int32(unsafe { ffi::AMEDIAFORMAT_KEY_WIDTH })
+        .int32(KEY_WIDTH.as_ptr())
         .and_then(|v| usize::try_from(v).ok())
         .ok_or(DecodeError::Unsupported("output format has no width"))?;
     let height = format
-        .int32(unsafe { ffi::AMEDIAFORMAT_KEY_HEIGHT })
+        .int32(KEY_HEIGHT.as_ptr())
         .and_then(|v| usize::try_from(v).ok())
         .ok_or(DecodeError::Unsupported("output format has no height"))?;
     let positive = |key| {
@@ -291,12 +334,23 @@ fn read_output_info(
     };
     // Fallbacks are recorded, never silent: a decoder that pads height to 1088 without a crop
     // shows up in the report and as a dimension mismatch in parity.
-    let stride = positive(unsafe { ffi::AMEDIAFORMAT_KEY_STRIDE });
-    let slice_height = positive(unsafe { ffi::AMEDIAFORMAT_KEY_SLICE_HEIGHT });
-    let stride_source = if stride.is_some() && slice_height.is_some() {
-        GeometrySource::Decoder
-    } else {
-        GeometrySource::Fallback
+    let (stride, slice_height, stride_source, y_offset) = match image_plane {
+        Some(plane) => (
+            Some(plane.row_stride),
+            Some(plane.height_px),
+            GeometrySource::ImageData,
+            plane.offset,
+        ),
+        None => {
+            let stride = positive(KEY_STRIDE.as_ptr());
+            let slice_height = positive(KEY_SLICE_HEIGHT.as_ptr());
+            let source = if stride.is_some() && slice_height.is_some() {
+                GeometrySource::Decoder
+            } else {
+                GeometrySource::Fallback
+            };
+            (stride, slice_height, source, 0)
+        }
     };
     let crop = format.crop();
     let crop_source = if crop.is_some() {
@@ -308,7 +362,7 @@ fn read_output_info(
     let slice_height = slice_height.unwrap_or(height);
     let crop = crop.unwrap_or_else(|| CropRect::full(width, height));
 
-    let color_range_raw = format.int32(unsafe { ffi::AMEDIAFORMAT_KEY_COLOR_RANGE });
+    let color_range_raw = format.int32(KEY_COLOR_RANGE.as_ptr());
     let (luma_range, range_source) = match LumaRange::from_android(color_range_raw) {
         Some(range) => (range, RangeSource::Decoder),
         None => (
@@ -324,6 +378,7 @@ fn read_output_info(
         range_source,
         stride_source,
         crop_source,
+        y_offset,
         layout: PlaneLayout {
             stride,
             slice_height,
@@ -332,13 +387,20 @@ fn read_output_info(
     })
 }
 
-/// Feeds one compressed sample (or EOS) if an input buffer is free. Returns true once EOS is queued.
-fn feed_input(codec: &Codec, extractor: &Extractor) -> Result<bool, DecodeError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputStep {
+    Fed,
+    NoFreeBuffer,
+    EndOfStream,
+}
+
+/// Feeds one compressed sample (or EOS) if an input buffer is free.
+fn feed_input(codec: &Codec, extractor: &Extractor) -> Result<InputStep, DecodeError> {
     // SAFETY: codec and extractor are live; buffer pointer/capacity come from the codec.
     unsafe {
         let index = ffi::AMediaCodec_dequeueInputBuffer(codec.raw, INPUT_TIMEOUT_US);
         if index < 0 {
-            return Ok(false);
+            return Ok(InputStep::NoFreeBuffer);
         }
         let index = index as usize;
         let mut capacity = 0usize;
@@ -368,7 +430,7 @@ fn feed_input(codec: &Codec, extractor: &Extractor) -> Result<bool, DecodeError>
                     ffi::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM,
                 ),
             )?;
-            return Ok(true);
+            return Ok(InputStep::EndOfStream);
         }
         let time_us = ffi::AMediaExtractor_getSampleTime(extractor.0);
         if time_us < 0 {
@@ -386,7 +448,7 @@ fn feed_input(codec: &Codec, extractor: &Extractor) -> Result<bool, DecodeError>
             ),
         )?;
         ffi::AMediaExtractor_advance(extractor.0);
-        Ok(false)
+        Ok(InputStep::Fed)
     }
 }
 
@@ -468,8 +530,13 @@ pub fn decode(
     let mut last_progress = Instant::now();
 
     'decode: loop {
-        if !input_done {
-            input_done = feed_input(&codec, &extractor)?;
+        // Fill every free input buffer, so the decoder is never starved between outputs.
+        while !input_done {
+            match feed_input(&codec, &extractor)? {
+                InputStep::Fed => {}
+                InputStep::NoFreeBuffer => break,
+                InputStep::EndOfStream => input_done = true,
+            }
         }
         let mut info = ffi::AMediaCodecBufferInfo {
             offset: 0,
@@ -556,10 +623,22 @@ pub fn decode(
                     let plane = unsafe {
                         std::slice::from_raw_parts(base.add(offset as usize), size as usize)
                     };
+                    let plane =
+                        plane
+                            .get(out.y_offset..)
+                            .ok_or(DecodeError::OutputBufferOutOfBounds {
+                                offset,
+                                size,
+                                capacity,
+                            })?;
 
                     let repack_started = Instant::now();
+                    // One sequential copy out of codec memory (often uncached), then rotate from
+                    // the cached copy: scattered reads straight from the codec buffer are slow.
+                    let cached: Vec<u8> = plane[..out.layout.extent().min(plane.len())].into();
+                    timings.copy_s += secs(repack_started);
                     let frame =
-                        to_contract_luma(plane, &out.layout, source.rotation, out.luma_range)?;
+                        to_contract_luma(&cached, &out.layout, source.rotation, out.luma_range)?;
                     timings.repack_s += secs(repack_started);
                     if timestamps_s.is_empty() {
                         timings.first_frame_s = secs(started);

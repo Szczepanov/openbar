@@ -41,6 +41,7 @@ STAGES = (
     "codec_configure_s",
     "first_frame_s",
     "decode_loop_s",
+    "copy_s",
     "repack_s",
     "sink_s",
     "total_s",
@@ -113,21 +114,37 @@ def compare_timestamps(
     }
 
 
+def limited_to_full_table() -> bytes:
+    """ADR-0006 expansion ``round((Y-16)*255/219)`` clipped, same integer rule as the prototype."""
+    return bytes(min(255, max(0, ((code - 16) * 255 + 109) // 219)) if code > 16 else 0
+                 for code in range(256))
+
+
 def compare_frames(
     prototype: BinaryIO,
     reference: BinaryIO,
     frame_bytes: int,
     reference_indices: Sequence[int],
+    reference_frame_bytes: int | None = None,
+    transform: bytes | None = None,
 ) -> dict:
-    """Stream both raw files; the reference holds every source frame, the prototype only the window."""
+    """Stream both raw files; the reference holds every source frame, the prototype only the window.
+
+    ``reference_frame_bytes`` lets the reference carry extra planes (e.g. yuv420p chroma) after the
+    first ``frame_bytes``; ``transform`` is a 256-byte table applied to the reference luma.
+    """
+    stride = reference_frame_bytes or frame_bytes
     wanted = iter(reference_indices)
     target = next(wanted, None)
     per_frame: list[tuple[int, float]] = []
     index = 0
     while target is not None:
-        ref = reference.read(frame_bytes)
-        if len(ref) < frame_bytes:
+        ref = reference.read(stride)
+        if len(ref) < stride:
             raise ValueError(f"reference ended before source frame {target}")
+        ref = ref[:frame_bytes]
+        if transform is not None:
+            ref = ref.translate(transform)
         if index == target:
             proto = prototype.read(frame_bytes)
             if len(proto) < frame_bytes:
@@ -156,10 +173,12 @@ def run_ffprobe(ffprobe: str, video: Path) -> dict:
     return json.loads(out.stdout)
 
 
-def run_ffmpeg_gray(ffmpeg: str, video: Path, destination: Path) -> None:
+def run_ffmpeg_gray(ffmpeg: str, video: Path, destination: Path, pix_fmt: str = "gray") -> None:
+    args = list(DECODE_OUTPUT_ARGS)
+    args[args.index("gray")] = pix_fmt
     subprocess.run(
         [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-autorotate", "-i", str(video),
-         *DECODE_OUTPUT_ARGS, "-y", str(destination)],
+         *args, "-y", str(destination)],
         check=True,
     )
 
@@ -178,6 +197,7 @@ def parity(args: argparse.Namespace) -> int:
     }
     dims_equal = dims["prototype"] == dims["reference"]
     frames: dict | None = None
+    decoder_luma: dict | None = None
     if dims_equal and timestamps["count_equal"]:
         with tempfile.TemporaryDirectory() as tmp:
             raw = Path(tmp) / "reference.gray"
@@ -191,6 +211,19 @@ def parity(args: argparse.Namespace) -> int:
                 )
             with open(args.dump, "rb") as proto, open(raw, "rb") as ref:
                 frames = compare_frames(proto, ref, frame_bytes, indices)
+            raw.unlink()
+            if not args.skip_raw_y:
+                # Diagnostic only, not a gate: FFmpeg's decoded Y plane (no -pix_fmt gray
+                # conversion), expanded with the ADR-0006 rule when the prototype expanded too.
+                # Separates decoder differences from FFmpeg's gray conversion.
+                yuv = Path(tmp) / "reference.yuv"
+                run_ffmpeg_gray(args.ffmpeg, Path(args.input), yuv, pix_fmt="yuv420p")
+                table = limited_to_full_table() if report["decoder"]["luma_range"] == "limited" else None
+                with open(args.dump, "rb") as proto, open(yuv, "rb") as ref:
+                    decoder_luma = compare_frames(
+                        proto, ref, frame_bytes, indices,
+                        reference_frame_bytes=frame_bytes * 3 // 2, transform=table,
+                    )
     passed = bool(dims_equal and timestamps["within_tolerance"] and frames and frames["within_gate"])
     result = {
         "parity_version": PARITY_VERSION,
@@ -202,6 +235,7 @@ def parity(args: argparse.Namespace) -> int:
         "dimensions_equal": dims_equal,
         "timestamps": timestamps,
         "frames": frames,
+        "diagnostic_decoder_luma_vs_ffmpeg_raw_y": decoder_luma,
         "pass": passed,
     }
     text = json.dumps(result, indent=2, sort_keys=True) + "\n"
@@ -250,6 +284,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--output", help="write the parity JSON here as well as stdout")
     p.add_argument("--ffmpeg", default="ffmpeg")
     p.add_argument("--ffprobe", default="ffprobe")
+    p.add_argument("--skip-raw-y", action="store_true",
+                   help="skip the decoder-exactness diagnostic against FFmpeg's raw Y plane")
     p.set_defaults(func=parity)
     s = sub.add_parser("summarize", help="median/min/max stage timings over repeated reports")
     s.add_argument("reports", nargs="+")

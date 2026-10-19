@@ -89,6 +89,11 @@ pub struct PlaneLayout {
 }
 
 impl PlaneLayout {
+    /// Bytes from the plane start through the last pixel the crop addresses.
+    pub fn extent(&self) -> usize {
+        self.crop.bottom * self.stride + self.crop.right + 1
+    }
+
     fn validate(&self, buffer_len: usize) -> Result<(), RasterError> {
         if self.stride == 0 {
             return Err(RasterError::ZeroStride);
@@ -105,7 +110,7 @@ impl PlaneLayout {
                 slice_height: self.slice_height,
             });
         }
-        let needed = crop.bottom * self.stride + crop.right + 1;
+        let needed = self.extent();
         if buffer_len < needed {
             return Err(RasterError::TruncatedPlane {
                 needed,
@@ -162,6 +167,8 @@ pub struct LumaFrame {
     pub pixels: Vec<u8>,
 }
 
+const QUARTER_TURN_TILE: usize = 64;
+
 /// Crop, remove stride padding and rotate the Y plane into display orientation.
 pub fn repack_luma(
     plane: &[u8],
@@ -185,21 +192,38 @@ pub fn repack_luma(
                 pixels.extend_from_slice(&plane[row..row + src_w]);
             }
         }
-        // out(x, y) = in(y, H-1-x): the coded bottom-left pixel becomes the display top-left.
-        Rotation::Cw90 => {
-            for y in 0..height_px {
-                pixels.extend((0..width_px).map(|x| src(y, src_h - 1 - x)));
-            }
-        }
         Rotation::Cw180 => {
             for y in 0..height_px {
                 pixels.extend((0..width_px).map(|x| src(src_w - 1 - x, src_h - 1 - y)));
             }
         }
-        // out(x, y) = in(W-1-y, x): the coded top-right pixel becomes the display top-left.
-        Rotation::Cw270 => {
-            for y in 0..height_px {
-                pixels.extend((0..width_px).map(|x| src(src_w - 1 - y, x)));
+        // Quarter turns walk the source in square tiles so reads and writes both stay in cache.
+        // Cw90:  out(x, y) = in(y, H-1-x): the coded bottom-left pixel becomes the display top-left.
+        // Cw270: out(x, y) = in(W-1-y, x): the coded top-right pixel becomes the display top-left.
+        Rotation::Cw90 | Rotation::Cw270 => {
+            pixels.resize(width_px * height_px, 0);
+            let rows: Vec<&[u8]> = (0..src_h)
+                .map(|sy| {
+                    let start = (crop.top + sy) * layout.stride + crop.left;
+                    &plane[start..start + src_w]
+                })
+                .collect();
+            let clockwise = rotation == Rotation::Cw90;
+            for tile_x in (0..src_w).step_by(QUARTER_TURN_TILE) {
+                let tile_x_end = (tile_x + QUARTER_TURN_TILE).min(src_w);
+                for tile_y in (0..src_h).step_by(QUARTER_TURN_TILE) {
+                    let tile_rows = &rows[tile_y..(tile_y + QUARTER_TURN_TILE).min(src_h)];
+                    for sx in tile_x..tile_x_end {
+                        // Source column sx becomes display row sx (Cw90) or W-1-sx (Cw270).
+                        let oy = if clockwise { sx } else { src_w - 1 - sx };
+                        let out_row = &mut pixels[oy * width_px..(oy + 1) * width_px];
+                        for (k, row) in tile_rows.iter().enumerate() {
+                            let sy = tile_y + k;
+                            let ox = if clockwise { src_h - 1 - sy } else { sy };
+                            out_row[ox] = row[sx];
+                        }
+                    }
+                }
             }
         }
     }
@@ -349,6 +373,52 @@ mod tests {
             current = repack_luma(&current.pixels, &flat, Rotation::Cw90).unwrap();
         }
         assert_eq!(current, frame(3, 2, &[1, 2, 3, 4, 5, 6]));
+    }
+
+    #[test]
+    fn tiled_quarter_turns_match_naive_rotation_across_tile_edges() {
+        // 70x45 visible inside a 75-wide, 50-tall padded plane, offset crop: spans several tiles.
+        let (stride, slice_height) = (75, 50);
+        let plane: Vec<u8> = (0..stride * slice_height)
+            .map(|i| (i * 7 % 251) as u8)
+            .collect();
+        let crop = CropRect {
+            left: 3,
+            top: 2,
+            right: 72,
+            bottom: 46,
+        };
+        let layout = PlaneLayout {
+            stride,
+            slice_height,
+            crop,
+        };
+        let (w, h) = (crop.width_px(), crop.height_px());
+        let at = |x: usize, y: usize| plane[(crop.top + y) * stride + crop.left + x];
+        let naive_cw90: Vec<u8> = (0..w)
+            .flat_map(|y| (0..h).map(move |x| (y, x)))
+            .map(|(y, x)| at(y, h - 1 - x))
+            .collect();
+        let naive_cw270: Vec<u8> = (0..w)
+            .flat_map(|y| (0..h).map(move |x| (y, x)))
+            .map(|(y, x)| at(w - 1 - y, x))
+            .collect();
+        assert_eq!(
+            repack_luma(&plane, &layout, Rotation::Cw90).unwrap(),
+            LumaFrame {
+                width_px: h,
+                height_px: w,
+                pixels: naive_cw90
+            }
+        );
+        assert_eq!(
+            repack_luma(&plane, &layout, Rotation::Cw270).unwrap(),
+            LumaFrame {
+                width_px: h,
+                height_px: w,
+                pixels: naive_cw270
+            }
+        );
     }
 
     #[test]

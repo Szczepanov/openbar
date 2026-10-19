@@ -8,6 +8,9 @@ use std::fmt::Write as _;
 /// Bumped whenever the report shape or frame semantics change.
 pub const REPORT_VERSION: u32 = 1;
 pub const FRAME_SOURCE_ID: &str = "android-mediacodec-gray";
+/// Codec configuration hints (speed only, not output): best-effort priority, unbounded rate.
+pub const CODEC_PRIORITY: i32 = 1;
+pub const CODEC_OPERATING_RATE: f32 = 32_767.0;
 
 #[derive(Debug)]
 pub enum DecodeError {
@@ -40,6 +43,7 @@ pub enum DecodeError {
     UnsupportedColorFormat {
         value: i32,
     },
+    ImageLayout(crate::image_layout::ImageLayoutError),
     MissingOutputFormat,
     /// Decoder did not report `color-range` and no assumption was allowed.
     UnknownColorRange,
@@ -84,7 +88,7 @@ impl fmt::Display for DecodeError {
             ),
             Self::UnsupportedColorFormat { value } => write!(
                 f,
-                "decoder output colour format {value} (0x{value:X}) is not I420 (19) or NV12 (21); refusing to guess the Y plane layout"
+                "decoder output colour format {value} (0x{value:X}) is not I420 (19), NV12 (21) or flexible YUV with image-data; refusing to guess the Y plane layout"
             ),
             Self::MissingOutputFormat => {
                 write!(f, "decoder produced a frame before reporting its output format")
@@ -94,6 +98,7 @@ impl fmt::Display for DecodeError {
                 "decoder did not report color-range; pass --assume-range to record an explicit assumption"
             ),
             Self::Raster(error) => write!(f, "{error}"),
+            Self::ImageLayout(error) => write!(f, "{error}"),
             Self::Timing(error) => write!(f, "{error}"),
             Self::EmptySelection { start_s, end_s } => {
                 write!(f, "no decoded frame lies inside [{start_s}, {end_s}] s")
@@ -137,6 +142,8 @@ pub enum RangeSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeometrySource {
     Decoder,
+    /// Taken from the `image-data` (`MediaImage2`) description of a flexible-YUV buffer.
+    ImageData,
     Fallback,
 }
 
@@ -144,6 +151,7 @@ impl GeometrySource {
     fn as_str(self) -> &'static str {
         match self {
             Self::Decoder => "decoder",
+            Self::ImageData => "image-data",
             Self::Fallback => "fallback",
         }
     }
@@ -169,6 +177,8 @@ pub struct OutputInfo {
     pub range_source: RangeSource,
     pub stride_source: GeometrySource,
     pub crop_source: GeometrySource,
+    /// Byte offset of the luma plane inside each output buffer.
+    pub y_offset: usize,
     pub layout: PlaneLayout,
 }
 
@@ -179,6 +189,8 @@ pub struct StageTimings {
     pub codec_configure_s: f64,
     pub first_frame_s: f64,
     pub decode_loop_s: f64,
+    /// Part of `repack_s`: the sequential copy of the luma plane out of codec memory.
+    pub copy_s: f64,
     pub repack_s: f64,
     pub sink_s: f64,
     pub total_s: f64,
@@ -222,6 +234,8 @@ impl DecodeReport {
                 "  }},\n",
                 "  \"decoder\": {{\n",
                 "    \"name\": {},\n",
+                "    \"priority_hint\": {},\n",
+                "    \"operating_rate_hint\": {:?},\n",
                 "    \"color_format\": {},\n",
                 "    \"color_range_raw\": {},\n",
                 "    \"luma_range\": \"{}\",\n",
@@ -229,6 +243,7 @@ impl DecodeReport {
                 "    \"stride\": {},\n",
                 "    \"slice_height\": {},\n",
                 "    \"stride_source\": \"{}\",\n",
+                "    \"y_offset\": {},\n",
                 "    \"crop\": [{}, {}, {}, {}],\n",
                 "    \"crop_source\": \"{}\"\n",
                 "  }},\n",
@@ -250,6 +265,8 @@ impl DecodeReport {
             source.rotation.ffmpeg_ccw_deg(),
             json_opt(source.duration_us),
             json_string(&output.decoder_name),
+            CODEC_PRIORITY,
+            CODEC_OPERATING_RATE,
             output.color_format,
             json_opt(output.color_range_raw),
             output.luma_range.as_str(),
@@ -260,6 +277,7 @@ impl DecodeReport {
             output.layout.stride,
             output.layout.slice_height,
             output.stride_source.as_str(),
+            output.y_offset,
             crop.left,
             crop.top,
             crop.right,
@@ -284,6 +302,7 @@ impl DecodeReport {
                 "    \"codec_configure_s\": {},\n",
                 "    \"first_frame_s\": {},\n",
                 "    \"decode_loop_s\": {},\n",
+                "    \"copy_s\": {},\n",
                 "    \"repack_s\": {},\n",
                 "    \"sink_s\": {},\n",
                 "    \"total_s\": {}\n",
@@ -294,6 +313,7 @@ impl DecodeReport {
             json_f64(t.codec_configure_s),
             json_f64(t.first_frame_s),
             json_f64(t.decode_loop_s),
+            json_f64(t.copy_s),
             json_f64(t.repack_s),
             json_f64(t.sink_s),
             json_f64(t.total_s),
@@ -358,6 +378,7 @@ mod tests {
                 range_source: RangeSource::Decoder,
                 stride_source: GeometrySource::Decoder,
                 crop_source: GeometrySource::Fallback,
+                y_offset: 0,
                 layout: PlaneLayout {
                     stride: 1920,
                     slice_height: 1088,

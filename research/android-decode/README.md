@@ -23,7 +23,7 @@ The plan is [`docs/plans/ANDROID_INPROCESS_DECODE_PLAN.md`](../../docs/plans/AND
 | Full-range 8-bit luma | The Y plane is used directly. If the decoder reports `color-range` = limited, codes are expanded with `round((Y-16)*255/219)` and clipped. If the decoder reports no range, the run fails unless `--assume-range` is given, and the report then says `"luma_range_source": "assumed"`. |
 | Packed raster, no scaling | Crop, then stride removal, then rotation give a `w*h` buffer in FFmpeg `-f rawvideo -pix_fmt gray` layout. |
 | No silent drops | Every in-window frame is emitted. Pre-roll frames decoded after the seek, before `start_s`, are counted in `preroll_discarded`. Frame count and PTS are checked against `ffprobe` by `compare.py`. |
-| Fail closed | Only I420 (19) and NV12 (21) ByteBuffer output is accepted. Any vendor or tiled colour format is refused and named. All of these are errors:<br>• inverted or out-of-plane crop rectangles;<br>• truncated or out-of-bounds output buffers;<br>• an extractor read failure before end of track;<br>• a display size change inside the window. |
+| Fail closed | ByteBuffer output is accepted as I420 (19) or NV12 (21). It is also accepted as flexible YUV (`0x7F420888`) when the decoder's `image-data` (`MediaImage2`) describes an 8-bit luma plane with column increment 1; that offset and row stride are used and recorded as `stride_source: "image-data"`. Any other or vendor colour format is refused and named. All of these are errors:<br>• inverted or out-of-plane crop rectangles;<br>• truncated or out-of-bounds output buffers;<br>• an extractor read failure before end of track;<br>• a display size change inside the window. |
 | Recorded fallbacks | If the decoder omits `stride`/`slice-height` or the crop, width and height are used instead. The report records this as `stride_source` / `crop_source` = `"fallback"`. |
 
 Windows are inclusive, the same as `openbar-cli` `TimeRange`. Unlike the FFmpeg path, which decodes
@@ -31,10 +31,11 @@ the whole file and then filters, the prototype seeks to the previous sync frame 
 
 ## Layout
 
-- `src/raster.rs`, `src/timing.rs`, `src/decode.rs`: pure logic and the report, unit-tested on any host.
+- `src/raster.rs`, `src/timing.rs`, `src/image_layout.rs`, `src/decode.rs`: pure logic and the report, unit-tested on any host.
 - `src/android.rs`: NDK FFI, compiled only for `target_os = "android"`.
 - `src/main.rs`: CLI.
 - `compare.py`, `tests/test_compare.py`: stdlib-only parity and repeat-summary harness.
+- `run_device_suite.sh`: the device evidence run (5 timing repeats per case, then parity).
 
 ## Dependency
 
@@ -75,7 +76,7 @@ cargo ndk -t arm64-v8a --platform 28 build --locked --release
 adb push target/aarch64-linux-android/release/openbar-android-decode /data/local/tmp/
 ```
 
-The NDK APIs used (`getName`, `KEY_DISPLAY_CROP`, `KEY_COLOR_RANGE`) need API 28 or newer.
+`AMediaCodec_getName` and the `crop`/`color-range` keys need API 28 or newer. MediaFormat keys are passed as their public strings (`c"mime"` and so on) rather than through the NDK `AMEDIAFORMAT_KEY_*` symbols, because Termux's `libmediandk` stub does not export those symbols.
 
 Decode the lift window of `self-back-squat-side-002`, the same window `phone-runtime-suite-v1.json`
 uses (`start_s` 4.8, `end_s` 10.8). Private media lives in the main checkout under
@@ -93,9 +94,15 @@ $BIN --input <clip.mp4> --start-s 4.8 --end-s 10.8 --report out/lift-parity.json
 python compare.py parity --input <clip.mp4> --report out/lift-parity.json --dump out/lift.gray --output out/lift-parity-result.json
 ```
 
-Repeat the same steps for the full clip (no window) and for `validation/fixtures/public/synthetic-clean-side-12.mp4`.
+Repeat the same steps for the full clip (no window) and for `validation/fixtures/public/synthetic-clean-side-12.mp4`, or run all three cases with:
 
-`--dump-gray` adds file-write time to `sink_s` and `total_s`, so benchmark runs leave it off.
+```bash
+./run_device_suite.sh ~/openbar out/final
+```
+
+`parity` also writes a diagnostic, `diagnostic_decoder_luma_vs_ffmpeg_raw_y`. It compares the prototype against FFmpeg's decoded Y plane (`-pix_fmt yuv420p`), expanded with the same ADR-0006 rule. That separates decoder differences from FFmpeg's `gray` conversion. It is not a gate; `--skip-raw-y` turns it off.
+
+`--dump-gray` adds file-write time to `sink_s` and `total_s`, so benchmark runs leave it off. `copy_s` is the part of `repack_s` spent copying luma out of the codec buffer.
 Timings live in the report's separate `timings` object. They are diagnostics, not measurement output.
 
 ## Known limits
@@ -111,4 +118,10 @@ Timings live in the report's separate `timings` object. They are diagnostics, no
 
 ## Status
 
-Host logic is tested and the Android target type-checks. No device measurement has been recorded yet.
+Measured on the 14T Pro on 2026-10-19; see the [evidence](../../docs/validation/ANDROID_LATENCY_EVIDENCE.md#in-process-mediacodec-prototype-258-2026-10-19).
+
+- **Decoder output:** bit-exact with FFmpeg's decoded Y plane. Frame counts and PTS match.
+- **Lift window:** median 2.02 s against 5.28 s for FFmpeg. The 0.50 s target is not met.
+- **Luma gate:** fails against `-pix_fmt gray`, because FFmpeg's gray conversion is not the per-pixel expansion ADR-0006 describes. That needs an owner decision.
+
+Neither gate is met, so promotion is not proposed.

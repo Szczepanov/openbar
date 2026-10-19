@@ -11,6 +11,7 @@
 #[cfg(target_os = "android")]
 mod android;
 mod decode;
+mod image_layout;
 mod raster;
 mod timing;
 
