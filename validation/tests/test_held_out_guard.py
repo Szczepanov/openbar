@@ -73,7 +73,7 @@ class NoUnguardedEntryPointTests(unittest.TestCase):
         offenders = []
         checked = 0
         for path in sorted(RESEARCH.rglob("*.py")):
-            if any(part.startswith(".") or part == "tests" for part in path.parts):
+            if any(part.startswith(".") or part == "tests" for part in path.relative_to(RESEARCH).parts):
                 continue
             text = path.read_text(encoding="utf-8")
             if not re.search(r"\ballow_held_out\b", text):
