@@ -308,6 +308,82 @@ production app import and overlay path once built; report the evidence class hon
 5. **Determinism:**
    Analysis bytes across all 5 repeated runs were **100% byte-identical** (`analysis_bytes_identical: true`).
 
+## In-process MediaCodec prototype (#258, 2026-10-19)
+
+**Research evidence only.** This is not gate evidence, and it does not change ADR-0006, the canonical
+`analyze` path or this document's harness. The prototype is in
+[`research/android-decode/`](../../research/android-decode/README.md) and the plan is in
+[`ANDROID_INPROCESS_DECODE_PLAN.md`](../plans/ANDROID_INPROCESS_DECODE_PLAN.md). It decodes in-process with
+`AMediaExtractor` + `AMediaCodec` (ByteBuffer output). It then copies the luma plane, rotates it to display
+orientation and expands limited-range values to full range, giving the same packed raster as the FFmpeg path.
+
+### Environment
+
+| | |
+| --- | --- |
+| Device | Xiaomi 14T Pro (`2407FPN8EG`, `rothko`), Android 16 (SDK 36) |
+| Decoder | `c2.mtk.avc.decoder` (MediaTek hardware H.264) |
+| Output format | `COLOR_FormatYUV420Flexible`, with the luma layout read from `image-data` (`MediaImage2`) |
+| Toolchain | Termux, rustc 1.99.0, FFmpeg 8.1.3 (reference only), Python 3.14.6 |
+| Run | `research/android-decode/run_device_suite.sh` over adb-forwarded SSH; 5 timing repeats per case without `--dump-gray`, then one parity run |
+| Codec hints | `priority=1`, `operating-rate=32767` |
+| Range | `--assume-range limited`. The decoder reported `color-range=2` (limited) for the squat clip, so the flag was not needed there. The synthetic clip reports no range; FFmpeg treats its `yuv420p` as limited, so the run uses an assumed range, recorded in the report. |
+
+The cases match `phone-runtime-suite-v1.json`:
+- the synthetic smoke clip;
+- `self-back-squat-side-002`, 1280×720 coded with 90° rotation, as the lift window (4.8–10.8 s);
+- the same clip in full.
+
+### Latency (median of 5, seconds)
+
+| Stage | `synthetic-smoke` | `back-squat-lift` | `back-squat-full` |
+| --- | --- | --- | --- |
+| extractor open | 0.057 | 0.061 | 0.058 |
+| codec configure | 0.105 | 0.108 | 0.118 |
+| first in-window frame (from start) | 0.248 | 0.364 | 0.369 |
+| decode loop (includes repack) | 0.114 | 1.788 | 4.892 |
+| of which luma copy | 0.001 | 0.032 | 0.089 |
+| of which copy + rotate + range expansion | 0.005 | 0.733 | 2.026 |
+| **total** (min–max) | **0.341** (0.329–0.354) | **2.021** (1.803–2.117) | **5.132** (4.849–5.556) |
+| FFmpeg baseline `probe` + `decode` (above) | 0.194 | 5.280 | 5.255 |
+
+On the lift window, 23 pre-roll frames were decoded after the seek to the previous sync frame and then
+discarded; 180 frames were emitted.
+
+Two exploratory lift runs were pinned to the big cores with `taskset -c 4-7`. They took 1.23–1.50 s, but
+they are not part of the measured set.
+
+### Parity against the ADR-0006 FFmpeg path
+
+| Check | synthetic | lift | full |
+| --- | --- | --- | --- |
+| Frame count | 12 = 12 | 180 = 180 | 450 = 450 |
+| Max PTS difference | 0.67 µs | 0.89 µs | 0.89 µs |
+| Display dimensions | equal | equal (720×1280) | equal |
+| Luma against `-pix_fmt gray`: max / mean abs diff | 0 / 0 | **19 / 0.68** | **19 / 0.68** |
+| Diagnostic: luma against FFmpeg's raw Y plane, expanded by the ADR-0006 rule | bit-exact 12/12 | **bit-exact 180/180** | **bit-exact 450/450** |
+| Preregistered gate (max-abs-diff ≤ 2 against `gray`) | pass | **fail** | **fail** |
+
+### Findings
+
+1. **The hardware decoder is bit-exact with FFmpeg's decoder.** Every luma sample matches FFmpeg's raw Y plane
+   after the documented `(Y-16)·255/219` expansion. Timestamps match to within µs truncation, and frame
+   counts match with no drops.
+2. **The parity gate fails because of FFmpeg's `-pix_fmt gray` conversion, not because of the decoder.**
+   - On this limited-range clip, FFmpeg 8.1.3 (Termux) maps the same raw Y code to a spread of gray values: code 139 becomes 133–149.
+   - Desktop FFmpeg 9.0.2 (gyan.dev) also deviates from per-pixel expansion (max 13, with or without autorotate), and it does not agree with 8.1.3.
+   - So ADR-0006's statement that limited-range "codes 16–235 map to 0–255" does not describe current FFmpeg output exactly, and canonical luma differs between FFmpeg versions.
+   - **Owner decision needed:** this touches the ADR-0006 contract and determinism across FFmpeg builds. The prototype was not changed to imitate FFmpeg.
+3. **Latency target missed.** The < 0.50 s target for the lift window is not met: the median is 2.02 s against 5.28 s for FFmpeg probe + decode, about 2.6× faster. On the full clip the prototype (5.13 s) is no faster than FFmpeg (5.26 s).
+4. **Where the time goes:**
+   - About 0.73 s (lift) and 2.0 s (full) is the materialised rotation and expansion, roughly 4 ms per 0.9 MP frame on unpinned cores. ADR-0005 allows a rotated `GrayscaleImage` view, which would make the rotation zero-copy.
+   - The remaining decode loop runs at about 5–6 ms per frame, which points to decoder throughput or pacing in ByteBuffer mode. Whether the `operating-rate` hint was honoured was not verified.
+   - Timings vary with CPU placement: pinning to big cores cut the lift total to 1.2–1.5 s.
+5. **Format refusal and the layout path used.**
+   - The decoder offers only flexible YUV in ByteBuffer mode, which the first version refused.
+   - Accepting it through `image-data` reads an exact layout rather than guessing. It needed no `AImageReader` path.
+   - The NDK `AMEDIAFORMAT_KEY_*` symbols are missing from Termux's `libmediandk` stub, so the prototype uses the public key strings instead.
+
 ## Non-goals
 
 - Choosing numeric latency thresholds, supported phones or the clip set.

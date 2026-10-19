@@ -1,0 +1,16 @@
+[package]
+name = "openbar-android-decode"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Research prototype: in-process Android AMediaCodec decode measured against the ADR-0006 frame contract (#258)."
+
+# Standalone research crate: deliberately outside the root workspace and its M0 gates.
+[workspace]
+
+[dependencies]
+
+# Owner-approved for this research crate only (2026-10-19, #258). MIT OR Apache-2.0.
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-sys = { version = "=0.6.0", features = ["media"] }
