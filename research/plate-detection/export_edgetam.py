@@ -83,6 +83,10 @@ def validate_export_config(
         "vision_input_shape": [1, 3, input_height_px, input_width_px],
         "memory_pix_shape": [1, 256, input_height_px // 16, input_width_px // 16],
         "memory_mask_shape": [1, 1, input_height_px, input_width_px],
+        "decoder_emb_shape": [1, 256, input_height_px // 16, input_width_px // 16],
+        "decoder_sparse_shape": [1, 1, 2, 256],
+        "decoder_high_res_0_shape": [1, 32, input_height_px // 4, input_width_px // 4],
+        "decoder_high_res_1_shape": [1, 64, input_height_px // 8, input_width_px // 8],
         "max_abs_diff": tol,
     }
 
@@ -250,8 +254,34 @@ def export_edgetam_tracker(
             mem_features, mem_pos = self.mem_encoder(pix_feat, mask)
             return mem_features, mem_pos
 
+    # --- Subgraph 3: Mask Decoder Wrapper ---
+    class EdgeTamMaskDecoderWrapper(nn.Module):
+        def __init__(self, mask_decoder: nn.Module) -> None:
+            super().__init__()
+            self.mask_decoder = mask_decoder
+
+        def forward(
+            self,
+            image_embeddings: torch.Tensor,
+            image_positional_embeddings: torch.Tensor,
+            sparse_prompt_embeddings: torch.Tensor,
+            dense_prompt_embeddings: torch.Tensor,
+            high_res_0: torch.Tensor,
+            high_res_1: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            masks, iou_pred, _, obj_score = self.mask_decoder(
+                image_embeddings=image_embeddings,
+                image_positional_embeddings=image_positional_embeddings,
+                sparse_prompt_embeddings=sparse_prompt_embeddings,
+                dense_prompt_embeddings=dense_prompt_embeddings,
+                multimask_output=False,
+                high_resolution_features=[high_res_0, high_res_1],
+            )
+            return masks, iou_pred, obj_score
+
     vision_wrapper = EdgeTamVisionEncoderWrapper(model.vision_encoder)
     memory_wrapper = EdgeTamMemoryEncoderWrapper(model.memory_encoder)
+    decoder_wrapper = EdgeTamMaskDecoderWrapper(model.mask_decoder)
 
     # 1. Export Vision Encoder
     print("Exporting EdgeTAM Vision Encoder to torch.export static-shape program...")
@@ -274,9 +304,27 @@ def export_edgetam_tracker(
     memory_pt2_size = memory_pt2_path.stat().st_size
     print(f"Memory encoder saved to {memory_pt2_path} ({memory_pt2_size} bytes, SHA-256: {memory_pt2_sha256[:16]}...)")
 
-    # 3. Optional ONNX export
+    # 3. Export Mask Decoder
+    print("Exporting EdgeTAM Mask Decoder to torch.export static-shape program...")
+    dummy_dec_args = (
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_sparse_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_high_res_0_shape"]),
+        torch.randn(config["decoder_high_res_1_shape"]),
+    )
+    ep_decoder = torch.export.export(decoder_wrapper, dummy_dec_args)
+    decoder_pt2_path = output_dir / "edgetam_decoder_fp32.pt2"
+    torch.export.save(ep_decoder, str(decoder_pt2_path))
+    decoder_pt2_sha256 = sha256_file(decoder_pt2_path)
+    decoder_pt2_size = decoder_pt2_path.stat().st_size
+    print(f"Mask decoder saved to {decoder_pt2_path} ({decoder_pt2_size} bytes, SHA-256: {decoder_pt2_sha256[:16]}...)")
+
+    # 4. Optional ONNX export
     onnx_vision_info: dict[str, Any] | None = None
     onnx_memory_info: dict[str, Any] | None = None
+    onnx_decoder_info: dict[str, Any] | None = None
     if export_onnx:
         if importlib.util.find_spec("onnx") is not None and importlib.util.find_spec("onnxscript") is not None:
             try:
@@ -316,14 +364,42 @@ def export_edgetam_tracker(
                 }
             except Exception as exc:
                 onnx_memory_info = {"status": "failed", "error": str(exc)}
+
+            try:
+                print("Exporting Mask Decoder to ONNX opset 18...")
+                onnx_dec_path = output_dir / "edgetam_decoder_fp32.onnx"
+                torch.onnx.export(
+                    decoder_wrapper,
+                    dummy_dec_args,
+                    str(onnx_dec_path),
+                    input_names=[
+                        "image_embeddings",
+                        "image_positional_embeddings",
+                        "sparse_prompt_embeddings",
+                        "dense_prompt_embeddings",
+                        "high_res_0",
+                        "high_res_1",
+                    ],
+                    output_names=["masks", "iou_pred", "object_score_logits"],
+                    opset_version=18,
+                )
+                onnx_decoder_info = {
+                    "path": onnx_dec_path.relative_to(ROOT).as_posix(),
+                    "sha256": sha256_file(onnx_dec_path),
+                    "bytes": onnx_dec_path.stat().st_size,
+                }
+            except Exception as exc:
+                onnx_decoder_info = {"status": "failed", "error": str(exc)}
         else:
             onnx_vision_info = {"status": "skipped", "reason": "onnx or onnxscript not installed"}
             onnx_memory_info = {"status": "skipped", "reason": "onnx or onnxscript not installed"}
+            onnx_decoder_info = {"status": "skipped", "reason": "onnx or onnxscript not installed"}
 
-    # 4. Parity Verification on Synthetic Tensors
+    # 5. Parity Verification on Synthetic Tensors
     print("Verifying numerical output parity on synthetic tensors...")
     loaded_ep_vision = torch.export.load(str(vision_pt2_path))
     loaded_ep_memory = torch.export.load(str(memory_pt2_path))
+    loaded_ep_decoder = torch.export.load(str(decoder_pt2_path))
 
     torch.manual_seed(42)
     syn_vision_in = torch.randn(config["vision_input_shape"])
@@ -350,7 +426,26 @@ def export_edgetam_tracker(
         max_abs_diff=config["max_abs_diff"],
     )
 
-    # 5. Parity on Real Validation Frames (if available)
+    torch.manual_seed(456)
+    syn_dec_args = (
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_sparse_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_high_res_0_shape"]),
+        torch.randn(config["decoder_high_res_1_shape"]),
+    )
+    with torch.no_grad():
+        ref_dec_outs = decoder_wrapper(*syn_dec_args)
+        exp_dec_outs = loaded_ep_decoder.module()(*syn_dec_args)
+
+    dec_parity_synthetic = compute_feature_parity(
+        [t.numpy() for t in ref_dec_outs],
+        [t.numpy() for t in exp_dec_outs],
+        max_abs_diff=config["max_abs_diff"],
+    )
+
+    # 6. Parity on Real Validation Frames (if available)
     vis_parity_real: dict[str, Any] | None = None
     if dataset_dir is not None and (dataset_dir / "val").is_dir():
         val_img_paths = sorted((dataset_dir / "val").glob("*.jpg"))[:4]
@@ -383,15 +478,17 @@ def export_edgetam_tracker(
                     "overall_max_abs_diff": max(diffs),
                 }
 
-    # 6. Diagnostic Desktop Latency Measurements
+    # 7. Diagnostic Desktop Latency Measurements
     print("Measuring diagnostic desktop forward-pass latencies...")
     with torch.no_grad():
         vis_cpu_timings = _measure_latency(lambda: loaded_ep_vision.module()(syn_vision_in), repeats=5)
         mem_cpu_timings = _measure_latency(lambda: loaded_ep_memory.module()(syn_pix_in, syn_mask_in), repeats=5)
+        dec_cpu_timings = _measure_latency(lambda: loaded_ep_decoder.module()(*syn_dec_args), repeats=5)
 
     all_passed = bool(
         vis_parity_synthetic["passed"]
         and mem_parity_synthetic["passed"]
+        and dec_parity_synthetic["passed"]
         and (vis_parity_real["passed"] if vis_parity_real is not None else True)
     )
 
@@ -429,6 +526,23 @@ def export_edgetam_tracker(
                 "onnx": onnx_memory_info,
                 "parity_synthetic": mem_parity_synthetic,
                 "diagnostic_latency_cpu": mem_cpu_timings,
+            },
+            "mask_decoder": {
+                "file": decoder_pt2_path.relative_to(ROOT).as_posix(),
+                "bytes": decoder_pt2_size,
+                "sha256": decoder_pt2_sha256,
+                "input_shapes": {
+                    "image_embeddings": config["decoder_emb_shape"],
+                    "image_positional_embeddings": config["decoder_emb_shape"],
+                    "sparse_prompt_embeddings": config["decoder_sparse_shape"],
+                    "dense_prompt_embeddings": config["decoder_emb_shape"],
+                    "high_res_0": config["decoder_high_res_0_shape"],
+                    "high_res_1": config["decoder_high_res_1_shape"],
+                },
+                "outputs": ["masks [1, 1, 1, 256, 256]", "iou_pred [1, 1, 1]", "object_score_logits [1, 1, 1]"],
+                "onnx": onnx_decoder_info,
+                "parity_synthetic": dec_parity_synthetic,
+                "diagnostic_latency_cpu": dec_cpu_timings,
             },
         },
         "passed": all_passed,

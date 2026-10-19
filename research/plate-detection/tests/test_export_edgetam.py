@@ -23,6 +23,10 @@ class ExportEdgeTamTests(unittest.TestCase):
         self.assertEqual(cfg["vision_input_shape"], [1, 3, 1024, 1024])
         self.assertEqual(cfg["memory_pix_shape"], [1, 256, 64, 64])
         self.assertEqual(cfg["memory_mask_shape"], [1, 1, 1024, 1024])
+        self.assertEqual(cfg["decoder_emb_shape"], [1, 256, 64, 64])
+        self.assertEqual(cfg["decoder_sparse_shape"], [1, 1, 2, 256])
+        self.assertEqual(cfg["decoder_high_res_0_shape"], [1, 32, 256, 256])
+        self.assertEqual(cfg["decoder_high_res_1_shape"], [1, 64, 128, 128])
         self.assertEqual(cfg["max_abs_diff"], 1e-4)
 
         for bad_dim in (0, -32, 1000, True):

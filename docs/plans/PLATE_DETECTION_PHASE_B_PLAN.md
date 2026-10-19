@@ -192,19 +192,23 @@ However:
     - Desktop GPU (`RTX 3060 Ti`) forward pass: `24.28 ms` median (`41.14 ms` max).
   - **Tests:** `research/plate-detection/tests/test_export_student.py`.
 - **EdgeTAM mobile static-shape export & numerical parity (`research/plate-detection/export_edgetam.py`, completed):**
-  - Exports EdgeTAM (`yonigozlan/EdgeTAM-hf`, revision `c266ce53b3fc00f0f495b583f6a116c4e57f53bb`, Apache-2.0)
-    vision encoder and memory encoder subgraphs to static-shape PyTorch 2 `ExportedProgram` archives:
+  - Exports EdgeTAM (`yonigozlan/EdgeTAM-hf`, revision `c266ce53b3fc00f0f495b583f6a116c4e57f53bb`, Apache-2.0, 13.9M params)
+    vision encoder, memory encoder, and mask decoder subgraphs to static-shape PyTorch 2 `ExportedProgram` archives:
     - Vision encoder (`edgetam_vision_fp32.pt2`, static `[1, 3, 1024, 1024]` input, outputting `[1, 256, 256, 256]`,
       `[1, 256, 128, 128]`, `[1, 256, 64, 64]` FPN feature pyramids; `35,025,807` bytes, SHA-256
       `ae971759bd7a2e221fcc8c8d1857fe5d22adb533b668c95f9deccac93fd3e4bd`).
     - Memory encoder (`edgetam_memory_fp32.pt2`, static `[1, 256, 64, 64]` feature and `[1, 1, 1024, 1024]` mask inputs,
       outputting `[1, 64, 64, 64]` memory features and pos encodings; `14,158,503` bytes, SHA-256
       `da18080f7b12d1c6e26210fdf4fa3a31c56b6b77ca76579803b9f3d997ceae71`).
+    - Mask decoder (`edgetam_decoder_fp32.pt2`, static prompt embeddings, visual features and high-res feature inputs,
+      outputting `[1, 1, 1, 256, 256]` mask logits, IoU logits, and object score logits; `91,682,781` bytes, SHA-256
+      `cafc4ee906d5eafa684c386de66604294f9875d3487e2759a13ec3f765e10146`).
   - **Numerical parity (`validation/private/plate-detection-phase-b/edgetam-export/export_manifest.json`):**
-    - `overall_max_abs_diff = 0.0` across all exported feature tensors on synthetic inputs (`passed: true`).
+    - `overall_max_abs_diff = 0.0` across all exported feature and mask tensors on synthetic inputs (`passed: true`).
   - **Desktop diagnostic timings (`NON-QUALIFYING DIAGNOSTIC`):**
     - Vision encoder CPU: `468.92 ms` median forward pass.
     - Memory encoder CPU: `53.12 ms` median forward pass.
+    - Mask decoder CPU: `29.10 ms` median forward pass.
   - **Tests:** `research/plate-detection/tests/test_export_edgetam.py`.
 - **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, completed 2026-10-19):**
   - Connected Xiaomi 14T Pro (`rothko`, Android 16) over ADB and executed the full 5-repeat benchmark with
