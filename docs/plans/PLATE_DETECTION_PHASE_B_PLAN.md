@@ -191,10 +191,15 @@ However:
     - Exported `.pt2` graph on desktop CPU: `142.58 ms` median (`165.73 ms` max) across 16 validation frames.
     - Desktop GPU (`RTX 3060 Ti`) forward pass: `24.28 ms` median (`41.14 ms` max).
   - **Tests:** `research/plate-detection/tests/test_export_student.py`.
-- **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, connected over ADB):**
-  - Xiaomi 14T Pro (`rothko`, Android 16) connectivity verified over ADB. Benchmark frame-0 seed detection and
-    tracking latency via LiteRT / ExecuTorch / ONNX Runtime Mobile and `validation/tools/phone_runtime_benchmark.py`,
-    recording results in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`.
+- **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, completed 2026-10-19):**
+  - Connected Xiaomi 14T Pro (`rothko`, Android 16) over ADB and executed the full 5-repeat benchmark with
+    `validation/tools/phone_runtime_benchmark.py --stage-timings`.
+  - Results recorded in `docs/validation/ANDROID_LATENCY_EVIDENCE.md`:
+    - 5-repeat wall times: `0.27 s` median on 0.92s synthetic; `15.31 s` median on 5.97s lift; `23.09 s` median on 15.00s full clip.
+    - Zero thermal throttling (`warm_slowdown_ratio = 1.0028` on lift, `0.9964` on full clip) across repeated runs.
+    - Peak process-tree RSS bounded: `249.7 MiB` for the lift segment, `482.6 MiB` for full 1080p clip.
+    - Determinism verified: 100% byte-identical analysis JSON across all repeats.
+    - Identified primary latency bottleneck: external FFmpeg pipe IPC + ffprobe probe consumes **~5.28 s** before tracking, demonstrating the necessity of an in-process hardware decoder (`MediaCodec`) to achieve the `< 5.0 s` product latency target alongside the static-shape `D-FINE-S` student model.
 
 ### WP5 — Frozen evaluation on new independent sessions
 
