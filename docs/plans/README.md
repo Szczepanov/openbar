@@ -39,6 +39,10 @@ A plan does not override an accepted ADR, schema, validation contract or scope f
   [Phase B distillation plan](PLATE_DETECTION_PHASE_B_PLAN.md) covers session-grouped teacher dataset curation
   (`research/plate-detection/distill_dataset.py`) and Apache-2.0 student detector training (`D-FINE-S` / `RF-DETR-Nano`)
   for the Xiaomi 14T Pro reference phone.
+- [Android in-process hardware decode (#258)](ANDROID_INPROCESS_DECODE_PLAN.md): research prototype
+  (`research/android-decode/`) measuring `AMediaExtractor` + `AMediaCodec` against the ADR-0006 frame
+  contract, to remove the ~5.3 s FFmpeg probe/decode cost from the #179 phone latency budget. Device
+  evidence pending; promotion needs an owner decision and an ADR.
 
 ## Recommended plan structure
 
