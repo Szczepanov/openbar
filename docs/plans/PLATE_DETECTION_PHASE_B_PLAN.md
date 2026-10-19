@@ -191,6 +191,16 @@ However:
     - Exported `.pt2` graph on desktop CPU: `142.58 ms` median (`165.73 ms` max) across 16 validation frames.
     - Desktop GPU (`RTX 3060 Ti`) forward pass: `24.28 ms` median (`41.14 ms` max).
   - **Tests:** `research/plate-detection/tests/test_export_student.py`.
+- **EdgeTAM mobile graph export & numerical parity (`research/plate-detection/export_edgetam.py`, completed):**
+  - Exports Meta's EdgeTAM tracker (`yonigozlan/EdgeTAM-hf`, revision `c266ce53b3fc00f0f495b583f6a116c4e57f53bb`, Apache-2.0, 13.9M params) to static-shape PyTorch 2 `ExportedProgram` archives under `validation/private/plate-detection-edgetam-export/`:
+    - `edgetam_image_encoder_fp32.pt2` (`80,550,466` bytes, SHA-256 `363bea0bcce088f5da5f019e9aff954dac59342c24fe3c542d2610db28327e5e`, 1,563 graph nodes, input `[1, 3, 1024, 1024]`, outputs 4 multi-scale feature maps).
+    - `edgetam_mask_decoder_fp32.pt2` (`91,682,781` bytes, SHA-256 `cafc4ee906d5eafa684c386de66604294f9875d3487e2759a13ec3f765e10146`, 1,221 graph nodes, outputs low-res mask logits `[1, 1, 1, 256, 256]`, IoU logits, and object score logits).
+  - **Numerical parity (`validation/private/plate-detection-edgetam-export/export_manifest.json`):**
+    - On 4 seeded synthetic image tensors and 4 prompt sets: `encoder_max_abs_diff = 0.0`, `decoder_max_abs_diff = 0.0` (`passed: true` across all tensors).
+  - **Desktop diagnostic timings (`NON-QUALIFYING DIAGNOSTIC`):**
+    - Desktop CPU forward pass: Image Encoder `321.70 ms` median; Mask Decoder `29.10 ms` median.
+    - Desktop GPU (`RTX 3060 Ti`) forward pass: Image Encoder `19.54 ms` median; Mask Decoder `4.52 ms` median.
+  - **Tests:** `research/plate-detection/tests/test_export_edgetam.py`.
 - **On-device Xiaomi 14T Pro benchmark (`2407FPN8EG`, Dimensity 9300+, completed 2026-10-19):**
   - Connected Xiaomi 14T Pro (`rothko`, Android 16) over ADB and executed the full 5-repeat benchmark with
     `validation/tools/phone_runtime_benchmark.py --stage-timings`.
@@ -216,6 +226,7 @@ python research/plate-detection/distill_dataset.py --repo-root . --teacher-run-d
 research/plate-detection/.venv/Scripts/python.exe research/plate-detection/train_phase_b.py --dataset-dir validation/private/plate-detection-phase-b/dataset-stride3-v1 --eval-dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --repo-root . --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug --epochs 20 --batch-size 4 --learning-rate 1e-4 --lr-schedule cosine --augment student-aug-v1
 research/plate-detection/.venv/Scripts/python.exe research/plate-detection/eval_student_seed.py --repo-root . --checkpoint validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug/best_checkpoint --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --output validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug/seed_eval.json
 research/plate-detection/.venv/Scripts/python.exe research/plate-detection/export_student.py --checkpoint-dir validation/private/plate-detection-phase-b/student-dfine-s-v2-s3-aug/best_checkpoint --dataset-dir validation/private/plate-detection-phase-b/dataset-stride15-v1 --output-dir validation/private/plate-detection-phase-b/student-dfine-s-v2-export
+research/plate-detection/.venv/Scripts/python.exe research/plate-detection/export_edgetam.py --output-dir validation/private/plate-detection-edgetam-export
 python -m unittest discover -v -s research/plate-detection/tests -p 'test_*.py'
 python -m unittest discover -v -s validation/tests -p 'test_*.py'
 python validation/tools/schema_check.py
