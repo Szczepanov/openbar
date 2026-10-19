@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export EdgeTAM video tracker components to static-shape mobile graphs and verify parity (#251, #57).
 
-Exports the EdgeTAM (Apache-2.0, ``yonigozlan/EdgeTAM-hf``) image encoder and memory encoder
+Exports the EdgeTAM (Apache-2.0, ``yonigozlan/EdgeTAM-hf``) vision encoder, memory encoder and mask decoder
 subgraphs to static-shape PyTorch 2 ``ExportedProgram`` archives (``.pt2`` for ExecuTorch /
 LiteRT-Torch / AOTInductor mobile deployment, and optionally ``.onnx`` when ``onnx`` /
 ``onnxscript`` is available), verifies numerical output parity against eager PyTorch on synthetic
@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT / "validation" / "tools"))
 
 import label_package  # noqa: E402
 import track  # noqa: E402
+import train_phase_b  # noqa: E402
 
 HARNESS_ID = "edgetam-mobile-export-v1"
 DEFAULT_INPUT_HEIGHT_PX = 1024
@@ -83,6 +84,10 @@ def validate_export_config(
         "vision_input_shape": [1, 3, input_height_px, input_width_px],
         "memory_pix_shape": [1, 256, input_height_px // 16, input_width_px // 16],
         "memory_mask_shape": [1, 1, input_height_px, input_width_px],
+        "decoder_emb_shape": [1, 256, input_height_px // 16, input_width_px // 16],
+        "decoder_sparse_shape": [1, 1, 2, 256],
+        "decoder_high_res_0_shape": [1, 256, input_height_px // 4, input_width_px // 4],
+        "decoder_high_res_1_shape": [1, 256, input_height_px // 8, input_width_px // 8],
         "max_abs_diff": tol,
     }
 
@@ -217,6 +222,11 @@ def export_edgetam_tracker(
         max_abs_diff=max_abs_diff,
     )
 
+    val_coco = None
+    if dataset_dir is not None:
+        validated = train_phase_b.validate_dataset_dir(dataset_dir, repo_root)
+        val_coco = validated["val_coco"]
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     import torch
@@ -250,8 +260,35 @@ def export_edgetam_tracker(
             mem_features, mem_pos = self.mem_encoder(pix_feat, mask)
             return mem_features, mem_pos
 
+    # --- Subgraph 3: Mask Decoder Wrapper ---
+    class EdgeTamMaskDecoderWrapper(nn.Module):
+        def __init__(self, mask_decoder: nn.Module) -> None:
+            super().__init__()
+            self.mask_decoder = mask_decoder
+
+        def forward(
+            self,
+            image_embeddings: torch.Tensor,
+            image_positional_embeddings: torch.Tensor,
+            sparse_prompt_embeddings: torch.Tensor,
+            dense_prompt_embeddings: torch.Tensor,
+            high_res_0: torch.Tensor,
+            high_res_1: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            masks, iou_pred, _, obj_score = self.mask_decoder(
+                image_embeddings=image_embeddings,
+                image_positional_embeddings=image_positional_embeddings,
+                sparse_prompt_embeddings=sparse_prompt_embeddings,
+                dense_prompt_embeddings=dense_prompt_embeddings,
+                multimask_output=False,
+                # Native EdgeTAM projects raw FPN features before calling the decoder.
+                high_resolution_features=[self.mask_decoder.conv_s0(high_res_0), self.mask_decoder.conv_s1(high_res_1)],
+            )
+            return masks, iou_pred, obj_score
+
     vision_wrapper = EdgeTamVisionEncoderWrapper(model.vision_encoder)
     memory_wrapper = EdgeTamMemoryEncoderWrapper(model.memory_encoder)
+    decoder_wrapper = EdgeTamMaskDecoderWrapper(model.mask_decoder)
 
     # 1. Export Vision Encoder
     print("Exporting EdgeTAM Vision Encoder to torch.export static-shape program...")
@@ -274,9 +311,27 @@ def export_edgetam_tracker(
     memory_pt2_size = memory_pt2_path.stat().st_size
     print(f"Memory encoder saved to {memory_pt2_path} ({memory_pt2_size} bytes, SHA-256: {memory_pt2_sha256[:16]}...)")
 
-    # 3. Optional ONNX export
+    # 3. Export Mask Decoder
+    print("Exporting EdgeTAM Mask Decoder to torch.export static-shape program...")
+    dummy_dec_args = (
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_sparse_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_high_res_0_shape"]),
+        torch.randn(config["decoder_high_res_1_shape"]),
+    )
+    ep_decoder = torch.export.export(decoder_wrapper, dummy_dec_args)
+    decoder_pt2_path = output_dir / "edgetam_decoder_fp32.pt2"
+    torch.export.save(ep_decoder, str(decoder_pt2_path))
+    decoder_pt2_sha256 = sha256_file(decoder_pt2_path)
+    decoder_pt2_size = decoder_pt2_path.stat().st_size
+    print(f"Mask decoder saved to {decoder_pt2_path} ({decoder_pt2_size} bytes, SHA-256: {decoder_pt2_sha256[:16]}...)")
+
+    # 4. Optional ONNX export
     onnx_vision_info: dict[str, Any] | None = None
     onnx_memory_info: dict[str, Any] | None = None
+    onnx_decoder_info: dict[str, Any] | None = None
     if export_onnx:
         if importlib.util.find_spec("onnx") is not None and importlib.util.find_spec("onnxscript") is not None:
             try:
@@ -316,20 +371,51 @@ def export_edgetam_tracker(
                 }
             except Exception as exc:
                 onnx_memory_info = {"status": "failed", "error": str(exc)}
+
+            try:
+                print("Exporting Mask Decoder to ONNX opset 18...")
+                onnx_dec_path = output_dir / "edgetam_decoder_fp32.onnx"
+                torch.onnx.export(
+                    decoder_wrapper,
+                    dummy_dec_args,
+                    str(onnx_dec_path),
+                    input_names=[
+                        "image_embeddings",
+                        "image_positional_embeddings",
+                        "sparse_prompt_embeddings",
+                        "dense_prompt_embeddings",
+                        "high_res_0",
+                        "high_res_1",
+                    ],
+                    output_names=["masks", "iou_pred", "object_score_logits"],
+                    opset_version=18,
+                )
+                onnx_decoder_info = {
+                    "path": onnx_dec_path.relative_to(ROOT).as_posix(),
+                    "sha256": sha256_file(onnx_dec_path),
+                    "bytes": onnx_dec_path.stat().st_size,
+                }
+            except Exception as exc:
+                onnx_decoder_info = {"status": "failed", "error": str(exc)}
         else:
             onnx_vision_info = {"status": "skipped", "reason": "onnx or onnxscript not installed"}
             onnx_memory_info = {"status": "skipped", "reason": "onnx or onnxscript not installed"}
+            onnx_decoder_info = {"status": "skipped", "reason": "onnx or onnxscript not installed"}
 
-    # 4. Parity Verification on Synthetic Tensors
+    # 5. Parity Verification on Synthetic Tensors
     print("Verifying numerical output parity on synthetic tensors...")
     loaded_ep_vision = torch.export.load(str(vision_pt2_path))
     loaded_ep_memory = torch.export.load(str(memory_pt2_path))
+    loaded_ep_decoder = torch.export.load(str(decoder_pt2_path))
+    exported_vision = loaded_ep_vision.module()
+    exported_memory = loaded_ep_memory.module()
+    exported_decoder = loaded_ep_decoder.module()
 
     torch.manual_seed(42)
     syn_vision_in = torch.randn(config["vision_input_shape"])
     with torch.no_grad():
         ref_vis_outs = vision_wrapper(syn_vision_in)
-        exp_vis_outs = loaded_ep_vision.module()(syn_vision_in)
+        exp_vis_outs = exported_vision(syn_vision_in)
 
     vis_parity_synthetic = compute_feature_parity(
         [t.numpy() for t in ref_vis_outs],
@@ -342,7 +428,7 @@ def export_edgetam_tracker(
     syn_mask_in = torch.randn(config["memory_mask_shape"])
     with torch.no_grad():
         ref_mem_outs = memory_wrapper(syn_pix_in, syn_mask_in)
-        exp_mem_outs = loaded_ep_memory.module()(syn_pix_in, syn_mask_in)
+        exp_mem_outs = exported_memory(syn_pix_in, syn_mask_in)
 
     mem_parity_synthetic = compute_feature_parity(
         [t.numpy() for t in ref_mem_outs],
@@ -350,10 +436,29 @@ def export_edgetam_tracker(
         max_abs_diff=config["max_abs_diff"],
     )
 
-    # 5. Parity on Real Validation Frames (if available)
+    torch.manual_seed(456)
+    syn_dec_args = (
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_sparse_shape"]),
+        torch.randn(config["decoder_emb_shape"]),
+        torch.randn(config["decoder_high_res_0_shape"]),
+        torch.randn(config["decoder_high_res_1_shape"]),
+    )
+    with torch.no_grad():
+        ref_dec_outs = decoder_wrapper(*syn_dec_args)
+        exp_dec_outs = exported_decoder(*syn_dec_args)
+
+    dec_parity_synthetic = compute_feature_parity(
+        [t.numpy() for t in ref_dec_outs],
+        [t.numpy() for t in exp_dec_outs],
+        max_abs_diff=config["max_abs_diff"],
+    )
+
+    # 6. Parity on Real Validation Frames (if available)
     vis_parity_real: dict[str, Any] | None = None
-    if dataset_dir is not None and (dataset_dir / "val").is_dir():
-        val_img_paths = sorted((dataset_dir / "val").glob("*.jpg"))[:4]
+    if dataset_dir is not None and val_coco is not None:
+        val_img_paths = [dataset_dir.resolve() / img["file_name"] for img in val_coco.get("images", [])[:4]]
         if val_img_paths:
             import cv2
             real_tensors = []
@@ -369,7 +474,7 @@ def export_edgetam_tracker(
                 for t in real_tensors:
                     with torch.no_grad():
                         r_out = vision_wrapper(t)
-                        e_out = loaded_ep_vision.module()(t)
+                        e_out = exported_vision(t)
                     par = compute_feature_parity(
                         [o.numpy() for o in r_out],
                         [o.numpy() for o in e_out],
@@ -383,15 +488,17 @@ def export_edgetam_tracker(
                     "overall_max_abs_diff": max(diffs),
                 }
 
-    # 6. Diagnostic Desktop Latency Measurements
+    # 7. Diagnostic Desktop Latency Measurements
     print("Measuring diagnostic desktop forward-pass latencies...")
     with torch.no_grad():
-        vis_cpu_timings = _measure_latency(lambda: loaded_ep_vision.module()(syn_vision_in), repeats=5)
-        mem_cpu_timings = _measure_latency(lambda: loaded_ep_memory.module()(syn_pix_in, syn_mask_in), repeats=5)
+        vis_cpu_timings = _measure_latency(lambda: exported_vision(syn_vision_in), repeats=5)
+        mem_cpu_timings = _measure_latency(lambda: exported_memory(syn_pix_in, syn_mask_in), repeats=5)
+        dec_cpu_timings = _measure_latency(lambda: exported_decoder(*syn_dec_args), repeats=5)
 
     all_passed = bool(
         vis_parity_synthetic["passed"]
         and mem_parity_synthetic["passed"]
+        and dec_parity_synthetic["passed"]
         and (vis_parity_real["passed"] if vis_parity_real is not None else True)
     )
 
@@ -411,7 +518,7 @@ def export_edgetam_tracker(
                 "bytes": vision_pt2_size,
                 "sha256": vision_pt2_sha256,
                 "input_shape": config["vision_input_shape"],
-                "outputs": ["fpn_0 [1, 256, 256, 256]", "fpn_1 [1, 256, 128, 128]", "fpn_2 [1, 256, 64, 64]"],
+                "outputs": [f"fpn_{i} {list(t.shape)}" for i, t in enumerate(ref_vis_outs)],
                 "onnx": onnx_vision_info,
                 "parity_synthetic": vis_parity_synthetic,
                 "parity_real_frames": vis_parity_real,
@@ -425,10 +532,27 @@ def export_edgetam_tracker(
                     "pix_feat": config["memory_pix_shape"],
                     "mask": config["memory_mask_shape"],
                 },
-                "outputs": ["mem_features [1, 64, 64, 64]", "mem_pos [1, 64, 64, 64]"],
+                "outputs": [f"{name} {list(t.shape)}" for name, t in zip(("mem_features", "mem_pos"), ref_mem_outs)],
                 "onnx": onnx_memory_info,
                 "parity_synthetic": mem_parity_synthetic,
                 "diagnostic_latency_cpu": mem_cpu_timings,
+            },
+            "mask_decoder": {
+                "file": decoder_pt2_path.relative_to(ROOT).as_posix(),
+                "bytes": decoder_pt2_size,
+                "sha256": decoder_pt2_sha256,
+                "input_shapes": {
+                    "image_embeddings": config["decoder_emb_shape"],
+                    "image_positional_embeddings": config["decoder_emb_shape"],
+                    "sparse_prompt_embeddings": config["decoder_sparse_shape"],
+                    "dense_prompt_embeddings": config["decoder_emb_shape"],
+                    "high_res_0": config["decoder_high_res_0_shape"],
+                    "high_res_1": config["decoder_high_res_1_shape"],
+                },
+                "outputs": [f"{name} {list(t.shape)}" for name, t in zip(("masks", "iou_pred", "object_score_logits"), ref_dec_outs)],
+                "onnx": onnx_decoder_info,
+                "parity_synthetic": dec_parity_synthetic,
+                "diagnostic_latency_cpu": dec_cpu_timings,
             },
         },
         "passed": all_passed,
@@ -481,7 +605,7 @@ def main() -> None:
         "--dataset-dir",
         type=Path,
         default=None,
-        help="Optional path to extracted dataset with val/ directory for real-frame parity checks",
+        help="Optional curated Phase B dataset; admission checks reject held-out fixtures before reading frames",
     )
     args = parser.parse_args()
 
