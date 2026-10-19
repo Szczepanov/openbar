@@ -32,6 +32,15 @@ pub enum MediaError {
         width_px: u32,
         height_px: u32,
     },
+    /// Not 8-bit planar YUV, so no documented Y-plane transform exists (ADR-0006, Amendment 1).
+    UnsupportedPixelFormat {
+        pix_fmt: String,
+    },
+    MixedFrameColorRange {
+        index: usize,
+        first: String,
+        current: String,
+    },
     NoFrames,
     MissingPts {
         index: usize,
@@ -117,6 +126,18 @@ impl fmt::Display for MediaError {
                 height_px,
             } => write!(f, "video dimensions {width_px}x{height_px} are invalid"),
             Self::NoFrames => write!(f, "video stream contains no decodable frames"),
+            Self::UnsupportedPixelFormat { pix_fmt } => write!(
+                f,
+                "pixel format {pix_fmt} is unsupported; canonical gray is defined only for 8-bit planar YUV"
+            ),
+            Self::MixedFrameColorRange {
+                index,
+                first,
+                current,
+            } => write!(
+                f,
+                "frame {index} has color range {current} but earlier frames have {first}; one luma transform cannot be applied"
+            ),
             Self::MissingPts { index } => write!(
                 f,
                 "frame {index} has no presentation timestamp; timestamps are never synthesized from frame rate"

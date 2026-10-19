@@ -2,6 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-01
+- Amended: 2026-10-19 (Amendment 1, canonical gray from the Y plane)
 
 ## Context
 
@@ -50,13 +51,14 @@ For M0, decode in `apps/openbar-cli` by spawning external `ffprobe` and `ffmpeg`
 
 1. **Probe.** `ffprobe -select_streams v:0` returns stream metadata (codec, pixel format,
    colour range, coded size, `time_base`, `start_pts`, display-matrix rotation, colour transfer)
-   and the per-frame integer `pts` list for the first *video* stream. Its stream index is not
+   and the per-frame integer `pts` and `color_range` lists for the first *video* stream. Its stream index is not
    assumed: phone files may store audio as stream 0. A sample aspect ratio other than 1:1 (or
    FFmpeg's "unknown" 0:1) is rejected, because a circular plate would no longer be circular in
    decoded pixels.
 2. **Decode.** `ffmpeg -nostdin -hide_banner -v error -autorotate -i <input> -map 0:v:0
-   -fps_mode passthrough -enc_time_base demux -pix_fmt gray -f rawvideo -` streams
-   display-oriented 8-bit luma frames to stdout. `-autorotate` is FFmpeg's default but is passed
+   -fps_mode passthrough -enc_time_base demux -vf <luma filter> -pix_fmt gray -f rawvideo -` streams
+   display-oriented 8-bit luma frames to stdout. The luma filter is defined in Amendment 1
+   (`extractplanes=y`, plus a limited-to-full lookup table for limited-range frames). `-autorotate` is FFmpeg's default but is passed
    explicitly because orientation is part of this contract. Passthrough mode forbids frame duplication and
    dropping. `-enc_time_base demux` keeps the source time base. Without it, closely spaced VFR
    frames collide after rounding to the nominal rate and FFmpeg emits non-monotonic DTS warnings.
@@ -106,10 +108,15 @@ For M0, decode in `apps/openbar-cli` by spawning external `ffprobe` and `ffmpeg`
 ### Provenance recorded in analysis/benchmark output
 
 The output records decoder identity (`ffmpeg -version` first line), the exact argument vector,
-source SHA-256, codec, source pixel format, colour range, colour transfer, coded and display dimensions,
-rotation, `time_base`, `start_pts`, decoded frame count and the selected time range.
+source SHA-256, codec, source pixel format, colour range, frame-level colour range, colour transfer,
+the luma transform (`identity` or `limited_to_full`), coded and display dimensions, rotation,
+`time_base`, `start_pts`, decoded frame count and the selected time range. The frame source is
+`ffmpeg-process-gray` version `2` since Amendment 1.
 
 ### Grayscale semantics
+
+> **Superseded in part by Amendment 1 below.** The original text is kept for the record. It is
+> correct for untagged and BT.601-tagged sources, but not for BT.709-tagged ones.
 
 `-pix_fmt gray` produces the luma plane converted to full-range 8-bit. Limited-range (TV)
 sources are expanded, so codes 16–235 map to 0–255, and values outside that range clip. Full-range
@@ -119,6 +126,54 @@ the native full-range Y plane bit for bit. No colour matrix, white balance or to
 applied. For HDR (HLG/PQ) sources, luma is in the source
 transfer function rather than SDR. These clips are accepted and tagged via the recorded colour
 transfer, and their tracking quality is evaluated as a condition rather than assumed.
+
+### Amendment 1 (2026-10-19): canonical gray is an explicit function of the Y plane
+
+**Finding.** On BT.709-tagged sources, `-pix_fmt gray` is not a function of Y. That covers every
+`yuv420p` Android clip in the private set: 31 of 62 clips. swscale converts YUV to RGB with the
+BT.709 matrix and then forms gray with BT.601 weights, so chroma leaks into luma. The deviation is
+up to 20 codes on saturated colours, and FFmpeg 8.1.3 and 9.0.2 give different results. The
+evidence is in [FFMPEG_GRAY_CONVERSION_FINDINGS.md](../analysis/FFMPEG_GRAY_CONVERSION_FINDINGS.md)
+and in the #258 section of [ANDROID_LATENCY_EVIDENCE.md](../validation/ANDROID_LATENCY_EVIDENCE.md).
+The 30 `yuvj420p` clips report frame-level `pc` and a BT.601 matrix, so their old output was already
+exactly Y.
+
+**Decision.** Canonical gray is defined as a per-pixel function of the decoded 8-bit Y plane. It is
+computed in the decode graph with core FFmpeg filters only:
+
+- **Full-range frames:** `-vf extractplanes=y`. Gray is Y, unchanged.
+- **Limited-range frames:** `-vf extractplanes=y,lut=c0='clip(round((val-16)*255/219),0,255)'`.
+  No input code sits on a rounding tie, so this equals integer `(Y−16)·255/219` rounded half up and
+  clipped.
+
+The transform comes from the **frame-level** `color_range` reported by ffprobe, never from the
+stream tag:
+
+- `pc` gives `identity`.
+- `tv` gives `limited_to_full`.
+- Unspecified gives `identity` for `yuvj*` pixel formats and `limited_to_full` otherwise, matching
+  FFmpeg's own default.
+- Frames that disagree on range fail closed (`MixedFrameColorRange`).
+
+Only 8-bit planar YUV pixel formats are accepted: `yuv420p`, `yuv422p`, `yuv444p` and their `yuvj`
+variants. Every other format fails closed (`UnsupportedPixelFormat`), including 10-bit and HDR
+formats, which the original text accepted. Defining 10-bit gray is a separate decision. No colour
+matrix, white balance or tone mapping is applied.
+
+**Consequences.**
+
+- The frame source version is bumped from `1` to `2`, and provenance gains `luma_transform` and
+  `stream.frame_color_range`.
+- Canonical frames change for BT.709-tagged limited-range clips. Earlier real-clip evaluations
+  measured slightly chroma-contaminated luma and should be re-run before they are compared with new
+  results.
+- The public synthetic fixture is untagged, so its frames, the `analyze` smoke and
+  `analysis-v1.golden.json` are unchanged.
+- Gray now depends only on the decoded Y plane and the documented table, not on swscale's matrix
+  handling. An in-process decoder (for example Android MediaCodec, #258) can therefore reproduce it
+  exactly from its own Y plane.
+- A generated BT.709 colour clip test, `media::tests::gray_is_the_documented_function_of_y_for_bt709_colour_sources`,
+  asserts gray = LUT(Y) and gray = Y for the two transforms. This makes the rule mechanical.
 
 ## Evidence from real footage
 

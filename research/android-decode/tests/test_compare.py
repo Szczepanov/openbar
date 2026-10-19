@@ -21,6 +21,7 @@ def probe(rotation=None, start_pts=0, pts=(0, 2985, 5970)):
         "width": 4,
         "height": 2,
         "time_base": "1/90000",
+        "pix_fmt": "yuv420p",
         "start_pts": start_pts,
     }
     if rotation is not None:
@@ -75,6 +76,32 @@ class ParseProbeTest(unittest.TestCase):
         for broken in cases:
             with self.subTest(probe=broken), self.assertRaises((ValueError, KeyError)):
                 compare.parse_probe(broken)
+
+
+class LumaTransformTest(unittest.TestCase):
+    def test_frame_range_decides_like_openbar_cli(self):
+        cases = [
+            ("yuv420p", ["tv"], "limited_to_full"),
+            ("yuv420p", ["pc", "pc"], "identity"),
+            ("yuv420p", [None, "unknown"], "limited_to_full"),
+            ("yuvj420p", [None], "identity"),
+            ("yuvj420p", ["pc"], "identity"),
+        ]
+        for pix_fmt, ranges, expected in cases:
+            self.assertEqual(compare.select_luma_transform(pix_fmt, ranges), expected)
+
+    def test_mixed_ranges_and_unsupported_formats_fail(self):
+        with self.assertRaises(ValueError):
+            compare.select_luma_transform("yuv420p", ["tv", "pc"])
+        with self.assertRaises(ValueError):
+            compare.select_luma_transform("yuv420p10le", ["tv"])
+
+    def test_probe_carries_transform_and_filter(self):
+        ref = compare.parse_probe(probe())
+        self.assertEqual(ref.luma_transform, "limited_to_full")
+        self.assertEqual(
+            ref.luma_filter, "extractplanes=y,lut=c0='clip(round((val-16)*255/219),0,255)'"
+        )
 
 
 class WindowTest(unittest.TestCase):
@@ -159,6 +186,8 @@ class ParityTest(unittest.TestCase):
     def test_raw_y_diagnostic_uses_rounded_up_chroma_dimensions(self):
         metadata = probe(pts=(0, 9000))
         metadata["streams"][0].update(width=3, height=3)
+        for frame in metadata["frames"]:
+            frame["color_range"] = "pc"
         run = {
             "window": {"start_s": 0, "end_s": None},
             "timestamps_s": [0, 0.1],
@@ -167,7 +196,7 @@ class ParityTest(unittest.TestCase):
         }
         frames = (bytes(range(9)), bytes(range(10, 19)))
 
-        def decode(_ffmpeg, _video, destination, pix_fmt="gray"):
+        def decode(_ffmpeg, _video, destination, pix_fmt="gray", vf=None):
             # A 3x3 YUV420 frame has 9 Y bytes and two 2x2 chroma planes.
             destination.write_bytes(b"".join(
                 frame + (b"\xff" * 8 if pix_fmt == "yuv420p" else b"") for frame in frames

@@ -384,6 +384,23 @@ they are not part of the measured set.
    - Accepting it through `image-data` reads an exact layout rather than guessing. It needed no `AImageReader` path.
    - The NDK `AMEDIAFORMAT_KEY_*` symbols are missing from Termux's `libmediandk` stub, so the prototype uses the public key strings instead.
 
+### Re-check under ADR-0006 Amendment 1 (2026-10-19)
+
+ADR-0006 Amendment 1 defines canonical gray as `extractplanes=y` plus the documented limited-to-full
+lookup table, chosen from the frame-level range. `compare.py` now builds its FFmpeg reference the same
+way. The same binary was re-run once on the phone with FFmpeg 8.1.3 for parity; this was not a timing
+run.
+
+| Check | lift | full |
+| --- | --- | --- |
+| Reference transform | `limited_to_full` | `limited_to_full` |
+| Luma against the amended reference | **bit-exact 180/180** (max 0) | **bit-exact 450/450** (max 0) |
+| Max PTS difference | 0.89 µs | 0.89 µs |
+| Preregistered gate (max-abs-diff ≤ 2) | **pass** | **pass** |
+
+With Amendment 1, the canonical gray of this clip is identical across FFmpeg 8.1.3, FFmpeg 9.0.2 and
+the MediaTek hardware decoder. The luma parity gate is met. The 0.50 s latency gate is still not met.
+
 ## Non-goals
 
 - Choosing numeric latency thresholds, supported phones or the clip set.

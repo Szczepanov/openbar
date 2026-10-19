@@ -1,5 +1,6 @@
 //! Typed view of `ffprobe` output and the PTS -> seconds contract (ADR-0006).
 
+use super::luma::{uniform_frame_color_range, LumaTransform};
 use super::MediaError;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +11,7 @@ pub const PROBE_ARGS: [&str; 8] = [
     "-select_streams",
     "v:0",
     "-show_entries",
-    "stream=index,codec_name,pix_fmt,color_range,color_transfer,width,height,sample_aspect_ratio,time_base,start_pts:stream_side_data=rotation:frame=pts",
+    "stream=index,codec_name,pix_fmt,color_range,color_transfer,width,height,sample_aspect_ratio,time_base,start_pts:stream_side_data=rotation:frame=pts,color_range",
     "-of",
     "json",
 ];
@@ -51,6 +52,9 @@ pub struct VideoProbe {
     /// Counter-clockwise display rotation (FFmpeg convention), normalised to 0/90/180/270.
     pub rotation_deg: u16,
     pub frame_pts: Vec<i64>,
+    /// Frame-level colour range shared by every frame (`None` = unspecified); decides the luma
+    /// transform over the stream tag.
+    pub frame_color_range: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +89,7 @@ struct RawSideData {
 #[derive(Debug, Deserialize)]
 struct RawFrame {
     pts: Option<i64>,
+    color_range: Option<String>,
 }
 
 impl VideoProbe {
@@ -127,6 +132,12 @@ impl VideoProbe {
         let start_pts = stream
             .start_pts
             .ok_or(MediaError::MissingStreamField { field: "start_pts" })?;
+        let frame_color_range = uniform_frame_color_range(
+            &raw.frames
+                .iter()
+                .map(|frame| frame.color_range.clone())
+                .collect::<Vec<_>>(),
+        )?;
         let frame_pts = raw
             .frames
             .iter()
@@ -150,7 +161,13 @@ impl VideoProbe {
             start_pts,
             rotation_deg,
             frame_pts,
+            frame_color_range,
         })
+    }
+
+    /// The documented Y-plane transform for this stream (ADR-0006, Amendment 1).
+    pub fn luma_transform(&self) -> Result<LumaTransform, MediaError> {
+        LumaTransform::select(&self.pix_fmt, self.frame_color_range.as_deref())
     }
 
     /// Display-oriented dimensions after the rotation metadata is applied.
@@ -250,12 +267,40 @@ mod tests {
                 start_pts: 0,
                 rotation_deg: 90,
                 frame_pts: vec![0, 2985, 5970],
+                frame_color_range: None,
             }
         );
         assert_eq!(probe.display_dimensions(), (720, 1280));
         assert_eq!(
             probe.timestamps_s().expect("valid timestamps"),
             vec![0.0, 2985.0 / 90_000.0, 5970.0 / 90_000.0]
+        );
+    }
+
+    #[test]
+    fn frame_level_range_decides_the_luma_transform() {
+        // The fixture stream is yuvj420p tagged tv: frames reporting pc keep Y unchanged.
+        let full = probe_with(
+            "",
+            r#"{"pts":0,"color_range":"pc"},{"pts":1,"color_range":"pc"}"#,
+        )
+        .expect("probe parses");
+        assert_eq!(full.frame_color_range.as_deref(), Some("pc"));
+        assert_eq!(full.luma_transform(), Ok(LumaTransform::Identity));
+
+        let limited = probe_with("", r#"{"pts":0,"color_range":"tv"}"#).expect("probe parses");
+        assert_eq!(limited.luma_transform(), Ok(LumaTransform::LimitedToFull));
+
+        assert_eq!(
+            probe_with(
+                "",
+                r#"{"pts":0,"color_range":"tv"},{"pts":1,"color_range":"pc"}"#
+            ),
+            Err(MediaError::MixedFrameColorRange {
+                index: 1,
+                first: "tv".to_owned(),
+                current: "pc".to_owned()
+            })
         );
     }
 
