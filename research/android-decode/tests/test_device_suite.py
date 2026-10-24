@@ -20,10 +20,11 @@ class DeviceSuiteTest(unittest.TestCase):
                 root = Path(tmp)
                 (root / "bin").mkdir()
                 (root / "target/release").mkdir(parents=True)
-                (root / "out").mkdir()
+                (root / "out/packed").mkdir(parents=True)
                 for name in ("getprop", "rustc", "ffmpeg", "sha256sum"):
                     (root / "bin" / name).write_text("#!/bin/bash\necho test\n")
-                (root / "target/release/openbar-android-decode").write_text("#!/bin/bash\nexit 0\n")
+                (root / "target/release/openbar-android-decode").write_text(
+                    '#!/bin/bash\necho "$@" >> "$(dirname "$0")/../../bin/decoder.log"\nexit 0\n')
                 (root / "bin/python").write_text('''#!/bin/bash
 if [[ $1 == --version ]]; then exit 0; fi
 if [[ $2 == summarize ]]; then
@@ -41,18 +42,33 @@ exit 1
                 for path in [*(root / "bin").iterdir(), root / "target/release/openbar-android-decode"]:
                     path.chmod(0o755)
                 # Stale artifacts must neither hide errors nor enter the new repeat summary.
-                (root / "out/synthetic-smoke-parity.json").write_text('{"pass": false}')
+                (root / "out/packed/synthetic-smoke-parity.json").write_text('{"pass": false}')
                 if not tool_error:
-                    (root / "out/synthetic-smoke-9.json").write_text("{}")
+                    (root / "out/packed/synthetic-smoke-9.json").write_text("{}")
                 (root / "suite.sh").write_text(SUITE.read_text().replace("\r\n", "\n"))
-                env = dict(os.environ, REPEATS="1", TOOL_ERROR=str(int(tool_error)))
+                env = dict(os.environ, REPEATS="1", TOOL_ERROR=str(int(tool_error)),
+                           VARIANTS="packed image-reader")
                 result = subprocess.run(
                     [BASH, "-c", 'export PATH="$PWD/bin:$PATH"; bash suite.sh repo out'],
                     cwd=root, env=env, capture_output=True, text=True,
                 )
                 self.assertEqual(result.returncode == 0, not tool_error, result.stderr)
                 if not tool_error:
-                    self.assertTrue((root / "out/back-squat-full-parity.json").is_file())
+                    for variant in ("packed", "image-reader"):
+                        self.assertTrue((root / f"out/{variant}/back-squat-full-parity.json").is_file())
+                    log = (root / "bin/decoder.log").read_text()
+                    self.assertIn("--frame-mode view --output-path image-reader", log)
+
+    def test_unknown_variant_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "suite.sh").write_text(SUITE.read_text().replace("\r\n", "\n"))
+            result = subprocess.run(
+                [BASH, "suite.sh", "repo", "out"], cwd=root, capture_output=True, text=True,
+                env=dict(os.environ, VARIANTS="packed bogus"),
+            )
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("unknown variant: bogus", result.stderr)
 
 
 if __name__ == "__main__":

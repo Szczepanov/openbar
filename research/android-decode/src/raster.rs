@@ -116,7 +116,7 @@ impl PlaneLayout {
         self.crop.bottom * self.stride + self.crop.right + 1
     }
 
-    fn validate(&self, buffer_len: usize) -> Result<(), RasterError> {
+    pub(crate) fn validate(&self, buffer_len: usize) -> Result<(), RasterError> {
         if self.stride == 0 {
             return Err(RasterError::ZeroStride);
         }
@@ -292,7 +292,7 @@ pub fn expand_limited_range(pixels: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-const LIMITED_TO_FULL: [u8; 256] = build_limited_to_full();
+pub(crate) const LIMITED_TO_FULL: [u8; 256] = build_limited_to_full();
 
 const fn build_limited_to_full() -> [u8; 256] {
     let mut table = [0u8; 256];
