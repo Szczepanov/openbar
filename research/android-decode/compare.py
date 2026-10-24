@@ -31,12 +31,15 @@ LUMA_MAX_ABS_DIFF_GATE = 2
 
 PROBE_ENTRIES = (
     "stream=index,codec_name,pix_fmt,color_range,color_transfer,width,height,"
-    "sample_aspect_ratio,time_base,start_pts:stream_side_data=rotation:frame=pts"
+    "sample_aspect_ratio,time_base,start_pts:stream_side_data=rotation:frame=pts,color_range"
 )
-DECODE_OUTPUT_ARGS = (
+DECODE_MAP_ARGS = (
     "-map", "0:v:0", "-fps_mode", "passthrough", "-enc_time_base", "demux",
-    "-pix_fmt", "gray", "-f", "rawvideo",
 )
+# ADR-0006 Amendment 1 (frame source version 2): gray is an explicit function of the Y plane.
+SUPPORTED_PIX_FMTS = ("yuv420p", "yuvj420p", "yuv422p", "yuvj422p", "yuv444p", "yuvj444p")
+IDENTITY_FILTER = "extractplanes=y"
+LIMITED_TO_FULL_FILTER = "extractplanes=y,lut=c0='clip(round((val-16)*255/219),0,255)'"
 STAGES = (
     "extractor_open_s",
     "codec_configure_s",
@@ -54,6 +57,45 @@ class ReferenceProbe:
     width_px: int
     height_px: int
     timestamps_s: tuple[float, ...]
+    luma_transform: str = "limited_to_full"
+    pix_fmt: str = "yuv420p"
+
+    def yuv_frame_bytes(self) -> int:
+        """Bytes per raw frame in the source pixel format (Y plus two chroma planes)."""
+        w, h = self.width_px, self.height_px
+        if "444" in self.pix_fmt:
+            chroma = w * h
+        elif "422" in self.pix_fmt:
+            chroma = ((w + 1) // 2) * h
+        else:
+            chroma = ((w + 1) // 2) * ((h + 1) // 2)
+        return w * h + 2 * chroma
+
+    @property
+    def luma_filter(self) -> str:
+        return IDENTITY_FILTER if self.luma_transform == "identity" else LIMITED_TO_FULL_FILTER
+
+
+def select_luma_transform(
+    pix_fmt: str | None, frame_ranges: Sequence[str | None], stream_range: str | None = None
+) -> str:
+    """Same rule as ``openbar-cli`` ``LumaTransform::select``: the frame-level range decides."""
+    if pix_fmt not in SUPPORTED_PIX_FMTS:
+        raise ValueError(f"pixel format {pix_fmt} has no canonical gray (8-bit planar YUV only)")
+    normalized = {None if r in (None, "unknown") else r for r in frame_ranges}
+    if len(normalized) > 1:
+        raise ValueError(f"frames disagree on color range: {sorted(map(str, normalized))}")
+    frame_range = normalized.pop() if normalized else None
+    if frame_range == "pc":
+        return "identity"
+    if frame_range == "tv":
+        return "limited_to_full"
+    default = "identity" if pix_fmt.startswith("yuvj") else "limited_to_full"
+    if stream_range in ("pc", "tv") and (stream_range == "pc") != (default == "identity"):
+        raise ValueError(
+            f"frames report no color range and stream tag {stream_range} contradicts {pix_fmt}"
+        )
+    return default
 
 
 def parse_probe(probe: dict) -> ReferenceProbe:
@@ -88,7 +130,11 @@ def parse_probe(probe: dict) -> ReferenceProbe:
     pts = [int(frame["pts"]) for frame in frames]
     timestamps = tuple(float((value - start_pts) * time_base) for value in pts)
     validate_timestamps(timestamps)
-    return ReferenceProbe(width, height, timestamps)
+    transform = select_luma_transform(
+        stream.get("pix_fmt"), [frame.get("color_range") for frame in frames],
+        stream.get("color_range"),
+    )
+    return ReferenceProbe(width, height, timestamps, transform, stream["pix_fmt"])
 
 
 def window_indices(
@@ -194,12 +240,14 @@ def run_ffprobe(ffprobe: str, video: Path) -> dict:
     return json.loads(out.stdout)
 
 
-def run_ffmpeg_gray(ffmpeg: str, video: Path, destination: Path, pix_fmt: str = "gray") -> None:
-    args = list(DECODE_OUTPUT_ARGS)
-    args[args.index("gray")] = pix_fmt
+def run_ffmpeg_gray(
+    ffmpeg: str, video: Path, destination: Path, pix_fmt: str = "gray", vf: str | None = None
+) -> None:
+    filters = ["-vf", vf] if vf else []
     subprocess.run(
         [ffmpeg, "-nostdin", "-hide_banner", "-v", "error", "-autorotate", "-i", str(video),
-         *args, "-y", str(destination)],
+         *DECODE_MAP_ARGS, *filters, "-pix_fmt", pix_fmt, "-f", "rawvideo", "-y",
+         str(destination)],
         check=True,
     )
 
@@ -222,7 +270,7 @@ def parity(args: argparse.Namespace) -> int:
     if dims_equal and timestamps["count_equal"]:
         with tempfile.TemporaryDirectory() as tmp:
             raw = Path(tmp) / "reference.gray"
-            run_ffmpeg_gray(args.ffmpeg, Path(args.input), raw)
+            run_ffmpeg_gray(args.ffmpeg, Path(args.input), raw, vf=reference.luma_filter)
             frame_bytes = reference.width_px * reference.height_px
             expected = len(reference.timestamps_s) * frame_bytes
             if raw.stat().st_size != expected:
@@ -235,16 +283,16 @@ def parity(args: argparse.Namespace) -> int:
             raw.unlink()
             if not args.skip_raw_y:
                 # Diagnostic only, not a gate: FFmpeg's decoded Y plane (no -pix_fmt gray
-                # conversion), expanded with the ADR-0006 rule when the prototype expanded too.
-                # Separates decoder differences from FFmpeg's gray conversion.
+                # conversion), expanded by the transform the reference contract selects.
+                # Separates decoder differences from FFmpeg's gray conversion. Decoded in the
+                # source pixel format so a yuvj source is not range-converted first.
                 yuv = Path(tmp) / "reference.yuv"
-                run_ffmpeg_gray(args.ffmpeg, Path(args.input), yuv, pix_fmt="yuv420p")
-                table = limited_to_full_table() if report["decoder"]["luma_range"] == "limited" else None
+                run_ffmpeg_gray(args.ffmpeg, Path(args.input), yuv, pix_fmt=reference.pix_fmt)
+                table = limited_to_full_table() if reference.luma_transform == "limited_to_full" else None
                 with open(args.dump, "rb") as proto, open(yuv, "rb") as ref:
                     decoder_luma = compare_frames(
                         proto, ref, frame_bytes, indices,
-                        reference_frame_bytes=(frame_bytes + 2 * ((reference.width_px + 1) // 2)
-                                               * ((reference.height_px + 1) // 2)),
+                        reference_frame_bytes=reference.yuv_frame_bytes(),
                         transform=table,
                     )
     passed = bool(dims_equal and timestamps["within_tolerance"] and frames and frames["within_gate"])
@@ -256,6 +304,7 @@ def parity(args: argparse.Namespace) -> int:
         "window": window,
         "dimensions": dims,
         "dimensions_equal": dims_equal,
+        "reference_luma_transform": reference.luma_transform,
         "timestamps": timestamps,
         "frames": frames,
         "diagnostic_decoder_luma_vs_ffmpeg_raw_y": decoder_luma,

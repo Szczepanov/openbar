@@ -6,10 +6,12 @@
 
 mod error;
 mod ffmpeg;
+mod luma;
 mod probe;
 mod raw;
 
 pub use error::MediaError;
+pub use luma::LumaTransform;
 
 use crate::sha256::file_sha256_hex;
 use openbar_tracking::{FrameSample, GrayFrame};
@@ -20,7 +22,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 /// Bumped whenever decoding arguments, pairing or timestamp semantics change.
-pub const FRAME_SOURCE_VERSION: &str = "1";
+pub const FRAME_SOURCE_VERSION: &str = "2";
 pub const FRAME_SOURCE_ID: &str = "ffmpeg-process-gray";
 
 /// Inclusive time window on the decoded media timeline.
@@ -81,6 +83,8 @@ pub struct FrameSourceProvenance {
     pub decoder_version: String,
     pub probe_args: Vec<String>,
     pub decode_args: Vec<String>,
+    /// How gray was derived from the decoded Y plane (ADR-0006, Amendment 1).
+    pub luma_transform: LumaTransform,
     pub source_sha256: String,
     pub stream: StreamProvenance,
     pub probed_frame_count: usize,
@@ -101,6 +105,8 @@ pub struct StreamProvenance {
     pub color_range: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_transfer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_color_range: Option<String>,
     pub coded_width_px: u32,
     pub coded_height_px: u32,
     pub display_width_px: u32,
@@ -115,6 +121,7 @@ pub struct StreamProvenance {
 pub struct ProbedVideo {
     path: PathBuf,
     probe: VideoProbe,
+    luma_transform: LumaTransform,
     timestamps_s: Vec<f64>,
     source_sha256: String,
     prober_version: String,
@@ -133,9 +140,11 @@ impl ProbedVideo {
         })?;
         let probe = ffmpeg::probe(path)?;
         let timestamps_s = probe.timestamps_s()?;
+        let luma_transform = probe.luma_transform()?;
         Ok(Self {
             path: path.to_path_buf(),
             probe,
+            luma_transform,
             timestamps_s,
             source_sha256,
             prober_version,
@@ -166,8 +175,13 @@ impl ProbedVideo {
         };
         check_selection_budget(&self.timestamps_s, &layout, options)?;
 
-        let (frames, decoder_diagnostics) =
-            ffmpeg::decode(&self.path, &layout, &self.timestamps_s, options.selection)?;
+        let (frames, decoder_diagnostics) = ffmpeg::decode(
+            &self.path,
+            &layout,
+            &self.timestamps_s,
+            options.selection,
+            self.luma_transform,
+        )?;
         let (Some(first), Some(last)) = (frames.first(), frames.last()) else {
             return Err(MediaError::NoFrames);
         };
@@ -181,7 +195,8 @@ impl ProbedVideo {
             prober_version: self.prober_version,
             decoder_version: self.decoder_version,
             probe_args: ffmpeg::probe_args_for_provenance(),
-            decode_args: ffmpeg::decode_args_for_provenance(),
+            decode_args: ffmpeg::decode_args_for_provenance(self.luma_transform),
+            luma_transform: self.luma_transform,
             source_sha256: self.source_sha256,
             probed_frame_count: self.timestamps_s.len(),
             selected_frame_count: frames.len(),
@@ -237,6 +252,7 @@ fn stream_provenance(
         pix_fmt: probe.pix_fmt.clone(),
         color_range: probe.color_range.clone(),
         color_transfer: probe.color_transfer.clone(),
+        frame_color_range: probe.frame_color_range.clone(),
         coded_width_px: probe.coded_width_px,
         coded_height_px: probe.coded_height_px,
         display_width_px,
@@ -528,6 +544,129 @@ mod tests {
         }
     }
 
+    /// ADR-0006 Amendment 1: on BT.709-tagged colour video (what Android cameras write), canonical
+    /// gray must be the documented function of Y, not swscale's RGB round trip, which leaks chroma.
+    /// The clips are generated here because the committed fixture carries no colour tags.
+    #[test]
+    fn gray_is_the_documented_function_of_y_for_bt709_colour_sources() {
+        if !ffmpeg_available() {
+            return;
+        }
+        let expand = |code: u8| -> u8 {
+            let shifted = i32::from(code) - 16;
+            if shifted <= 0 {
+                0
+            } else {
+                ((shifted * 255 + 109) / 219).min(255) as u8
+            }
+        };
+        for (pix_fmt, range, frame_range, transform) in [
+            ("yuv420p", "tv", "tv", LumaTransform::LimitedToFull),
+            ("yuvj420p", "pc", "pc", LumaTransform::Identity),
+        ] {
+            let path = scratch_file(&format!("bt709-{pix_fmt}.mp4"));
+            let status = Command::new("ffmpeg")
+                .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+                .arg("testsrc2=size=96x64:rate=10:duration=0.5")
+                .args([
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    pix_fmt,
+                    "-color_range",
+                    range,
+                ])
+                .args(["-colorspace", "bt709", "-color_primaries", "bt709"])
+                .args(["-color_trc", "bt709"])
+                .arg(&path)
+                .status()
+                .expect("ffmpeg runs");
+            assert!(status.success(), "BT.709 {pix_fmt} clip generation failed");
+
+            let raw_yuv = Command::new("ffmpeg")
+                .args(["-nostdin", "-v", "error", "-i"])
+                .arg(&path)
+                .args([
+                    "-map",
+                    "0:v:0",
+                    "-fps_mode",
+                    "passthrough",
+                    "-pix_fmt",
+                    pix_fmt,
+                ])
+                .args(["-f", "rawvideo", "-"])
+                .output()
+                .expect("ffmpeg runs");
+            let clip = decode(&path, None);
+            let _ = std::fs::remove_file(&path);
+            assert!(raw_yuv.status.success(), "raw Y reference decode failed");
+            let clip = clip.expect("BT.709 clip decodes");
+
+            assert_eq!(clip.provenance.luma_transform, transform, "{pix_fmt}");
+            assert_eq!(
+                clip.provenance.stream.frame_color_range.as_deref(),
+                Some(frame_range)
+            );
+            let luma_bytes = 96 * 64;
+            // Both generated clips are 4:2:0: Y plus two quarter-size chroma planes per frame.
+            let chunks = raw_yuv
+                .stdout
+                .chunks(luma_bytes * 3 / 2)
+                .collect::<Vec<_>>();
+            assert_eq!(chunks.len(), clip.frames.len());
+            for (frame, chunk) in clip.frames.iter().zip(chunks) {
+                let expected: Vec<u8> = chunk[..luma_bytes]
+                    .iter()
+                    .map(|&y| match transform {
+                        LumaTransform::Identity => y,
+                        LumaTransform::LimitedToFull => expand(y),
+                    })
+                    .collect();
+                assert_eq!(
+                    pixels(frame),
+                    expected,
+                    "{pix_fmt} frame {}",
+                    frame.frame_index
+                );
+            }
+        }
+    }
+
+    /// Every 8-bit code, including the clipped tails below 16 and above 235, goes through the exact
+    /// production filter on this FFmpeg build and must equal the ADR-0006 integer rule.
+    #[test]
+    fn limited_to_full_filter_matches_the_documented_rule_for_every_code() {
+        if !ffmpeg_available() {
+            return;
+        }
+        // 16x16 yuv420p frame: Y holds codes 0..=255, both 8x8 chroma planes are neutral.
+        let ramp = scratch_file("luma-ramp.yuv");
+        let frame: Vec<u8> = (0..=255u8).chain(std::iter::repeat_n(128, 128)).collect();
+        std::fs::write(&ramp, &frame).expect("scratch file is writable");
+        let output = Command::new("ffmpeg")
+            .args([
+                "-nostdin", "-v", "error", "-f", "rawvideo", "-pix_fmt", "yuv420p",
+            ])
+            .args(["-s", "16x16", "-color_range", "tv", "-i"])
+            .arg(&ramp)
+            .args(["-vf", LumaTransform::LimitedToFull.filter()])
+            .args(["-pix_fmt", "gray", "-f", "rawvideo", "-"])
+            .output()
+            .expect("ffmpeg runs");
+        let _ = std::fs::remove_file(&ramp);
+        assert!(output.status.success(), "ramp filter failed");
+        let expected: Vec<u8> = (0..=255i32)
+            .map(|code| {
+                if code <= 16 {
+                    0
+                } else {
+                    (((code - 16) * 255 + 109) / 219).min(255) as u8
+                }
+            })
+            .collect();
+        assert_eq!(output.stdout, expected);
+    }
+
     #[test]
     fn reports_missing_tool_and_undecodable_input_explicitly() {
         assert!(matches!(
@@ -583,6 +722,7 @@ mod tests {
             &layout,
             &synthetic_timestamps()[..11],
             None,
+            LumaTransform::LimitedToFull,
         )
         .map(|_| ())
         .expect_err("12 decoded frames cannot pair with 11 timestamps");
@@ -605,9 +745,15 @@ mod tests {
             width_px: 321,
             height_px: 240,
         };
-        let error = ffmpeg::decode(&synthetic_clip(), &layout, &synthetic_timestamps(), None)
-            .map(|_| ())
-            .expect_err("a wrong layout must not be accepted");
+        let error = ffmpeg::decode(
+            &synthetic_clip(),
+            &layout,
+            &synthetic_timestamps(),
+            None,
+            LumaTransform::LimitedToFull,
+        )
+        .map(|_| ())
+        .expect_err("a wrong layout must not be accepted");
         assert_eq!(
             unwrap_decoder_output(error),
             MediaError::TruncatedFrame {

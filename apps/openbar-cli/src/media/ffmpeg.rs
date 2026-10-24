@@ -1,5 +1,6 @@
 //! External `ffprobe` / `ffmpeg` processes (ADR-0006). FFmpeg is invoked, never linked.
 
+use super::luma::LumaTransform;
 use super::probe::{VideoProbe, PROBE_ARGS};
 use super::raw::{read_gray_frames, RawFrameLayout};
 use super::{DecodedFrame, MediaError, TimeRange};
@@ -24,19 +25,25 @@ const DECODE_INPUT_ARGS: [&str; 6] = [
     "-i",
 ];
 
-const DECODE_OUTPUT_ARGS: [&str; 11] = [
+const DECODE_MAP_ARGS: [&str; 6] = [
     "-map",
     "0:v:0",
     "-fps_mode",
     "passthrough",
     "-enc_time_base",
     "demux",
-    "-pix_fmt",
-    "gray",
-    "-f",
-    "rawvideo",
-    "-",
 ];
+
+/// After the luma filter, which already yields 8-bit gray, so no colour conversion remains.
+const DECODE_FORMAT_ARGS: [&str; 5] = ["-pix_fmt", "gray", "-f", "rawvideo", "-"];
+
+/// Output arguments: gray is an explicit function of the Y plane (ADR-0006, Amendment 1).
+fn decode_output_args(transform: LumaTransform) -> impl Iterator<Item = &'static str> {
+    DECODE_MAP_ARGS
+        .into_iter()
+        .chain(["-vf", transform.filter()])
+        .chain(DECODE_FORMAT_ARGS)
+}
 
 pub fn probe_args_for_provenance() -> Vec<String> {
     PROBE_ARGS
@@ -47,12 +54,12 @@ pub fn probe_args_for_provenance() -> Vec<String> {
         .collect()
 }
 
-pub fn decode_args_for_provenance() -> Vec<String> {
+pub fn decode_args_for_provenance(transform: LumaTransform) -> Vec<String> {
     DECODE_INPUT_ARGS
         .iter()
         .copied()
         .chain([INPUT_PLACEHOLDER])
-        .chain(DECODE_OUTPUT_ARGS.iter().copied())
+        .chain(decode_output_args(transform))
         .map(str::to_owned)
         .collect()
 }
@@ -110,11 +117,12 @@ pub fn decode(
     layout: &RawFrameLayout,
     timestamps_s: &[f64],
     selection: Option<TimeRange>,
+    transform: LumaTransform,
 ) -> Result<(Vec<DecodedFrame>, Vec<String>), MediaError> {
     let mut child = Command::new(FFMPEG)
         .args(DECODE_INPUT_ARGS)
         .arg(path)
-        .args(DECODE_OUTPUT_ARGS)
+        .args(decode_output_args(transform))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -245,7 +253,7 @@ mod tests {
             probe_args_for_provenance()[PROBE_ARGS.len()..],
             ["-i", INPUT_PLACEHOLDER]
         );
-        let decode = decode_args_for_provenance();
+        let decode = decode_args_for_provenance(LumaTransform::LimitedToFull);
         let input = decode
             .iter()
             .position(|arg| arg == INPUT_PLACEHOLDER)

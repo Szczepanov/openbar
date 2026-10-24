@@ -307,7 +307,9 @@ unaffected.
 For the ADR-0006 process frame source, `openbar-cli analyze` stores the deterministic serialized
 `FrameSourceProvenance` document in `environment.decoder`. This keeps the existing analysis-v1
 shape while retaining the effective FFmpeg version/argument vectors, source hash, stream metadata,
-selected range, and decoder diagnostics. A future structured decoder field would require an
+selected range, and decoder diagnostics. Since ADR-0006 Amendment 1 (frame source version `2`)
+it also records `luma_transform` and `stream.frame_color_range`, which define how gray was
+derived from the Y plane. A future structured decoder field would require an
 explicit schema-version decision rather than an unversioned shape change.
 
 Filter and kinematics provenance live beside the layers they produced. Calibration method,

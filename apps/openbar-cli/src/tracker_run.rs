@@ -869,6 +869,7 @@ mod tests {
             pix_fmt: "yuv420p".to_owned(),
             color_range: None,
             color_transfer: None,
+            frame_color_range: None,
             coded_width_px: coded.0,
             coded_height_px: coded.1,
             display_width_px: display.0,
