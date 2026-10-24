@@ -130,6 +130,9 @@ bit-exact luma against FFmpeg's raw Y diagnostic.
 | `--priority` | `1`, any int, `none` | MediaFormat `priority`. `none` leaves the key unset. |
 | `--operating-rate` | `32767`, positive fps, `none` | MediaFormat `operating-rate`. |
 
+Pending Surface frames retain the output format from render time; later format events cannot
+change the range used for an image that has not arrived yet.
+
 Report v2 records the variant, plus `hint_readback`, which is the hint keys as the codec echoes them
 from its input and output formats. `null` means the codec did not echo the key; that does not show
 whether the hint was ignored. `decoded_output_count` counts every sized output, including pre-roll.

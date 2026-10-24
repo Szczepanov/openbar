@@ -4,7 +4,7 @@
 //! the same fail-closed geometry and format checks, and the same PTS history.
 
 use crate::decode::{retain_window_output, DecodeError, OutputInfo, StageTimings};
-use crate::raster::{to_contract_luma, LumaFrame, Rotation};
+use crate::raster::{to_contract_luma, LumaFrame, PlaneLayout, Rotation};
 use crate::view::{scan_checksum, DisplayGray, DisplayLumaView};
 use std::borrow::Cow;
 use std::time::Instant;
@@ -54,6 +54,22 @@ impl DisplayFrame {
 }
 
 pub type FrameSink<'a> = dyn FnMut(&DisplayFrame) -> Result<(), DecodeError> + 'a;
+
+/// Surface delivery can lag behind a format change, so metadata travels with the rendered frame.
+pub struct PendingSurfaceFrame {
+    pub pts_us: i64,
+    pub timestamp_s: f64,
+    pub output: OutputInfo,
+}
+
+impl PendingSurfaceFrame {
+    pub fn output_for_image(&self, layout: PlaneLayout) -> OutputInfo {
+        OutputInfo {
+            layout,
+            ..self.output.clone()
+        }
+    }
+}
 
 /// Everything the report needs about the emitted window.
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +280,57 @@ mod tests {
             )
             .is_err());
         assert_eq!(collector.finish().unwrap().timestamps_s, vec![0.0]);
+    }
+
+    #[test]
+    fn delayed_surface_image_keeps_its_render_time_range() {
+        let mut current = output(2, 1);
+        let pending = PendingSurfaceFrame {
+            pts_us: 33_333,
+            timestamp_s: 0.033333,
+            output: current.clone(),
+        };
+        current.luma_range = LumaRange::Full;
+        current.color_range_raw = Some(1);
+        let layout = PlaneLayout {
+            stride: 2,
+            slice_height: 1,
+            crop: CropRect::full(2, 1),
+        };
+        let out = pending.output_for_image(layout);
+        let mut collector = WindowCollector::new(FrameMode::Packed, Instant::now());
+        let mut timings = StageTimings::default();
+        let mut pixels = Vec::new();
+        collector
+            .accept(
+                vec![16, 235],
+                &out,
+                Rotation::Cw0,
+                pending.pts_us,
+                pending.timestamp_s,
+                &mut timings,
+                &mut |frame: &DisplayFrame| {
+                    pixels = frame.packed_pixels().into_owned();
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(pixels, vec![0, 255]);
+        current.layout = layout;
+        assert!(collector
+            .accept(
+                vec![16, 235],
+                &current,
+                Rotation::Cw0,
+                66_666,
+                0.066666,
+                &mut timings,
+                &mut |_: &DisplayFrame| Ok(()),
+            )
+            .is_err());
+        let collected = collector.finish().unwrap();
+        assert_eq!(collected.output, out);
+        assert_eq!(collected.presentation_time_us, vec![33_333]);
     }
 
     #[test]

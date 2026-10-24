@@ -7,7 +7,7 @@ use crate::android::{
     OUTPUT_TIMEOUT_DRAINING_US, OUTPUT_TIMEOUT_FEEDING_US, STALL_LIMIT,
 };
 use crate::android_image::ImageReader;
-use crate::collect::{DisplayFrame, FrameSink, WindowCollector};
+use crate::collect::{DisplayFrame, FrameSink, PendingSurfaceFrame, WindowCollector};
 use crate::decode::{DecodeError, DecodeReport, OutputInfo, OutputPath, StageTimings};
 use crate::raster::{LumaRange, Rotation};
 use crate::timing::{pts_us_to_seconds, push_strictly_increasing, Placement, Window};
@@ -74,7 +74,7 @@ struct DecodeLoop<'a> {
     all_output_pts_us: Vec<i64>,
     preroll_discarded: u64,
     /// Rendered in-window buffers still waiting for their Surface image, oldest first.
-    pending: VecDeque<(i64, f64)>,
+    pending: VecDeque<PendingSurfaceFrame>,
     collector: WindowCollector,
     timings: StageTimings,
 }
@@ -126,7 +126,11 @@ impl DecodeLoop<'_> {
                     .clone()
                     .ok_or(DecodeError::MissingOutputFormat)?;
                 if self.reader.is_some() {
-                    self.pending.push_back((pts_us, timestamp_s));
+                    self.pending.push_back(PendingSurfaceFrame {
+                        pts_us,
+                        timestamp_s,
+                        output: out,
+                    });
                     return Ok(OutputStep {
                         render: true,
                         stop: end_of_stream,
@@ -170,10 +174,10 @@ impl DecodeLoop<'_> {
                 continue;
             };
             let image_ns = image.timestamp_ns()?;
-            let (pts_us, timestamp_s) =
-                self.pending.pop_front().ok_or(DecodeError::Unsupported(
-                    "Surface delivered an image with no rendered buffer pending",
-                ))?;
+            let pending = self.pending.pop_front().ok_or(DecodeError::Unsupported(
+                "Surface delivered an image with no rendered buffer pending",
+            ))?;
+            let (pts_us, timestamp_s) = (pending.pts_us, pending.timestamp_s);
             if i128::from(image_ns) != i128::from(pts_us) * 1000 {
                 return Err(DecodeError::ImageTimestampMismatch {
                     expected_us: pts_us,
@@ -184,13 +188,7 @@ impl DecodeLoop<'_> {
             let (plane, layout) = image.copy_luma()?;
             drop(image);
             self.add_copy_time(copy_started);
-            let out = OutputInfo {
-                layout,
-                ..self
-                    .output
-                    .clone()
-                    .ok_or(DecodeError::MissingOutputFormat)?
-            };
+            let out = pending.output_for_image(layout);
             self.collector.accept(
                 plane,
                 &out,
