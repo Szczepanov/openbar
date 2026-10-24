@@ -159,6 +159,9 @@ Measured on the 14T Pro on 2026-10-19; see the [evidence](../../docs/validation/
 
 - **Decoder output:** bit-exact with FFmpeg's decoded Y plane. Frame counts and PTS match.
 - **Lift window:** median 2.02 s against 5.28 s for FFmpeg. The 0.50 s target is not met.
-- **Luma gate:** fails against `-pix_fmt gray`, because FFmpeg's gray conversion is not the per-pixel expansion ADR-0006 describes. That needs an owner decision.
+- **Luma gate:** passes after ADR-0006 Amendment 1 (PR #266). The phone re-check is bit-exact
+  against the amended FFmpeg Y-plane reference on 180/180 lift frames and 450/450 full-clip frames.
+- **Follow-up variants (PR #265):** implemented and host-tested; no device measurements yet.
+  See [the next-step run order](../../docs/plans/OPENBAR_NEXT_STEPS.md).
 
-Neither gate is met, so promotion is not proposed.
+The latency gate is still not met, so promotion is not proposed.
