@@ -1,9 +1,13 @@
 # Android in-process hardware decode prototype (#258)
 
-Status: **experiment run on the 14T Pro (2026-10-19). Gates not met; owner decision pending.**
+Status: **baseline measured on the 14T Pro (2026-10-19); parity passes after Amendment 1,
+latency target missed. PR #265 variants await device measurements.**
 - The hardware decoder is bit-exact with FFmpeg's decoder, PTS match and frames match.
 - The lift window takes a median of 2.02 s against 5.28 s for FFmpeg. That misses the 0.50 s target.
-- The luma gate against `-pix_fmt gray` fails because of FFmpeg's own gray conversion.
+- The original luma gate failed against `-pix_fmt gray`. PR #266 implements ADR-0006 Amendment 1;
+  the re-check is bit-exact on 180/180 lift frames and 450/450 full-clip frames.
+- PR #265 adds view/view-scan, codec-hint and AImageReader variants. Run the existing device suite
+  before further optimization; see [the current run order](OPENBAR_NEXT_STEPS.md).
 
 See the [evidence](../validation/ANDROID_LATENCY_EVIDENCE.md#in-process-mediacodec-prototype-258-2026-10-19).
 This plan does not change ADR-0006, the ADR-0005 tracker frame boundary or any canonical output.
