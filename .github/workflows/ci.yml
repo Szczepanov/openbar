@@ -74,7 +74,7 @@ jobs:
           ffmpeg -hide_banner -version | head -n 1
           ffprobe -hide_banner -version | head -n 1
       - name: Rust Cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Verify dependency lock
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Format
@@ -266,7 +266,7 @@ jobs:
           ffmpeg -hide_banner -version
           ffprobe -hide_banner -version
       - name: Rust Cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: VBT workflow orchestration tests
         run: python -m unittest discover -v -s research/vbt-workflow/tests -p 'test_*.py'
       - name: Verify dependency lock
